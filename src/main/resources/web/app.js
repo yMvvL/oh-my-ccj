@@ -1993,8 +1993,7 @@
       providers: root.querySelector('[data-role="providers"]'),
       models: root.querySelector('[data-role="models"]'),
       modelInput: root.querySelector('[data-role="modelInput"]'),
-      modelUse: root.querySelector('[data-role="modelUse"]'),
-      modelRemember: root.querySelector('[data-role="modelRemember"]'),
+      modelUse: root.querySelector('[data-role="modelAdd"]'),
       addProvider: root.querySelector('[data-role="addProvider"]'),
       effort: root.querySelector('[data-role="effort"]'),
       effortHint: root.querySelector('[data-role="effortHint"]'),
@@ -2108,15 +2107,9 @@
         ? str(picker.selection.model).trim() : '';
       const inUse = str(state.status && state.status.provider).toLowerCase() === wanted
         ? str(state.status && state.status.model).trim() : '';
-      const names = entries.map(function (entry) { return str(entry.model).toLowerCase(); });
-      [inUse, chosen].forEach(function (name) {
-        if (name && names.indexOf(name.toLowerCase()) < 0) {
-          names.push(name.toLowerCase());
-          // Kept visible so the model in use never looks lost — but marked as no
-          // longer offered, otherwise a successful removal looks like a failed one.
-          entries.unshift({ provider: provider, model: name, source: '', notOffered: true });
-        }
-      });
+      // Only what the provider actually offers: a removed model that is still in use stays visible
+      // in the trigger above the composer, but it must not keep a row here or removing it looks
+      // like it did nothing.
       if (!entries.length) {
         // "lists no models" is only true when the catalogue answered; without
         // one, the honest thing is that the list is simply not available.
@@ -2138,10 +2131,7 @@
         btn.classList.toggle('active', isCurrent);
         btn.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
         btn.appendChild(el('span', 'picker-option-name', model));
-        const badge = isInUse
-          ? (entry.notOffered ? 'in use · not offered' : 'in use')
-          : (entry.notOffered ? 'not offered' : str(entry.source));
-        btn.appendChild(optionMeta(badge ? [badge] : []));
+        btn.appendChild(optionMeta(isInUse ? ['in use'] : (str(entry.source) ? [str(entry.source)] : [])));
         btn.addEventListener('click', function () {
           choose('model', { provider: provider, model: model });
         });
@@ -2222,6 +2212,12 @@
       if (!apply) { commit(); return; }
       Promise.resolve().then(function () { return apply(kind, next); }).then(commit, function (err) {
         showError(str(err && err.message) || 'The change was refused.');
+        // The column follows the click even when the switch is refused, otherwise the panel keeps
+        // showing the previous provider's models and an added model looks like it was replaced.
+        if (kind === 'model' && str(patch.provider)) {
+          picker.browsed = str(patch.provider);
+          picker.render();
+        }
       });
     }
 
@@ -2249,32 +2245,28 @@
       }
     }
 
-    /* The model column keeps a text field next to the list so a provider with
-     * no listed models — or a model the catalogue does not know — is still
-     * usable by hand. `Use` is the whole gesture: remember the name for this
-     * provider, then switch to it. `Remember` stops after the first half, for
-     * a model the user wants kept but not active yet. Both re-render from the
-     * server's answer — the whole catalogue — and leave the panel open. */
-    async function useManualModel(toListOnly) {
+    /* The model column keeps a text field next to the list so a provider whose
+     * list is empty — or a model the catalogue does not know — can still be
+     * described. `Add` only ever appends to the list: switching is what
+     * clicking a model row does, and conflating the two is how a second model
+     * looked like it had replaced the first. Re-renders from the server's
+     * answer and leaves the panel open. */
+    async function useManualModel() {
       const model = nodes.modelInput.value.trim();
       const provider = picker.browsed || picker.selection.provider;
       if (!provider) { showError('Choose a provider first.'); return; }
       if (!model) { showError('Type a model name first.'); return; }
       clearError();
       nodes.modelUse.disabled = true;
-      nodes.modelRemember.disabled = true;
       try {
         const res = await postJSON('/api/models', { provider: provider, model: model });
         acceptModelCatalogue(res);
         nodes.modelInput.value = '';
       } catch (err) {
         showError(modelError(err));
-        return;
       } finally {
         nodes.modelUse.disabled = false;
-        nodes.modelRemember.disabled = false;
       }
-      if (!toListOnly) { choose('model', { provider: provider, model: model }); }
     }
 
     picker.render = function () {
@@ -2330,6 +2322,10 @@
       nodes.trigger.setAttribute('aria-expanded', 'true');
       clearError();
       picker.render();
+      // A provider defined since the last look (another window, the terminal, a
+      // script) must appear here rather than being invisible until something
+      // else happens to refresh. The render above already shows what we have.
+      if (typeof refreshCatalog === 'function') { refreshCatalog(); }
     };
 
     picker.closePanel = function (focusTrigger) {
@@ -2349,8 +2345,7 @@
       event.preventDefault();
       if (picker.open) { picker.closePanel(true); } else { picker.openPanel(); }
     });
-    nodes.modelUse.addEventListener('click', function () { useManualModel(false); });
-    nodes.modelRemember.addEventListener('click', function () { useManualModel(true); });
+    nodes.modelUse.addEventListener('click', function () { useManualModel(); });
     nodes.addProvider.addEventListener('click', function () { openAddProviderForm(); });
     /* Enter in the model field applies it — and must not reach the composer,
      * where the same key sends the message. */
