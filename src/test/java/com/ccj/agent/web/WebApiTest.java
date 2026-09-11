@@ -1128,10 +1128,12 @@ class WebApiTest {
   }
 
   @Test
-  void theModelInUseCannotBeRemoved() throws Exception {
+  void theModelInUseCanStillBeRemovedFromTheOfferList() throws Exception {
+    // The deadlock this replaces: the only model offered was also the one in use, so it could not
+    // be removed and nothing else could be switched to.
     postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"gpt-4o-mini\"}");
 
-    HttpResponse<String> refusal =
+    HttpResponse<String> removed =
         client.send(
             HttpRequest.newBuilder(
                     URI.create(origin + "/api/models?provider=openai&model=gpt-4o-mini"))
@@ -1139,8 +1141,16 @@ class WebApiTest {
                 .build(),
             HttpResponse.BodyHandlers.ofString());
 
-    assertEquals(400, refusal.statusCode(), refusal.body());
-    assertTrue(refusal.body().contains("in use"), refusal.body());
+    assertEquals(200, removed.statusCode(), removed.body());
+    assertEquals(
+        List.of(), modelsOf(providerOf(Json.parse(removed.body()), "openai")), "no longer suggested");
+    assertEquals(
+        "gpt-4o-mini",
+        json("/api/status").path("model").asText(),
+        "removing it from the list must not change what the session uses");
+
+    // and it really is gone on the next read
+    assertEquals(List.of(), modelsOf(providerOf(json("/api/models"), "openai")));
   }
 
   // ------------------------------------------------------------------ helpers

@@ -77,8 +77,7 @@ public final class ConfigModelCatalog implements ModelCatalog {
    * stays removed and one they added stays added; otherwise the provider's own list applies.
    */
   private List<String> effective(String provider, List<String> fallback) {
-    List<String> recorded = store == null ? List.of() : store.modelsFor(provider);
-    return recorded.isEmpty() ? fallback : recorded;
+    return store == null ? fallback : store.modelsFor(provider).orElse(fallback);
   }
 
   private static String defaultModelFor(String kind) {

@@ -467,17 +467,18 @@ public final class AgentHub implements AutoCloseable {
     return modelsJson();
   }
 
-  /** Forgets a model for a provider. Refused for the model currently in use: pick another first. */
+  /**
+   * Forgets a model for a provider.
+   *
+   * <p>The offer list and the current choice are separate things: removing a model from the list
+   * must not edit the configuration, and refusing to remove the model in use deadlocks the user
+   * when it is the only one offered. The active model stays active and stays visible — it is simply
+   * no longer suggested.
+   */
   public ObjectNode removeModel(String provider, String model) {
     ProviderStore store = requireProviderStore();
     String name = knownProvider(provider);
     String value = model == null ? "" : model.strip();
-    if (config.model() != null
-        && config.model().equals(value)
-        && name.equalsIgnoreCase(config.provider() == null ? "" : config.provider())) {
-      throw new IllegalArgumentException(
-          "cannot remove the model in use ('" + value + "'); switch to another one first");
-    }
     List<String> models = new java.util.ArrayList<>(offeredModels(name));
     if (!models.remove(value)) {
       throw new IllegalArgumentException("'" + value + "' is not a model of " + name);

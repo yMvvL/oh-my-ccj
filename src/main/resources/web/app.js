@@ -2112,7 +2112,9 @@
       [inUse, chosen].forEach(function (name) {
         if (name && names.indexOf(name.toLowerCase()) < 0) {
           names.push(name.toLowerCase());
-          entries.unshift({ provider: provider, model: name, source: '' });
+          // Kept visible so the model in use never looks lost — but marked as no
+          // longer offered, otherwise a successful removal looks like a failed one.
+          entries.unshift({ provider: provider, model: name, source: '', notOffered: true });
         }
       });
       if (!entries.length) {
@@ -2136,7 +2138,10 @@
         btn.classList.toggle('active', isCurrent);
         btn.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
         btn.appendChild(el('span', 'picker-option-name', model));
-        btn.appendChild(optionMeta([isInUse ? 'in use' : str(entry.source)]));
+        const badge = isInUse
+          ? (entry.notOffered ? 'in use · not offered' : 'in use')
+          : (entry.notOffered ? 'not offered' : str(entry.source));
+        btn.appendChild(optionMeta(badge ? [badge] : []));
         btn.addEventListener('click', function () {
           choose('model', { provider: provider, model: model });
         });
@@ -2169,18 +2174,32 @@
       nodes.effortHint.textContent = EFFORT_HINT[current] || EFFORT_HINT.default;
     }
 
-    /* A provider pick is a browse: the right column swaps and nothing is sent.
-     * In the settings form the pick is also a draft change of the form's
-     * provider (there is no "apply" there until Save), so it moves the
-     * selection; in the composer it deliberately does not. */
+    /* Picking a provider has to be enough to switch to it. Browsing alone
+     * made another provider unreachable unless it also had a model row to
+     * click, so a provider whose list is empty could not be selected at all.
+     * The composer commits, pairing the provider with the model already in use
+     * when it is offered and with the first offered model otherwise; the
+     * settings form still only drafts the change until Save. */
     function chooseProvider(name) {
       const clean = str(name).trim();
       if (!clean) { return; }
       clearError();
       picker.browsed = clean;
-      if (providerSelects) { picker.selection.provider = clean; }
-      picker.render();
-      if (onSelect) { onSelect('provider', picker.selection); }
+      if (providerSelects) {
+        picker.selection.provider = clean;
+        picker.render();
+        if (onSelect) { onSelect('provider', picker.selection); }
+        return;
+      }
+      const offered = catalogModelsFor(clean).map(function (entry) { return str(entry.model); });
+      const current = str(picker.selection.model).trim();
+      const keeps = current !== '' && offered.some(function (model) {
+        return model.toLowerCase() === current.toLowerCase();
+      });
+      choose('model', {
+        provider: clean,
+        model: keeps ? current : (offered.length ? offered[0] : current)
+      });
     }
 
     /* The one commit path: a model pick changes provider + model, a tier pick

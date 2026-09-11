@@ -59,12 +59,18 @@ public final class ProviderStore {
     return file;
   }
 
-  /** The recorded list for a provider, or empty when the catalogue's own list should be used. */
-  public synchronized List<String> modelsFor(String provider) {
+  /**
+   * The list the user recorded for a provider.
+   *
+   * <p>Empty means "never recorded, use the catalogue's own list"; a present-but-empty list means
+   * "recorded as empty" — the difference is what lets a user remove the last model and have it stay
+   * removed instead of the provider's default list reappearing.
+   */
+  public synchronized java.util.Optional<List<String>> modelsFor(String provider) {
     if (provider == null) {
-      return List.of();
+      return java.util.Optional.empty();
     }
-    return modelLists.getOrDefault(provider.strip().toLowerCase(), List.of());
+    return java.util.Optional.ofNullable(modelLists.get(provider.strip().toLowerCase()));
   }
 
   /**
@@ -83,11 +89,7 @@ public final class ProviderStore {
         clean.add(value);
       }
     }
-    if (clean.isEmpty()) {
-      modelLists.remove(key);
-    } else {
-      modelLists.put(key, List.copyOf(clean));
-    }
+    modelLists.put(key, List.copyOf(clean));
     write();
   }
 
@@ -134,13 +136,12 @@ public final class ProviderStore {
           .fields()
           .forEachRemaining(
               entry -> {
+                if (!entry.getValue().isArray()) {
+                  return;
+                }
                 List<String> recorded = new ArrayList<>();
-                if (entry.getValue().isArray()) {
-                  entry.getValue().forEach(model -> recorded.add(model.asText()));
-                }
-                if (!recorded.isEmpty()) {
-                  modelLists.put(entry.getKey().toLowerCase(), List.copyOf(recorded));
-                }
+                entry.getValue().forEach(model -> recorded.add(model.asText()));
+                modelLists.put(entry.getKey().toLowerCase(), List.copyOf(recorded));
               });
     }
     JsonNode entries = root.path("providers");
@@ -173,14 +174,12 @@ public final class ProviderStore {
 
   private void write() {
     ObjectNode root = Json.object();
-    if (!modelLists.isEmpty()) {
-      ObjectNode models = root.putObject("models");
-      modelLists.forEach(
-          (provider, list) -> {
-            ArrayNode array = models.putArray(provider);
-            list.forEach(array::add);
-          });
-    }
+    ObjectNode models = root.putObject("models");
+    modelLists.forEach(
+        (provider, list) -> {
+          ArrayNode array = models.putArray(provider);
+          list.forEach(array::add);
+        });
     ObjectNode entries = root.putObject("providers");
     for (ProviderDefinition definition : definitions.values()) {
       ObjectNode body = entries.putObject(definition.name());
@@ -190,8 +189,8 @@ public final class ProviderStore {
         body.put("apiKeyEnv", definition.apiKeyEnv());
       }
       if (!definition.models().isEmpty()) {
-        ArrayNode models = body.putArray("models");
-        definition.models().forEach(models::add);
+        ArrayNode declared = body.putArray("models");
+        definition.models().forEach(declared::add);
       }
     }
     try {

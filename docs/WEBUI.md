@@ -35,7 +35,7 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `GET` | `/api/models` | the provider catalogue: providers, their protocol and endpoint, their models |
 | `GET`/`POST` | `/api/providers` | list or define a provider (`{name, kind, baseUrl, apiKeyEnv, models}`) |
 | `POST` | `/api/models` | remember a model for a provider (`{provider, model}`), built-ins included |
-| `DELETE` | `/api/models?provider=&model=` | forget a model; the one in use is protected |
+| `DELETE` | `/api/models?provider=&model=` | forget a model (the one in use included — see below) |
 | `DELETE` | `/api/providers?name=...` | remove a definition; the one in use is protected |
 | `GET` | `/api/config` | what the settings form needs: current values, whether a key exists, where it is stored |
 | `POST` | `/api/config` | save provider/model/key settings and switch to them immediately |
@@ -123,7 +123,12 @@ The built-in names are code; anything else is a definition the user owns, kept i
 - Model lists are editable **per provider, built-ins included**: a hand-typed model is not a
   one-off, and the list a picker offers must survive the next render. The first edit records the
   whole list, after which it is authoritative — that is what makes a removal stick, and what makes
-  an addition survive a restart. Removing the model currently in use is refused.
+  an addition survive a restart. An *empty* recorded list is authoritative too, which is the only
+  reason removing the last model does not resurrect the provider's default.
+- Removing a model **never edits the configuration**: the model in use stays in use, and stays
+  visible to the picker, marked `in use · not offered`. Refusing the removal instead would deadlock
+  the user whenever the model in use was also the only one offered — the exact case that prompted
+  this rule.
 - The catalogue endpoint (`/api/models`) is what the settings form reads. It is deliberately
   synchronous and offline: a settings form must render instantly, and a router-backed catalogue can
   cache whatever it fetches. See [ROUTER.md](ROUTER.md).
@@ -149,6 +154,12 @@ nothing at all, which is what keeps every non-reasoning model working unchanged.
 The value is stored as `reasoning` in `config.json`, reported in `status` (with the list of levels so
 the picker needs no second source), accepted by `POST /api/config`, and cleared by posting
 `"reasoning": "default"`.
+
+In the composer, **picking a provider is enough to switch to it**: the pick applies immediately,
+paired with the model already in use when that provider offers it and with the first offered model
+otherwise. Browsing alone (swapping the model column without applying) was worse than useless — a
+provider whose list was empty could not be selected at all. The settings form keeps the drafting
+behaviour, because there a pick is an edit to the form until Save.
 
 ## Settings
 
