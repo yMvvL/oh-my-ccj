@@ -14,6 +14,9 @@ import com.ccj.agent.core.ToolResult;
 import com.ccj.agent.core.ToolSpec;
 import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.core.Workspace;
+import com.ccj.agent.core.ProviderDefinition;
+import com.ccj.agent.provider.ModelCatalog;
+import com.ccj.agent.provider.ProviderStore;
 import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
@@ -25,9 +28,12 @@ import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -88,7 +94,9 @@ public final class AgentHub implements AutoCloseable {
       Path configFile,
       Map<String, String> env,
       ProviderFactory providerFactory,
-      List<String> providerNames,
+      ModelCatalog modelCatalog,
+      ProviderStore providerStore,
+      FolderChooser folderChooser,
       boolean autoApprove) {}
 
   /** One thing that happened, shaped for the wire. */
@@ -133,6 +141,7 @@ public final class AgentHub implements AutoCloseable {
   private volatile Config config;
   private volatile FileSession session;
   private volatile boolean closed;
+  private final FolderChooser folderChooser;
 
   public AgentHub(
       Provider initialProvider,
@@ -146,6 +155,8 @@ public final class AgentHub implements AutoCloseable {
     this.settings = settings;
     this.session = session;
     this.autoApprove.set(settings.autoApprove());
+    this.folderChooser =
+        settings.folderChooser() == null ? new NativeFolderChooser() : settings.folderChooser();
     if (session != null) {
       // A server started on an existing session (--resume / --continue) continues its books.
       applyTotals(session.totals());
@@ -323,6 +334,95 @@ public final class AgentHub implements AutoCloseable {
     return Json.object().put("type", type).put("replay", true);
   }
 
+  /**
+   * What the settings form can offer: providers (built-in and user-defined) and their models.
+   *
+   * <p>Served from a {@link ModelCatalog}, so a router-backed catalogue can replace it later without
+   * the page changing: the shape it renders is the catalogue's, not the configuration's.
+   */
+  public ObjectNode modelsJson() {
+    ObjectNode root = Json.object();
+    ModelCatalog catalog = settings.modelCatalog();
+    ArrayNode providers = root.putArray("providers");
+    ArrayNode models = root.putArray("models");
+    if (catalog == null) {
+      return root;
+    }
+    for (ModelCatalog.ProviderInfo provider : catalog.providers()) {
+      ObjectNode entry = providers.addObject();
+      entry.put("name", provider.name());
+      entry.put("kind", provider.kind());
+      entry.put("baseUrl", provider.baseUrl());
+      entry.put("builtIn", provider.builtIn());
+      ArrayNode list = entry.putArray("models");
+      provider.models().forEach(list::add);
+    }
+    for (ModelCatalog.Model model : catalog.models()) {
+      ObjectNode entry = models.addObject();
+      entry.put("provider", model.provider());
+      entry.put("model", model.model());
+      entry.put("source", model.source());
+    }
+    return root;
+  }
+
+  // ------------------------------------------------------------------ providers
+
+  /**
+   * Defines a provider the user owns. Validated before it is stored, so a definition that could not
+   * work never becomes selectable.
+   */
+  public ObjectNode addProvider(JsonNode body) {
+    ProviderStore store = requireProviderStore();
+    List<String> models = new ArrayList<>();
+    JsonNode list = body.path("models");
+    if (list.isArray()) {
+      list.forEach(model -> models.add(model.asText()));
+    } else if (list.isTextual()) {
+      // A comma-separated string is what a form field naturally sends.
+      for (String model : list.asText().split(",")) {
+        if (!model.isBlank()) {
+          models.add(model.strip());
+        }
+      }
+    }
+    ProviderDefinition definition =
+        new ProviderDefinition(
+                body.path("name").asText(""),
+                body.path("kind").asText(ProviderDefinition.OPENAI),
+                body.path("baseUrl").asText(""),
+                body.path("apiKeyEnv").asText(""),
+                models)
+            .requireValid();
+    store.save(definition);
+    publish(
+        "notice",
+        Json.object().put("text", "provider '" + definition.name() + "' defined"));
+    publishStatus();
+    return modelsJson();
+  }
+
+  /** Removes a definition. The active provider is protected: removing it would break the next turn. */
+  public ObjectNode removeProvider(String name) {
+    ProviderStore store = requireProviderStore();
+    String clean = name == null ? "" : name.strip();
+    if (config.provider() != null && config.provider().equalsIgnoreCase(clean)) {
+      throw new IllegalArgumentException(
+          "cannot remove the provider in use ('" + clean + "'); switch to another one first");
+    }
+    store.remove(clean);
+    publish("notice", Json.object().put("text", "provider '" + clean + "' removed"));
+    publishStatus();
+    return modelsJson();
+  }
+
+  private ProviderStore requireProviderStore() {
+    if (settings.providerStore() == null) {
+      throw new IllegalStateException("this server was started without a provider registry");
+    }
+    return settings.providerStore();
+  }
+
   // ------------------------------------------------------------------ workspaces
 
   /** The registry as the switcher needs it: name, path, how much history is there, which is active. */
@@ -403,7 +503,11 @@ public final class AgentHub implements AutoCloseable {
     }
     node.put("configFile", settings.configFile().toString());
     ArrayNode providers = node.putArray("providers");
-    settings.providerNames().forEach(providers::add);
+    Set<String> names = new LinkedHashSet<>();
+    if (settings.modelCatalog() != null) {
+      settings.modelCatalog().providers().forEach(provider -> names.add(provider.name()));
+    }
+    names.forEach(providers::add);
     return node;
   }
 
@@ -429,9 +533,12 @@ public final class AgentHub implements AutoCloseable {
       previous.close();
     }
     config = candidate;
+    // The configured name, not the implementation's: "using openai" for a provider the user called
+    // "myrelay" would read like the setting was ignored.
     publish(
         "notice",
-        Json.object().put("text", "using " + built.name() + " · " + candidate.model()));
+        Json.object()
+            .put("text", "using " + candidate.provider() + " · " + candidate.model()));
     publishStatus();
     return status();
   }
@@ -625,6 +732,46 @@ public final class AgentHub implements AutoCloseable {
       throw new IllegalArgumentException("a session id is required");
     }
     useSession(SessionStore.open(sessionsDir(), id));
+  }
+
+  /**
+   * Deletes one session. Deleting the active one starts a fresh session in its place, so the page
+   * always has somewhere to be after the list it is looking at loses a row.
+   */
+  public ObjectNode deleteSession(String id) {
+    requireIdle();
+    FileSession current = session();
+    boolean active = current != null && current.id().equals(id);
+    if (!SessionStore.delete(sessionsDir(), id)) {
+      throw new IllegalArgumentException("no session '" + id + "' in this workspace");
+    }
+    publish("notice", Json.object().put("text", "session deleted"));
+    if (active) {
+      useSession(SessionStore.create(sessionsDir()));
+    }
+    return Json.object().set("sessions", sessionsJson());
+  }
+
+  /** Clears every session in the active workspace — the "my testing left a mess" button. */
+  public ObjectNode deleteAllSessions() {
+    requireIdle();
+    int deleted = SessionStore.deleteAll(sessionsDir());
+    publish(
+        "notice",
+        Json.object()
+            .put("text", deleted == 0 ? "no sessions to delete" : "deleted " + deleted + " sessions"));
+    useSession(SessionStore.create(sessionsDir()));
+    return Json.object().set("sessions", sessionsJson());
+  }
+
+  /** Asks the desktop for a directory. Blocks until the user answers, cancels or times out. */
+  public java.util.Optional<java.nio.file.Path> chooseFolder(java.io.IOException[] failure) {
+    try {
+      return folderChooser.choose("Choose a workspace folder");
+    } catch (java.io.IOException e) {
+      failure[0] = e;
+      return java.util.Optional.empty();
+    }
   }
 
   private void useSession(FileSession next) {

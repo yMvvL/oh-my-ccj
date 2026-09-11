@@ -66,9 +66,17 @@ public final class FileSession implements Session {
     return new FileSession(id, fileFor(sessionsDir, id), List.of());
   }
 
+  /**
+   * True for an id that can safely become a file name. Deleting goes through this too: an id is
+   * user-supplied over HTTP, and {@code ../} must never reach the filesystem.
+   */
+  public static boolean isValidId(String id) {
+    return id != null && SAFE_ID.matcher(id).matches();
+  }
+
   /** Reopens an existing session, restoring its full history. */
   public static FileSession open(Path sessionsDir, String id) {
-    if (id == null || !SAFE_ID.matcher(id).matches()) {
+    if (!isValidId(id)) {
       throw new IllegalArgumentException("invalid session id: " + id);
     }
     Path file = fileFor(sessionsDir, id);

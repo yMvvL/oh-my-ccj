@@ -1,9 +1,12 @@
 package com.ccj.agent.session;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ccj.agent.core.Message;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
@@ -63,5 +66,43 @@ class SessionStoreTest {
     session.close();
 
     assertEquals("(no messages)", SessionStore.list(dir).get(0).preview());
+  }
+
+  @Test
+  void deletingRemovesOneSessionAndRefusesTraversal() throws IOException {
+    Path sessions = Files.createDirectories(dir.resolve("sessions"));
+    FileSession keep = FileSession.create(sessions);
+    keep.append(new Message.User("keep me"));
+    FileSession drop = FileSession.create(sessions);
+    drop.append(new Message.User("drop me"));
+    assertEquals(2, SessionStore.list(sessions).size());
+
+    assertTrue(SessionStore.delete(sessions, drop.id()));
+    assertEquals(
+        List.of(keep.id()),
+        SessionStore.list(sessions).stream().map(SessionStore.Summary::id).toList());
+    assertFalse(SessionStore.delete(sessions, drop.id()), "deleting twice is not an error, just nothing");
+
+    assertThrows(IllegalArgumentException.class, () -> SessionStore.delete(sessions, "../escape"));
+    assertThrows(IllegalArgumentException.class, () -> SessionStore.delete(sessions, "/etc/passwd"));
+    assertThrows(IllegalArgumentException.class, () -> SessionStore.delete(sessions, null));
+    assertEquals(1, SessionStore.list(sessions).size(), "the refusals must not have deleted anything");
+  }
+
+  @Test
+  void deletingEverythingClearsTheWorkspace() throws IOException {
+    Path sessions = Files.createDirectories(dir.resolve("sessions"));
+    for (int i = 0; i < 3; i++) {
+      FileSession session = FileSession.create(sessions);
+      session.append(new Message.User("test residue " + i));
+    }
+    Files.writeString(sessions.resolve("notes.txt"), "not a session");
+
+    assertEquals(3, SessionStore.deleteAll(sessions));
+
+    assertEquals(0, SessionStore.list(sessions).size());
+    assertTrue(Files.exists(sessions.resolve("notes.txt")), "only session files are removed");
+    assertEquals(0, SessionStore.deleteAll(sessions));
+    assertEquals(0, SessionStore.deleteAll(dir.resolve("missing")));
   }
 }

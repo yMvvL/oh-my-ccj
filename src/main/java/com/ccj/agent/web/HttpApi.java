@@ -101,7 +101,8 @@ public final class HttpApi implements AutoCloseable {
         case "/app.js" -> staticResource(exchange, "/web/app.js", "text/javascript; charset=utf-8");
         case "/style.css" -> staticResource(exchange, "/web/style.css", "text/css; charset=utf-8");
         case "/api/status" -> get(exchange, hub.status());
-        case "/api/sessions" -> get(exchange, Json.object().set("sessions", hub.sessionsJson()));
+        case "/api/sessions" -> sessions(exchange);
+        case "/api/workspaces/browse" -> browse(exchange);
         case "/api/history" -> get(exchange, hub.historyJson());
         case "/api/events" -> events(exchange);
         case "/api/message" -> message(exchange);
@@ -111,6 +112,8 @@ public final class HttpApi implements AutoCloseable {
         case "/api/session" -> session(exchange);
         case "/api/workspaces" -> workspaces(exchange);
         case "/api/workspace" -> workspace(exchange);
+        case "/api/models" -> get(exchange, hub.modelsJson());
+        case "/api/providers" -> providers(exchange);
         case "/api/config" -> config(exchange);
         case "/api/config/test" -> configTest(exchange);
         default -> error(exchange, 404, "no such endpoint: " + path);
@@ -203,6 +206,59 @@ public final class HttpApi implements AutoCloseable {
     error(exchange, 405, "POST or DELETE required");
   }
 
+  private void sessions(HttpExchange exchange) throws IOException {
+    String method = exchange.getRequestMethod();
+    if ("GET".equals(method)) {
+      respond(exchange, 200, Json.object().set("sessions", hub.sessionsJson()));
+      return;
+    }
+    if ("DELETE".equals(method)) {
+      respond(exchange, 200, hub.deleteAllSessions());
+      return;
+    }
+    error(exchange, 405, "GET or DELETE required");
+  }
+
+  /**
+   * Opens the desktop's folder chooser. A browser cannot do this itself — the web File System
+   * Access API deliberately hides absolute paths — but the process serving the page is sitting on
+   * the same machine, so it can ask the desktop directly.
+   */
+  private void browse(HttpExchange exchange) throws IOException {
+    if (!"POST".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "POST required");
+      return;
+    }
+    java.io.IOException[] failure = new java.io.IOException[1];
+    java.util.Optional<java.nio.file.Path> chosen = hub.chooseFolder(failure);
+    if (failure[0] != null) {
+      error(exchange, 400, failure[0].getMessage());
+      return;
+    }
+    if (chosen.isEmpty()) {
+      respond(exchange, 200, Json.object().put("cancelled", true));
+      return;
+    }
+    respond(exchange, 200, Json.object().put("path", chosen.get().toString()));
+  }
+
+  private void providers(HttpExchange exchange) throws IOException {
+    String method = exchange.getRequestMethod();
+    if ("POST".equals(method)) {
+      respond(exchange, 200, hub.addProvider(Json.parse(readBody(exchange))));
+      return;
+    }
+    if ("DELETE".equals(method)) {
+      respond(exchange, 200, hub.removeProvider(queryParam(exchange, "name")));
+      return;
+    }
+    if ("GET".equals(method)) {
+      respond(exchange, 200, hub.modelsJson());
+      return;
+    }
+    error(exchange, 405, "GET, POST or DELETE required");
+  }
+
   private void config(HttpExchange exchange) throws IOException {
     String method = exchange.getRequestMethod();
     if ("GET".equals(method)) {
@@ -240,8 +296,17 @@ public final class HttpApi implements AutoCloseable {
   }
 
   private void session(HttpExchange exchange) throws IOException {
+    if ("DELETE".equals(exchange.getRequestMethod())) {
+      String id = queryParam(exchange, "id");
+      if (id == null || id.isBlank()) {
+        error(exchange, 400, "query parameter 'id' is required");
+        return;
+      }
+      respond(exchange, 200, hub.deleteSession(id));
+      return;
+    }
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "POST or DELETE required");
       return;
     }
     JsonNode body = Json.parse(readBody(exchange));

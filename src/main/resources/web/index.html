@@ -5,6 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title>ccj</title>
+<script>
+/* Theme before the first paint. The palette is chosen by an attribute on
+ * <html>, and this runs in <head> — above the stylesheet — so the browser
+ * never paints the palette the user did not ask for. A stored choice wins over
+ * the OS; the OS is consulted only while the choice is "System". */
+(function () {
+  var pref = 'system';
+  try { pref = localStorage.getItem('ccj.theme') || 'system'; } catch (err) { /* keep the default */ }
+  if (pref !== 'light' && pref !== 'dark' && pref !== 'system') { pref = 'system'; }
+  var light = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+  var root = document.documentElement;
+  var theme = pref === 'system' ? (light ? 'light' : 'dark') : pref;
+  root.setAttribute('data-theme', theme);
+  root.setAttribute('data-theme-pref', pref);
+  /* Also inline, because the canvas and the native scrollbars are painted from
+   * color-scheme *before* the stylesheet arrives — a stored light theme on a
+   * dark desktop would otherwise flash dark. */
+  root.style.colorScheme = theme;
+})();
+</script>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -44,6 +64,10 @@
       <button type="button" class="btn" id="btn-settings" aria-haspopup="dialog">Settings</button>
       <button type="button" class="btn danger" id="btn-abort" disabled>Abort</button>
       <button type="button" class="btn ghost" id="btn-side" aria-expanded="true" aria-controls="side" title="Toggle side panel">Panel</button>
+      <button type="button" class="btn theme-btn" id="btn-theme" aria-label="Theme: System. Switch to Light." title="Theme">
+        <span class="theme-icon" id="theme-icon" aria-hidden="true">◐</span>
+        <span class="theme-label" id="theme-label">System</span>
+      </button>
     </div>
   </header>
 
@@ -114,8 +138,13 @@
   <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="sessions-title">
     <header class="overlay-head">
       <h2 id="sessions-title">Sessions</h2>
-      <button type="button" class="btn ghost" id="sessions-close">Close</button>
+      <div class="overlay-head-actions">
+        <span class="delete-control" id="sessions-delete-all-host"></span>
+        <button type="button" class="btn ghost" id="sessions-close">Close</button>
+      </div>
     </header>
+    <p class="err overlay-alert" id="sessions-error" role="alert" hidden></p>
+    <p class="overlay-note" id="sessions-note" role="status" hidden></p>
     <div class="overlay-body" id="sessions-body">
       <p class="muted">Loading…</p>
     </div>
@@ -148,7 +177,11 @@
             </div>
             <div class="field">
               <label for="ws-new-path">Path</label>
-              <input type="text" id="ws-new-path" spellcheck="false" placeholder="/home/you/api">
+              <div class="field-with-action">
+                <input type="text" id="ws-new-path" spellcheck="false" placeholder="/home/you/api">
+                <button type="button" class="btn" id="ws-browse">Browse…</button>
+              </div>
+              <span class="field-hint" id="ws-browse-hint" hidden></span>
               <span class="field-error" id="ws-path-error" hidden></span>
             </div>
           </div>
@@ -169,63 +202,137 @@
       <button type="button" class="btn ghost" id="settings-close">Close</button>
     </header>
 
-    <form class="overlay-body settings-body" id="settings-form" autocomplete="off">
-      <p class="err settings-error" id="settings-error" hidden></p>
+    <div class="overlay-body settings-body">
+      <form class="settings-form" id="settings-form" autocomplete="off">
+        <p class="err settings-error" id="settings-error" hidden></p>
 
-      <div class="field">
-        <label for="cfg-provider">Provider</label>
-        <select id="cfg-provider"></select>
-      </div>
-
-      <div class="field">
-        <label for="cfg-model">Model</label>
-        <input type="text" id="cfg-model" spellcheck="false" placeholder="gpt-4o-mini">
-        <span class="field-error" id="cfg-model-error" hidden></span>
-      </div>
-
-      <div class="field">
-        <label for="cfg-baseurl">Base URL</label>
-        <input type="text" id="cfg-baseurl" spellcheck="false" placeholder="https://api.openai.com/v1">
-      </div>
-
-      <div class="field">
-        <label for="cfg-apikey">API key</label>
-        <input type="password" id="cfg-apikey" autocomplete="new-password" spellcheck="false">
-        <span class="field-hint" id="cfg-apikey-hint" hidden></span>
-        <span class="field-error" id="cfg-apikey-error" hidden></span>
-        <label class="field-check" id="cfg-clearkey-wrap" hidden>
-          <input type="checkbox" id="cfg-clearkey">
-          <span>clear stored key</span>
-        </label>
-      </div>
-
-      <div class="field">
-        <label for="cfg-apikeyenv">API key env var</label>
-        <input type="text" id="cfg-apikeyenv" spellcheck="false" placeholder="OPENAI_API_KEY">
-        <span class="field-hint" id="cfg-apikeyenv-hint" hidden></span>
-      </div>
-
-      <div class="field-row">
         <div class="field">
-          <label for="cfg-maxsteps">Max steps</label>
-          <input type="number" id="cfg-maxsteps" min="1" step="1" placeholder="25">
+          <label for="cfg-provider">Provider</label>
+          <input type="text" id="cfg-provider" list="cfg-provider-options" spellcheck="false"
+                 autocomplete="off" placeholder="openai">
+          <datalist id="cfg-provider-options"></datalist>
+          <span class="field-hint" id="cfg-provider-hint" hidden></span>
+          <span class="field-error" id="cfg-provider-error" hidden></span>
         </div>
+
         <div class="field">
-          <label for="cfg-temperature">Temperature</label>
-          <input type="number" id="cfg-temperature" min="0" max="2" step="any" placeholder="default">
+          <label for="cfg-model">Model</label>
+          <input type="text" id="cfg-model" list="cfg-model-options" spellcheck="false"
+                 autocomplete="off" placeholder="gpt-4o-mini">
+          <datalist id="cfg-model-options"></datalist>
+          <span class="field-hint" id="cfg-model-hint" hidden></span>
+          <span class="field-error" id="cfg-model-error" hidden></span>
         </div>
-      </div>
 
-      <p class="settings-test-result" id="settings-test-result" hidden></p>
+        <div class="field">
+          <label for="cfg-baseurl">Base URL</label>
+          <input type="text" id="cfg-baseurl" spellcheck="false" placeholder="https://api.openai.com/v1">
+        </div>
 
-      <div class="settings-actions">
-        <button type="button" class="btn" id="settings-test">Test connection</button>
-        <span class="hint" id="settings-test-hint">Sends one tiny request to the provider using these values. Nothing is saved.</span>
-        <button type="submit" class="btn primary" id="settings-save">Save</button>
-      </div>
+        <div class="field">
+          <label for="cfg-apikey">API key</label>
+          <input type="password" id="cfg-apikey" autocomplete="new-password" spellcheck="false">
+          <span class="field-hint" id="cfg-apikey-hint" hidden></span>
+          <span class="field-error" id="cfg-apikey-error" hidden></span>
+          <label class="field-check" id="cfg-clearkey-wrap" hidden>
+            <input type="checkbox" id="cfg-clearkey">
+            <span>clear stored key</span>
+          </label>
+        </div>
 
-      <p class="settings-foot" id="settings-foot"></p>
-    </form>
+        <div class="field">
+          <label for="cfg-apikeyenv">API key env var</label>
+          <input type="text" id="cfg-apikeyenv" spellcheck="false" placeholder="OPENAI_API_KEY">
+          <span class="field-hint" id="cfg-apikeyenv-hint" hidden></span>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="cfg-maxsteps">Max steps</label>
+            <input type="number" id="cfg-maxsteps" min="1" step="1" placeholder="25">
+          </div>
+          <div class="field">
+            <label for="cfg-temperature">Temperature</label>
+            <input type="number" id="cfg-temperature" min="0" max="2" step="any" placeholder="default">
+          </div>
+        </div>
+
+        <p class="settings-test-result" id="settings-test-result" hidden></p>
+
+        <div class="settings-actions">
+          <button type="button" class="btn" id="settings-test">Test connection</button>
+          <span class="hint" id="settings-test-hint">Sends one tiny request to the provider using these values. Nothing is saved.</span>
+          <button type="submit" class="btn primary" id="settings-save">Save</button>
+        </div>
+
+        <p class="settings-foot" id="settings-foot"></p>
+      </form>
+
+      <section class="provider-section" id="cfg-providers-section" aria-labelledby="cfg-providers-title">
+        <h3 class="settings-subhead" id="cfg-providers-title">Your providers</h3>
+        <p class="field-hint" id="cfg-providers-hint">
+          A provider you define yourself: a relay, a gateway, a self-hosted server or your own router.
+          The server stores it and it becomes selectable in the Provider field above.
+        </p>
+        <p class="err provider-note" id="cfg-providers-note" role="status" hidden></p>
+        <ul class="provider-list" id="cfg-provider-list">
+          <li class="muted">Loading…</li>
+        </ul>
+
+        <div class="provider-add">
+          <button type="button" class="btn" id="cfg-provider-add-toggle" aria-expanded="false"
+                  aria-controls="cfg-provider-form">Add provider…</button>
+
+          <form class="provider-form" id="cfg-provider-form" autocomplete="off" hidden>
+            <div class="field-row">
+              <div class="field">
+                <label for="cfg-new-name">Name</label>
+                <input type="text" id="cfg-new-name" spellcheck="false" autocomplete="off" placeholder="myrelay">
+                <span class="field-error" id="cfg-new-name-error" hidden></span>
+              </div>
+              <div class="field">
+                <label for="cfg-new-kind">Protocol</label>
+                <select id="cfg-new-kind">
+                  <option value="openai">openai</option>
+                  <option value="anthropic">anthropic</option>
+                </select>
+                <span class="field-error" id="cfg-new-kind-error" hidden></span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="cfg-new-baseurl">Base URL</label>
+              <input type="text" id="cfg-new-baseurl" spellcheck="false" autocomplete="off"
+                     placeholder="https://relay.example.com/v1">
+              <span class="field-error" id="cfg-new-baseurl-error" hidden></span>
+            </div>
+
+            <div class="field-row">
+              <div class="field">
+                <label for="cfg-new-apikeyenv">API key env var <span class="field-optional">optional</span></label>
+                <input type="text" id="cfg-new-apikeyenv" spellcheck="false" autocomplete="off"
+                       placeholder="MYRELAY_API_KEY">
+              </div>
+              <div class="field">
+                <label for="cfg-new-models">Models</label>
+                <input type="text" id="cfg-new-models" spellcheck="false" autocomplete="off"
+                       placeholder="deepseek-v4-flash, gpt-5.5">
+              </div>
+            </div>
+
+            <p class="field-hint">
+              Models are optional and comma-separated. They are offered in the Model field above
+              once the provider is defined.
+            </p>
+            <p class="err" id="cfg-provider-form-error" role="alert" hidden></p>
+
+            <div class="provider-form-actions">
+              <button type="submit" class="btn primary" id="cfg-provider-save">Add provider</button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
   </div>
 </div>
 

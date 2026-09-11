@@ -5,12 +5,22 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ccj.agent.core.Config;
+import com.ccj.agent.core.Message;
 import com.ccj.agent.core.Provider;
+import com.ccj.agent.core.ProviderDefinition;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ProvidersTest {
+
+  @TempDir Path tmp;
+
+  private static Provider.Request ping(String model) {
+    return new Provider.Request(model, null, List.of(new Message.User("hi")), List.of(), null, 16);
+  }
 
   @Test
   void mapsEveryAcceptedNameToAnImplementation() {
@@ -93,5 +103,75 @@ class ProvidersTest {
   private static Config config(String provider, String model, String apiKey) {
     return new Config(provider, model, null, apiKey, null, null, null, null, null, null, null)
         .resolved();
+  }
+
+  @Test
+  void aCustomDefinitionDecidesTheProtocolTheEndpointAndTheKeyVariable() throws Exception {
+    ProviderStore store = ProviderStore.open(tmp);
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      store.save(
+          new ProviderDefinition(
+              "myrelay", ProviderDefinition.ANTHROPIC, server.url(), "MY_KEY", List.of("claude-x")));
+      Config config =
+          new Config("myrelay", "claude-x", null, null, null, null, null, null, null, null, null)
+              .resolved();
+
+      Provider provider = Providers.create(config, Map.of("MY_KEY", "sk-from-env"), store);
+      provider.complete(ping("claude-x"), event -> {});
+
+      assertEquals("/v1/messages", server.path(0), "an anthropic-kind definition speaks that API");
+      assertEquals("sk-from-env", server.header(0, "x-api-key"));
+      assertEquals("myrelay", config.provider(), "and the name stays the user's");
+      provider.close();
+    }
+  }
+
+  @Test
+  void anExplicitBaseUrlStillWinsOverTheDefinition() throws Exception {
+    ProviderStore store = ProviderStore.open(tmp);
+    try (FakeServer override = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      store.save(
+          new ProviderDefinition(
+              "myrelay", ProviderDefinition.OPENAI, "https://ignored.invalid/v1", null, List.of("m")));
+      Config config =
+          new Config("myrelay", "m", override.url(), null, null, null, null, null, null, null, null)
+              .resolved();
+
+      Provider provider = Providers.create(config, Map.of("OPENAI_API_KEY", "sk"), store);
+      provider.complete(ping("m"), event -> {});
+
+      assertEquals(1, override.count(), "the explicitly configured URL must be the one used");
+      provider.close();
+    }
+  }
+
+  @Test
+  void anUnknownNameListsWhatIsDefined() {
+    ProviderStore store = ProviderStore.open(tmp);
+    store.save(
+        new ProviderDefinition("myrelay", ProviderDefinition.OPENAI, "https://x/v1", null, List.of("m")));
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> Providers.create(config("nope", "m", "sk"), Map.of(), store));
+
+    assertTrue(failure.getMessage().contains("myrelay"), failure.getMessage());
+    assertTrue(Providers.supported(store).contains("myrelay"), "the picker must offer it");
+  }
+
+  @Test
+  void aCustomProviderWithoutAModelSaysWhatItOffers() {
+    ProviderStore store = ProviderStore.open(tmp);
+    store.save(
+        new ProviderDefinition(
+            "myrelay", ProviderDefinition.OPENAI, "https://x/v1", null, List.of("model-a", "model-b")));
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> Providers.create(config("myrelay", null, "sk"), Map.of(), store));
+
+    assertTrue(failure.getMessage().contains("model-a"), failure.getMessage());
   }
 }

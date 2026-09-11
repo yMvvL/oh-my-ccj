@@ -10,6 +10,8 @@ import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolRegistry;
 import com.ccj.agent.core.ToolSpec;
 import com.ccj.agent.demo.DemoProvider;
+import com.ccj.agent.provider.ConfigModelCatalog;
+import com.ccj.agent.provider.ProviderStore;
 import com.ccj.agent.provider.Providers;
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
@@ -151,12 +153,14 @@ public final class Cli {
     // No flag, no prompt: the web UI is the default front end, and --repl is the terminal one.
     boolean webMode = !options.repl() && options.print() == null;
 
+    ProviderStore providerStore = ProviderStore.open(paths.home());
+
     Provider provider;
     if (options.demo()) {
       provider = new DemoProvider();
     } else {
       try {
-        provider = Providers.create(config, env);
+        provider = Providers.create(config, env, providerStore);
       } catch (RuntimeException e) {
         if (!webMode) {
           return fail(err, e);
@@ -212,6 +216,7 @@ public final class Cli {
             configFile,
             session,
             env,
+            providerStore,
             out,
             err);
       }
@@ -384,6 +389,7 @@ public final class Cli {
       Path configFile,
       FileSession session,
       Map<String, String> env,
+      ProviderStore providerStore,
       PrintStream out,
       PrintStream err) {
     String host =
@@ -408,8 +414,10 @@ public final class Cli {
             cwdOverride,
             configFile,
             env,
-            Providers::create,
-            Providers.supported(),
+            (candidate, environment) -> Providers.create(candidate, environment, providerStore),
+            new ConfigModelCatalog(providerStore),
+            providerStore,
+            null,
             Boolean.TRUE.equals(config.autoApprove()) || options.yolo());
     AgentHub hub = new AgentHub(provider, config, tools, settings, session);
     try (HttpApi api = HttpApi.start(hub, new InetSocketAddress(host, port), options.webToken())) {

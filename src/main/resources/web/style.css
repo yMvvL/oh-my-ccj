@@ -1,4 +1,10 @@
-/* ccj --web — dark-first, no external assets. */
+/* ccj --web — one palette per theme, no external assets.
+ *
+ * The theme is an attribute on <html>, set by an inline script in index.html
+ * before the first paint: `data-theme="dark"` (the default) or
+ * `data-theme="light"`. A manual choice must be able to override the desktop,
+ * so the OS preference is never a media query here — only a value the script
+ * resolves into that attribute. */
 
 :root {
   color-scheme: dark;
@@ -15,9 +21,14 @@
   --accent-ink: #08101f;
   --ok: #48c78e;
   --warn: #f0b429;
+  --on-warn: #1b1400;
   --err: #ff6b6b;
   --user-bubble: #1a2334;
   --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  --scrim: rgba(0, 0, 0, .55);
+  --btn-hover: #1c222c;
+  --accent-soft: rgba(91, 157, 255, .22);
+  --danger-soft: rgba(255, 107, 107, .14);
   /* One radius pair, one spacing scale, one reading width. */
   --radius: 12px;
   --radius-sm: 10px;
@@ -31,26 +42,32 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
-    --bg: #ffffff;
-    --bg-elev: #f7f8fa;
-    --panel: #f4f6f9;
-    --code: #eef1f6;
-    --border: #dde2ea;
-    --border-strong: #c2cad6;
-    --fg: #171a1f;
-    --fg-dim: #5a636f;
-    --fg-faint: #6a7381;
-    --accent: #1f6feb;
-    --accent-ink: #ffffff;
-    --ok: #1a7f4f;
-    --warn: #9a6700;
-    --err: #c0342e;
-    --user-bubble: #e8f0fe;
-    --shadow: 0 10px 30px rgba(20, 30, 50, .18);
-  }
+/* Light is designed, not derived: surfaces step (page white → chrome tint →
+ * raised card), borders stay a visible hairline instead of a faint tint, and
+ * every text tone is picked against the surface it actually sits on. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-elev: #fafbfd;
+  --panel: #f3f5f9;
+  --code: #eef1f7;
+  --border: #dfe4ec;
+  --border-strong: #c2cbd9;
+  --fg: #14171c;
+  --fg-dim: #4e5764;
+  --fg-faint: #666f7d;
+  --accent: #1a63d8;
+  --accent-ink: #ffffff;
+  --ok: #14724a;
+  --warn: #8a5b00;
+  --on-warn: #ffffff;
+  --err: #bd2b25;
+  --user-bubble: #e9f0fd;
+  --shadow: 0 10px 28px rgba(23, 35, 61, .13), 0 1px 2px rgba(23, 35, 61, .07);
+  --scrim: rgba(19, 26, 40, .32);
+  --btn-hover: #eaeef5;
+  --accent-soft: rgba(26, 99, 216, .16);
+  --danger-soft: rgba(189, 43, 37, .10);
 }
 
 * { box-sizing: border-box; }
@@ -140,7 +157,7 @@ body {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
-  color: var(--accent-ink);
+  color: var(--on-warn);
   background: var(--warn);
   white-space: nowrap;
 }
@@ -148,12 +165,14 @@ body {
 .meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; flex: 1 1 240px; }
 
 .chip {
-  font: 12px/1.4 var(--mono);
+  /* One height for every chip — fixed leading, not a font-relative one — so
+   * the row reads as a row instead of three slightly different pills. */
+  font: 12px/20px var(--mono);
   color: var(--fg-dim);
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 2px 9px;
+  padding: 0 10px;
   max-width: 22ch;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -166,6 +185,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
+  min-height: 22px;
   font-size: 12px;
   color: var(--fg-dim);
   white-space: nowrap;
@@ -191,6 +211,10 @@ body {
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); }
 
+/* Three weights, told apart by surface rather than by dimming: primary is the
+ * accent fill, secondary is a raised surface, ghost is the same control with
+ * the fill saved until hover. Only `disabled` is dim — a secondary control must
+ * never be mistaken for a dead one. */
 .btn {
   font: 13px/1 var(--sans);
   color: var(--fg);
@@ -201,12 +225,25 @@ body {
   cursor: pointer;
 }
 
-.btn:hover:not(:disabled) { border-color: var(--accent); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:hover:not(:disabled) { background: var(--btn-hover); border-color: var(--accent); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-.btn.danger { color: var(--err); border-color: var(--border-strong); }
-.btn.danger:hover:not(:disabled) { border-color: var(--err); }
+.btn.primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent-ink); }
+.btn.danger { color: var(--err); }
+.btn.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--err); }
 .btn.ghost { background: transparent; }
+.btn.ghost:hover:not(:disabled) { background: var(--btn-hover); }
+
+/* A compact button for places where a full-size one would outweigh its row:
+ * the session list and a dialog header. Same radius, same hover. */
+.btn.sm { padding: 5px 9px; font-size: 12px; }
+
+/* The theme control reads as a control, not as a label: a glyph, the state in
+ * words, and the same radius and hover as every other header button. */
+.theme-btn { display: inline-flex; align-items: center; gap: 6px; }
+.theme-icon { color: var(--accent); font-size: 13px; line-height: 1; }
+.theme-label { font-size: 12px; }
 
 .toggle { display: inline-flex; align-items: center; gap: 7px; }
 .toggle-state { font: 11px var(--mono); color: var(--fg-faint); text-transform: uppercase; }
@@ -232,14 +269,14 @@ body {
 
 .toggle.on {
   background: var(--warn);
-  color: #1b1400;
+  color: var(--on-warn);
   border-color: var(--warn);
   font-weight: 600;
 }
 
-.toggle.on .switch { background: #1b1400; }
+.toggle.on .switch { background: var(--on-warn); }
 .toggle.on .switch::after { transform: translateX(11px); background: var(--warn); }
-.toggle.on .toggle-state { color: #1b1400; }
+.toggle.on .toggle-state { color: var(--on-warn); }
 
 /* ---------------------------------------------------------------- layout */
 
@@ -281,7 +318,20 @@ body {
   margin: 0 auto;
 }
 
-.placeholder { color: var(--fg-faint); }
+/* The empty transcript is a state, not a blank: a quiet card waiting in the
+ * middle of the pane. The auto vertical margins keep it centred, and the
+ * narrower selector still wins over `.transcript > *` without touching the
+ * column's horizontal centring. */
+.transcript > .placeholder {
+  margin-top: auto;
+  margin-bottom: auto;
+  padding: var(--sp-6) var(--sp-4);
+  color: var(--fg-dim);
+  text-align: center;
+  background: var(--bg-elev);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
 
 /* ------------------------------------------------------------ transcript */
 
@@ -432,7 +482,7 @@ body {
   font: 700 11px/1 var(--sans);
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: #1b1400;
+  color: var(--on-warn);
   background: var(--warn);
   border-radius: 4px;
   padding: 3px 6px;
@@ -534,7 +584,14 @@ body {
   font: 14px/1.55 var(--sans);
 }
 
-#input:focus { border-color: var(--accent); }
+/* Focus on the writing surface is a ring around the field rather than the
+ * shared outline: the caret already marks the spot inside, and the field is
+ * wide enough that an offset outline reads as a second box. */
+#input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
 
 .composer-row { display: flex; align-items: center; gap: var(--sp-3); }
 .hint { font-size: 12px; color: var(--fg-faint); flex: 1 1 auto; }
@@ -557,7 +614,7 @@ body {
 
 .jump.alert {
   background: var(--warn);
-  color: #1b1400;
+  color: var(--on-warn);
   border-color: var(--warn);
   font-weight: 600;
 }
@@ -681,7 +738,7 @@ body {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(0, 0, 0, .5);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -709,18 +766,54 @@ body {
 }
 
 .overlay-head h2 { margin: 0; font-size: 15px; }
+.overlay-head-actions { display: flex; align-items: center; gap: var(--sp-2); }
 
-.overlay-body { overflow-y: auto; padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+/* The outcome of the last delete, and the reason an empty pane is empty. It
+ * lives outside the scrolling body so it stays put while the list moves. */
+.overlay-note {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4);
+  font: 12px/1.45 var(--sans);
+  color: var(--fg-dim);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
 
-.session-list { list-style: none; margin: 0; padding: 0; }
+.overlay-alert {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4);
+  font: 12px/1.45 var(--sans);
+  border-bottom: 1px solid var(--border);
+}
 
-.session-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: transparent;
+.overlay-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+
+/* A session is a row, not a button: the row carries the two controls and the
+ * hover, so deleting one is not the same gesture as opening one. */
+.session-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px;
   border: 1px solid transparent;
   border-bottom-color: var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.session-row:hover { background: var(--panel); border-color: var(--border-strong); }
+.session-row.current { border-color: var(--accent); }
+.session-row.current .session-id::after { content: " · current"; color: var(--accent); }
+
+.session-item {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: block;
+  text-align: left;
+  background: transparent;
+  border: 0;
   border-radius: var(--radius-sm);
   color: var(--fg);
   padding: var(--sp-2);
@@ -728,13 +821,17 @@ body {
   font: 13px var(--sans);
 }
 
-.session-item:hover { background: var(--panel); border-color: var(--border-strong); }
-.session-item.current { border-color: var(--accent); }
-.session-item.current .session-id::after { content: " · current"; color: var(--accent); }
-
-.session-id { display: block; font: 12px var(--mono); color: var(--fg); }
+.session-item:disabled { cursor: default; opacity: .6; }
+.session-id { display: block; font: 12px var(--mono); color: var(--fg); overflow-wrap: anywhere; }
 .session-preview { display: block; color: var(--fg-dim); margin: 2px 0 4px; overflow-wrap: anywhere; }
-.session-meta { display: flex; gap: var(--sp-3); font: 11px var(--mono); color: var(--fg-faint); }
+.session-meta { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); font: 11px var(--mono); color: var(--fg-faint); }
+
+.session-actions { flex: 0 0 auto; display: flex; justify-content: flex-end; padding-right: var(--sp-1); }
+
+/* The armed question sits exactly where its button was, so the pointer does not
+ * have to chase a moving target to finish the gesture. */
+.confirm-row { display: inline-flex; align-items: center; gap: var(--sp-1); }
+.delete-control { display: inline-flex; align-items: center; gap: var(--sp-1); }
 
 /* ----------------------------------------------------------- workspaces */
 
@@ -807,6 +904,10 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* The disclosure is a button, not an empty field: it hugs its label instead of
+ * stretching the width of the form it opens. */
+#workspace-add-toggle { align-self: flex-start; }
+
 .workspace-add-form { display: flex; flex-direction: column; gap: var(--sp-3); }
 .workspace-add-actions { display: flex; justify-content: flex-end; }
 .workspace-error { margin: 0; }
@@ -819,7 +920,11 @@ body {
 .chip-warn { color: var(--warn); border-color: var(--warn); }
 
 .settings-card { width: min(560px, 100%); }
-.settings-body { display: flex; flex-direction: column; gap: var(--sp-3); }
+/* The scrolling body is a plain container: the settings form and the providers
+ * section are siblings, because a form nested in a form is not something the
+ * HTML parser can hold. */
+.settings-body { display: flex; flex-direction: column; gap: var(--sp-4); }
+.settings-form { display: flex; flex-direction: column; gap: var(--sp-3); }
 
 .field { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
 
@@ -838,12 +943,22 @@ body {
   padding: var(--sp-2);
 }
 
-.field input:focus, .field select:focus { border-color: var(--accent); }
+.field input:focus, .field select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
 .field input:disabled { opacity: .5; }
 .field input::placeholder { color: var(--fg-faint); }
 
 .field-row { display: flex; gap: var(--sp-3); }
 .field-row .field { flex: 1 1 0; }
+
+/* A field with its own button (Browse…) keeps the button outside the input's
+ * width, so the input still fills the column and the pair wraps nothing. */
+.field-with-action { display: flex; align-items: stretch; gap: var(--sp-2); }
+.field-with-action > input { flex: 1 1 auto; min-width: 0; }
+.field-with-action > .btn { flex: 0 0 auto; }
 
 .field-hint { font-size: 12px; color: var(--fg-faint); }
 
@@ -874,6 +989,84 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* ------------------------------------------- settings: your providers */
+
+.settings-subhead {
+  margin: 0;
+  font: 600 11px/1 var(--sans);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.provider-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.provider-note { margin: 0; }
+
+.provider-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* A provider is a row that can carry a question in place of its button, so it
+ * is a column of lines rather than a button — the same shape a session row has. */
+.provider-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.provider-top { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.provider-name { font: 600 13px var(--mono); overflow-wrap: anywhere; }
+
+.provider-badge {
+  font: 600 10px/1 var(--sans);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--fg-dim);
+}
+
+.provider-badge.in-use { color: var(--accent); border-color: var(--accent); }
+
+.provider-url { font: 11px/1.45 var(--mono); color: var(--fg-dim); overflow-wrap: anywhere; }
+.provider-meta { font: 11px var(--mono); color: var(--fg-faint); }
+.provider-actions { margin-left: auto; display: inline-flex; }
+
+.provider-add { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); }
+
+.provider-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.provider-form-actions { display: flex; justify-content: flex-end; }
+
+/* "(optional)" is a note on the label, not part of its name. */
+.field-optional { color: var(--fg-faint); font-weight: 400; }
+
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 900px) {
@@ -892,6 +1085,10 @@ body {
   .ev-user .bubble { max-width: 90%; }
   .field-row { flex-direction: column; gap: var(--sp-3); }
   .workspace-remove { padding: 6px var(--sp-2); }
+  /* The dialogs give their width back to the list on a narrow screen. */
+  .overlay { padding: var(--sp-3); }
+  .overlay-head, .overlay-body, .overlay-note, .overlay-alert { padding-left: var(--sp-3); padding-right: var(--sp-3); }
+  .session-actions { padding-right: 0; }
 }
 
 /* Motion is decoration here: the pulse, the tool spinner and the bar's growth
@@ -899,4 +1096,5 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .live-dot, .tool-spinner, .ev-approval.pending { animation: none !important; }
   .switch, .switch::after, .hit-bar-fill { transition: none; }
+  .btn:active:not(:disabled) { transform: none; }
 }

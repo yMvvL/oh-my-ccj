@@ -11,6 +11,7 @@ import com.ccj.agent.core.Message;
 import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.session.FileSession;
+import java.util.Optional;
 import com.ccj.agent.session.SessionStore;
 import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.tool.Tools;
@@ -60,6 +61,10 @@ class WebApiTest {
   private Path sessions;
   private Path configFile;
   private final AtomicInteger factoryCalls = new AtomicInteger();
+  /** The behaviour the tests change; the hub holds {@link #chooser}, which delegates to it. */
+  private com.ccj.agent.provider.ProviderStore providerStore;
+  private volatile FolderChooser chooserBehaviour = title -> Optional.empty();
+  private final FolderChooser chooser = title -> chooserBehaviour.choose(title);
   private volatile MockProvider lastBuilt;
   private MockProvider provider;
   private AgentHub hub;
@@ -71,6 +76,7 @@ class WebApiTest {
     cwd = Files.createDirectories(tmp.resolve("ws"));
     sessions = tmp.resolve("sessions");
     configFile = tmp.resolve("config.json");
+    providerStore = com.ccj.agent.provider.ProviderStore.open(tmp);
     provider = new MockProvider("mock");
     start(null);
   }
@@ -90,6 +96,7 @@ class WebApiTest {
     api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), token);
     origin = "http://127.0.0.1:" + api.port();
   }
+
 
   /** A registry whose default workspace is the test's working directory. */
   private WorkspaceStore store() {
@@ -124,15 +131,20 @@ class WebApiTest {
             Map.of(),
             (candidate, env) -> {
               factoryCalls.incrementAndGet();
-              if (candidate.provider() == null
-                  || !List.of("openai", "anthropic").contains(candidate.provider())) {
-                throw new IllegalArgumentException("unknown provider '" + candidate.provider() + "'");
+              // Mirrors the real factory: built-ins plus whatever the user defined.
+              String requested = candidate.provider();
+              if (requested == null
+                  || (!List.of("openai", "anthropic").contains(requested)
+                      && providerStore.find(requested).isEmpty())) {
+                throw new IllegalArgumentException("unknown provider '" + requested + "'");
               }
               lastBuilt =
                   new MockProvider(candidate.model() == null ? "mock-model" : candidate.model());
               return lastBuilt;
             },
-            List.of("openai", "anthropic"),
+            new com.ccj.agent.provider.ConfigModelCatalog(providerStore),
+            providerStore,
+            chooser,
             false),
         session);
   }
@@ -746,6 +758,238 @@ class WebApiTest {
     assertEquals(400, post("/api/workspace", "{\"name\":\"nope\"}").statusCode());
   }
 
+  // ------------------------------------------------------------------ deletion and the chooser
+
+  @Test
+  void deletingASessionRemovesItAndLeavesTheRest() throws Exception {
+    provider.reply(Message.Assistant.text("one"));
+    provider.reply(Message.Assistant.text("two"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"first\"}");
+      sse.await("done", 5000);
+    }
+    String older = json("/api/status").path("sessionId").asText();
+    JsonNode created = postJson("/api/session", "{\"action\":\"new\"}");
+    String newer = created.path("sessionId").asText();
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"second\"}");
+      sse.await("done", 5000);
+    }
+
+    HttpResponse<String> response =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/session?id=" + older))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, response.statusCode(), response.body());
+    assertEquals(1, Json.parse(response.body()).path("sessions").size());
+    assertEquals(newer, json("/api/status").path("sessionId").asText(), "the other one stays active");
+  }
+
+  @Test
+  void deletingTheActiveSessionStartsAFreshOne() throws Exception {
+    provider.reply(Message.Assistant.text("hi"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"hello\"}");
+      sse.await("done", 5000);
+    }
+    String active = json("/api/status").path("sessionId").asText();
+
+    HttpResponse<String> response =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/session?id=" + active))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, response.statusCode(), response.body());
+    assertFalse(Files.exists(sessions.resolve(active + ".jsonl")), "the file is gone");
+    assertNotEquals(active, json("/api/status").path("sessionId").asText(), "somewhere to be next");
+    assertEquals(0, json("/api/sessions").path("sessions").size());
+  }
+
+  @Test
+  void deletingASessionThatDoesNotExistIsRejected() throws Exception {
+    HttpResponse<String> response =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/session?id=20200101-000000-abcd"))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(400, response.statusCode(), response.body());
+    assertTrue(response.body().contains("no session"), response.body());
+    assertEquals(400, client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/session"))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString()).statusCode());
+  }
+
+  @Test
+  void deletingEverythingClearsTheWorkspaceAndStartsOver() throws Exception {
+    provider.reply(Message.Assistant.text("one"));
+    provider.reply(Message.Assistant.text("two"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"first\"}");
+      sse.await("done", 5000);
+      postJson("/api/session", "{\"action\":\"new\"}");
+      post("/api/message", "{\"text\":\"second\"}");
+      sse.awaitAtLeast("done", 2, 5000);
+    }
+    assertEquals(2, json("/api/sessions").path("sessions").size());
+
+    HttpResponse<String> response =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/sessions")).DELETE().build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, response.statusCode(), response.body());
+    assertEquals(0, Json.parse(response.body()).path("sessions").size());
+    assertEquals(0, json("/api/sessions").path("sessions").size());
+  }
+
+  @Test
+  void theFolderChooserIsOpenedOnDemandAndItsAnswersArePassedThrough() throws Exception {
+    Path project = Files.createDirectories(tmp.resolve("picked-project"));
+
+    chooserBehaviour = title -> Optional.of(project);
+
+    JsonNode chosen = postJson("/api/workspaces/browse", "{}");
+    assertEquals(project.toString(), chosen.path("path").asText());
+
+    chooserBehaviour = title -> Optional.empty();
+    assertTrue(postJson("/api/workspaces/browse", "{}").path("cancelled").asBoolean());
+
+    chooserBehaviour =
+        title -> {
+          throw new IOException("no desktop session available, so ccj cannot open a folder chooser");
+        };
+    HttpResponse<String> failure = post("/api/workspaces/browse", "{}");
+    assertEquals(400, failure.statusCode(), failure.body());
+    assertTrue(failure.body().contains("desktop"), failure.body());
+
+    assertEquals(405, get("/api/workspaces/browse").statusCode());
+  }
+
+  @Test
+  void theCatalogueListsBuiltInsAndUserDefinitions() throws Exception {
+    providerStore.save(
+        new com.ccj.agent.core.ProviderDefinition(
+            "myrelay",
+            com.ccj.agent.core.ProviderDefinition.OPENAI,
+            "https://relay.invalid/v1",
+            null,
+            List.of("fast-model", "smart-model")));
+
+    JsonNode catalog = json("/api/models");
+
+    JsonNode relay =
+        lastWhere(catalog.path("providers"), entry -> entry.path("name").asText().equals("myrelay"));
+    assertFalse(relay.path("builtIn").asBoolean());
+    assertEquals("https://relay.invalid/v1", relay.path("baseUrl").asText());
+    assertEquals(2, relay.path("models").size());
+
+    JsonNode openai =
+        lastWhere(catalog.path("providers"), entry -> entry.path("name").asText().equals("openai"));
+    assertTrue(openai.path("builtIn").asBoolean());
+    assertEquals(List.of("gpt-4o-mini"), modelsOf(openai));
+
+    JsonNode fast =
+        lastWhere(catalog.path("models"), entry -> entry.path("model").asText().equals("fast-model"));
+    assertEquals("myrelay", fast.path("provider").asText());
+    assertEquals("config", fast.path("source").asText(), "where the entry came from");
+  }
+
+  @Test
+  void aCustomProviderIsOfferedByTheSettingsForm() throws Exception {
+    providerStore.save(
+        new com.ccj.agent.core.ProviderDefinition(
+            "myrelay", com.ccj.agent.core.ProviderDefinition.OPENAI, "https://relay.invalid/v1", null,
+            List.of("fast-model")));
+
+    List<String> providers = new ArrayList<>();
+    json("/api/config").path("providers").forEach(name -> providers.add(name.asText()));
+
+    assertTrue(providers.contains("openai"), providers.toString());
+    assertTrue(providers.contains("myrelay"), "a defined provider must be selectable");
+
+    // and it is usable immediately: saving it as the active provider must not be rejected
+    JsonNode saved =
+        postJson(
+            "/api/config",
+            "{\"provider\":\"myrelay\",\"model\":\"fast-model\",\"apiKey\":\"sk-custom\"}");
+    assertEquals("myrelay", saved.path("provider").asText());
+    assertTrue(saved.path("configured").asBoolean());
+  }
+
+  @Test
+  void aProviderCanBeDefinedFromTheUiAndIsThenUsable() throws Exception {
+    JsonNode added =
+        postJson(
+            "/api/providers",
+            "{\"name\":\"myrelay\",\"kind\":\"openai\",\"baseUrl\":\"http://127.0.0.1:1/v1\","
+                + "\"apiKeyEnv\":\"MY_KEY\",\"models\":\"fast,smart\"}");
+
+    JsonNode relay =
+        lastWhere(added.path("providers"), entry -> entry.path("name").asText().equals("myrelay"));
+    assertFalse(relay.path("builtIn").asBoolean());
+    assertEquals(List.of("fast", "smart"), modelsOf(relay), "a comma-separated list is understood");
+
+    // it is selectable, and the running session can switch to it immediately
+    JsonNode saved =
+        postJson(
+            "/api/config",
+            "{\"provider\":\"myrelay\",\"model\":\"fast\",\"baseUrl\":\"http://127.0.0.1:1/v1\"}");
+    assertEquals("myrelay", saved.path("provider").asText());
+    assertEquals("fast", saved.path("model").asText());
+  }
+
+  @Test
+  void aBadProviderDefinitionIsRejectedWithAReason() throws Exception {
+    assertEquals(
+        400,
+        post("/api/providers", "{\"name\":\"bad name\",\"kind\":\"openai\",\"baseUrl\":\"http://x\"}")
+            .statusCode());
+    assertEquals(
+        400,
+        post("/api/providers", "{\"name\":\"relay\",\"kind\":\"grpc\",\"baseUrl\":\"http://x\"}")
+            .statusCode());
+    assertEquals(
+        400, post("/api/providers", "{\"name\":\"relay\",\"kind\":\"openai\"}").statusCode());
+    assertTrue(providerStore.list().isEmpty(), "a rejected definition must not be stored");
+  }
+
+  @Test
+  void removingAProviderIsRefusedWhileItIsInUse() throws Exception {
+    postJson(
+        "/api/providers",
+        "{\"name\":\"myrelay\",\"kind\":\"openai\",\"baseUrl\":\"http://127.0.0.1:1/v1\",\"models\":\"m\"}");
+    postJson("/api/config", "{\"provider\":\"myrelay\",\"model\":\"m\",\"baseUrl\":\"http://127.0.0.1:1/v1\"}");
+
+    HttpResponse<String> refusal =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=myrelay"))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(400, refusal.statusCode(), refusal.body());
+    assertTrue(refusal.body().contains("in use"), refusal.body());
+
+    // switching away makes it removable
+    postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"gpt-4o-mini\"}");
+    HttpResponse<String> removed =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=myrelay"))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, removed.statusCode(), removed.body());
+    assertTrue(providerStore.list().isEmpty());
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private static Message.Assistant call(String name, String field, String value) {
@@ -821,6 +1065,21 @@ class WebApiTest {
     HttpResponse<String> response = get(path);
     assertEquals(200, response.statusCode(), response.body());
     return response.body();
+  }
+
+  private static JsonNode lastWhere(JsonNode array, java.util.function.Predicate<JsonNode> match) {
+    for (JsonNode entry : array) {
+      if (match.test(entry)) {
+        return entry;
+      }
+    }
+    throw new AssertionError("no entry matched in " + array);
+  }
+
+  private static List<String> modelsOf(JsonNode provider) {
+    List<String> models = new ArrayList<>();
+    provider.path("models").forEach(model -> models.add(model.asText()));
+    return models;
   }
 
   private static JsonNode lastOf(Sse sse, String type) {

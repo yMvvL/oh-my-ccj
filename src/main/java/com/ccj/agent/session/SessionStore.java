@@ -46,6 +46,41 @@ public final class SessionStore {
     return FileSession.open(sessionsDir, id);
   }
 
+  /** Deletes one session file. Returns false when there was nothing to delete. */
+  public static boolean delete(Path sessionsDir, String id) {
+    if (!FileSession.isValidId(id)) {
+      throw new IllegalArgumentException("invalid session id: " + id);
+    }
+    try {
+      return Files.deleteIfExists(FileSession.fileFor(sessionsDir, id));
+    } catch (IOException e) {
+      throw new UncheckedIOException("cannot delete session " + id, e);
+    }
+  }
+
+  /**
+   * Deletes every session in one directory — the cleanup path for a pile of test runs.
+   *
+   * @return how many files were removed
+   */
+  public static int deleteAll(Path sessionsDir) {
+    if (sessionsDir == null || !Files.isDirectory(sessionsDir)) {
+      return 0;
+    }
+    int deleted = 0;
+    try (Stream<Path> entries = Files.list(sessionsDir)) {
+      for (Path file : entries.toList()) {
+        if (file.getFileName().toString().endsWith(FileSession.EXTENSION)) {
+          Files.deleteIfExists(file);
+          deleted++;
+        }
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException("cannot clear sessions in " + sessionsDir, e);
+    }
+    return deleted;
+  }
+
   /** Newest-first summaries; an absent directory is simply an empty history. */
   public static List<Summary> list(Path sessionsDir) {
     if (sessionsDir == null || !Files.isDirectory(sessionsDir)) {

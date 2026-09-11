@@ -24,11 +24,17 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `POST` | `/api/auto-approve` | `{"enabled": true}` — flip the whole session to auto-approve |
 | `POST` | `/api/session` | `{"action": "new"}` or `{"action": "resume", "id": "..."}` |
 | `GET` | `/api/sessions` | session summaries, newest first |
+| `DELETE` | `/api/sessions` | delete every session in the active workspace |
+| `DELETE` | `/api/session?id=...` | delete one session |
+| `POST` | `/api/workspaces/browse` | open the desktop's folder chooser and return the path |
 | `GET` | `/api/history` | the current session replayed as render events (see below) |
 | `GET` | `/api/workspaces` | every workspace, with the active one, its path and its session count |
 | `POST` | `/api/workspaces` | `{"name": "...", "path": "..."}` — register a workspace (creates the directory) |
 | `POST` | `/api/workspace` | `{"name": "..."}` — switch to a workspace |
 | `DELETE` | `/api/workspace?name=...` | forget a workspace; its session files stay on disk |
+| `GET` | `/api/models` | the provider catalogue: providers, their protocol and endpoint, their models |
+| `GET`/`POST` | `/api/providers` | list or define a provider (`{name, kind, baseUrl, apiKeyEnv, models}`) |
+| `DELETE` | `/api/providers?name=...` | remove a definition; the one in use is protected |
 | `GET` | `/api/config` | what the settings form needs: current values, whether a key exists, where it is stored |
 | `POST` | `/api/config` | save provider/model/key settings and switch to them immediately |
 | `POST` | `/api/config/test` | send one tiny request with the posted settings **without saving** |
@@ -59,6 +65,62 @@ decision, because a session only makes sense next to the files it was talking ab
 - `DELETE` only forgets the registry entry. Deleting conversation files because a folder was removed
   from a list would be a surprising thing for a tool to do.
 - `ccj --workspace <name>` does the same thing for the terminal front end.
+
+## Deleting sessions
+
+Deleting is the cleanup path for a pile of experiment sessions, so it is explicit and reversible only
+in the sense that a deleted file is gone:
+
+- `DELETE /api/session?id=<id>` removes one file. Ids are validated against the same pattern used for
+  file names, so `../` can never reach the filesystem.
+- `DELETE /api/sessions` clears the **active workspace**, and only session files inside it — other
+  files in that directory are left alone.
+- Deleting the active session starts a fresh one and publishes a `status` event, which is how the
+  page learns it should clear and start over. The response is the refreshed session list.
+- Empty sessions are not a problem to clean up: they were never written to disk in the first place.
+
+## Choosing a folder
+
+A browser cannot supply an absolute path — the File System Access API returns a directory handle
+with a name and nothing else, by design — so the button asks the **server**, which is running on the
+machine the user is sitting at, to open the desktop's own chooser. Preference order is `zenity`, then
+`kdialog` (both are native dialogs needing no toolkit), then Swing's `JFileChooser`. A headless
+machine, or one with none of those, gets `400` with a message telling the user to type the path, and
+the text field keeps working. Only one chooser can be open at a time, and one that is never answered
+is dismissed after two minutes and reported as `cancelled` — a modal dialog must never be able to
+wedge the server.
+
+## Theme
+
+Three states — **System**, **Light**, **Dark** — cycled from one control in the header, with the
+choice kept in `localStorage` and System following `prefers-color-scheme` live. The theme variable is
+set on `<html>` by an inline script in `<head>` before the stylesheet paints, so a reload never shows
+the wrong theme first. Dark and light are both attribute-driven (`:root` and `:root[data-theme]`),
+because a manual choice has to be able to override the operating system.
+
+## Custom providers
+
+The built-in names are code; anything else is a definition the user owns, kept in
+`<home>/providers.json`:
+
+```json
+{"providers": {
+   "myrelay": {"kind": "openai", "baseUrl": "https://relay.example.com/v1",
+               "apiKeyEnv": "MY_KEY", "models": ["deepseek-v4-flash", "gpt-5.5"]}}}
+```
+
+- `kind` is the wire protocol (`openai` covers every `/chat/completions` endpoint, `anthropic` the
+  messages API), which is what makes a relay, a gateway, a local vLLM or a personal router usable
+  without a release. Only two protocols exist, and anything else is rejected as a typo.
+- A definition's `baseUrl` is used even though `Config.resolved()` fills in the OpenAI default for an
+  unrecognised name; an explicitly configured `baseUrl` still wins over both, and that precedence is
+  pinned by a test.
+- Definitions are validated before they are stored, and a definition that could not work is never
+  selectable. Removing the provider currently in use is refused — the next turn would have nowhere to
+  go — and switching away makes it removable.
+- The catalogue endpoint (`/api/models`) is what the settings form reads. It is deliberately
+  synchronous and offline: a settings form must render instantly, and a router-backed catalogue can
+  cache whatever it fetches. See [ROUTER.md](ROUTER.md).
 
 ## Settings
 

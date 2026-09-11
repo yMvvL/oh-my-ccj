@@ -109,6 +109,9 @@
     btnSettings: $('btn-settings'),
     btnAbort: $('btn-abort'),
     btnSide: $('btn-side'),
+    btnTheme: $('btn-theme'),
+    themeIcon: $('theme-icon'),
+    themeLabel: $('theme-label'),
     transcript: $('transcript'),
     jump: $('jump'),
     composer: $('composer'),
@@ -137,6 +140,9 @@
     overlay: $('sessions-overlay'),
     sessionsBody: $('sessions-body'),
     sessionsClose: $('sessions-close'),
+    sessionsNote: $('sessions-note'),
+    sessionsError: $('sessions-error'),
+    sessionsDeleteAllHost: $('sessions-delete-all-host'),
     workspaceOverlay: $('workspace-overlay'),
     workspaceList: $('workspace-list'),
     workspaceClose: $('workspace-close'),
@@ -146,6 +152,8 @@
     workspaceSave: $('workspace-save'),
     wsNewName: $('ws-new-name'),
     wsNewPath: $('ws-new-path'),
+    wsBrowse: $('ws-browse'),
+    wsBrowseHint: $('ws-browse-hint'),
     wsNameError: $('ws-name-error'),
     wsPathError: $('ws-path-error'),
     settingsOverlay: $('settings-overlay'),
@@ -157,7 +165,12 @@
     settingsSave: $('settings-save'),
     settingsFoot: $('settings-foot'),
     cfgProvider: $('cfg-provider'),
+    cfgProviderOptions: $('cfg-provider-options'),
+    cfgProviderHint: $('cfg-provider-hint'),
+    cfgProviderError: $('cfg-provider-error'),
     cfgModel: $('cfg-model'),
+    cfgModelOptions: $('cfg-model-options'),
+    cfgModelHint: $('cfg-model-hint'),
     cfgModelError: $('cfg-model-error'),
     cfgBaseUrl: $('cfg-baseurl'),
     cfgApiKey: $('cfg-apikey'),
@@ -168,7 +181,21 @@
     cfgApiKeyEnv: $('cfg-apikeyenv'),
     cfgApiKeyEnvHint: $('cfg-apikeyenv-hint'),
     cfgMaxSteps: $('cfg-maxsteps'),
-    cfgTemperature: $('cfg-temperature')
+    cfgTemperature: $('cfg-temperature'),
+    cfgProvidersNote: $('cfg-providers-note'),
+    cfgProviderList: $('cfg-provider-list'),
+    cfgProviderAddToggle: $('cfg-provider-add-toggle'),
+    cfgProviderForm: $('cfg-provider-form'),
+    cfgNewName: $('cfg-new-name'),
+    cfgNewNameError: $('cfg-new-name-error'),
+    cfgNewKind: $('cfg-new-kind'),
+    cfgNewKindError: $('cfg-new-kind-error'),
+    cfgNewBaseUrl: $('cfg-new-baseurl'),
+    cfgNewBaseUrlError: $('cfg-new-baseurl-error'),
+    cfgNewApiKeyEnv: $('cfg-new-apikeyenv'),
+    cfgNewModels: $('cfg-new-models'),
+    cfgProviderFormError: $('cfg-provider-form-error'),
+    cfgProviderSave: $('cfg-provider-save')
   };
 
   // ---------------------------------------------------------------- state
@@ -193,7 +220,10 @@
     historyInFlight: false,
     replaying: false,      // rendering a history snapshot, not the live stream
     pendingLive: [],       // SSE messages held back until a replay lands
-    usage: null            // last usage object seen (event or status)
+    usage: null,           // last usage object seen (event or status)
+    catalog: null,         // {providers, models} from GET /api/models, null until loaded
+    catalogError: '',      // why the last catalogue refresh failed; '' when it worked
+    configProviders: []    // provider names the server says are usable (GET /api/config)
   };
 
   // --------------------------------------------------------- text batching
@@ -1094,43 +1124,289 @@
     source.onmessage = handleMessage;
   }
 
+  // ----------------------------------------------------------------- theme
+
+  /* Three states on one control, cycled Light → Dark → System. The palette
+   * itself is CSS, driven by data-theme on <html>; this only picks the value
+   * and keeps the label honest. A manual choice always beats the OS: the OS is
+   * consulted exactly while the choice is "System". */
+  const THEME_KEY = 'ccj.theme';
+  const THEME_CYCLE = ['light', 'dark', 'system'];
+  const THEME_ICON = { light: '☀', dark: '☾', system: '◐' };
+  const THEME_LABEL = { light: 'Light', dark: 'Dark', system: 'System' };
+  const systemTheme = window.matchMedia('(prefers-color-scheme: light)');
+
+  let themePref = 'system';
+
+  function nextTheme(pref) {
+    return THEME_CYCLE[(THEME_CYCLE.indexOf(pref) + 1) % THEME_CYCLE.length];
+  }
+
+  /* localStorage can be unavailable (private windows, blocked storage); the
+   * page must still render in a theme, so a refusal falls back to System. */
+  function storedTheme() {
+    let value = '';
+    try { value = str(localStorage.getItem(THEME_KEY)); } catch (err) { value = ''; }
+    return THEME_CYCLE.indexOf(value) >= 0 ? value : 'system';
+  }
+
+  function visibleTheme(pref) {
+    return pref === 'system' ? (systemTheme.matches ? 'light' : 'dark') : pref;
+  }
+
+  /* index.html resolves the same thing inline before the first paint; doing it
+   * again here is idempotent and keeps one function as the source of truth. */
+  function applyTheme() {
+    const theme = visibleTheme(themePref);
+    const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
+    root.setAttribute('data-theme-pref', themePref);
+    root.style.colorScheme = theme;
+    dom.themeIcon.textContent = THEME_ICON[themePref];
+    dom.themeLabel.textContent = THEME_LABEL[themePref];
+    dom.btnTheme.title = 'Theme: ' + THEME_LABEL[themePref]
+      + (themePref === 'system' ? ' (follows the desktop)' : '')
+      + ' — click for ' + THEME_LABEL[nextTheme(themePref)];
+    dom.btnTheme.setAttribute('aria-label',
+      'Theme: ' + THEME_LABEL[themePref] + '. Switch to ' + THEME_LABEL[nextTheme(themePref)] + '.');
+  }
+
+  function setTheme(pref) {
+    themePref = pref;
+    try { localStorage.setItem(THEME_KEY, pref); } catch (err) { /* the choice still holds this visit */ }
+    applyTheme();
+  }
+
+  function initTheme() {
+    themePref = storedTheme();
+    applyTheme();
+    dom.btnTheme.addEventListener('click', function () { setTheme(nextTheme(themePref)); });
+    // The desktop can change under a System choice — sunset, a schedule, a
+    // different monitor — so follow the media query instead of snapshotting it.
+    systemTheme.addEventListener('change', function () {
+      if (themePref === 'system') { applyTheme(); }
+    });
+  }
+
   // ------------------------------------------------------------ sessions
 
-  function closeSessions() { dom.overlay.hidden = true; }
+  /* Why the transcript is empty when we emptied it: the server publishes a
+   * notice for a delete, but it is published *before* the new session's status
+   * clears the pane, so the user is left looking at a blank transcript with no
+   * reason for it. */
+  const FRESH_SESSION = ' ccj started a fresh session, so the transcript behind this dialog is empty.';
+
+  let sessionsPayload = null;   // the answer the list on screen was built from
+  let sessionsBusy = false;     // a delete request is in flight
+
+  function closeSessions() {
+    dom.overlay.hidden = true;
+    deleteAllControl.reset();   // never leave a question hanging in a closed dialog
+  }
+
+  function sessionNote(text) {
+    dom.sessionsNote.textContent = str(text);
+    dom.sessionsNote.hidden = !text;
+  }
+
+  function sessionError(text) {
+    dom.sessionsError.textContent = str(text);
+    dom.sessionsError.hidden = !text;
+  }
+
+  function sessionsIn(payload) {
+    return payload && Array.isArray(payload.sessions) ? payload.sessions : [];
+  }
+
+  function activeSessionId() { return str(state.status && state.status.sessionId); }
+
+  /* Only the placeholder counts as empty: anything else in the pane is content
+   * the user can already read. */
+  function transcriptEmpty() {
+    return !dom.transcript.querySelector(':not(.placeholder)');
+  }
+
+  /* Deleting is destructive and there is no undo, so one click only *arms* it:
+   * the button is replaced in place by the question and a way out, the question
+   * takes focus, and the second click is what spends the file.
+   *
+   * `words` lets a caller say "Remove" instead of "Delete" without a second
+   * implementation of the same gesture. */
+  function deleteControl(host, label, onConfirm, words) {
+    const askLabel = (words && words.confirm) || 'Delete?';
+    const busyLabel = (words && words.busy) || 'Deleting…';
+    const idle = el('button', 'btn danger sm', label);
+    const ask = el('span', 'confirm-row');
+    const yes = el('button', 'btn danger sm', askLabel);
+    const no = el('button', 'btn ghost sm', 'Cancel');
+    idle.type = 'button'; yes.type = 'button'; no.type = 'button';
+    ask.hidden = true;
+    ask.appendChild(yes);
+    ask.appendChild(no);
+    host.appendChild(idle);
+    host.appendChild(ask);
+
+    const control = { idle: idle, ask: ask, yes: yes, no: no, armed: false };
+
+    control.reset = function () {
+      control.armed = false;
+      idle.hidden = false;
+      ask.hidden = true;
+      yes.disabled = false;
+      no.disabled = false;
+      yes.textContent = askLabel;
+    };
+    control.arm = function () {
+      control.armed = true;
+      idle.hidden = true;
+      ask.hidden = false;
+      yes.focus();
+    };
+    control.busy = function () {
+      yes.disabled = true;
+      no.disabled = true;
+      yes.textContent = busyLabel;
+    };
+
+    idle.addEventListener('click', control.arm);
+    no.addEventListener('click', function () { control.reset(); idle.focus(); });
+    yes.addEventListener('click', function () { onConfirm(control); });
+    return control;
+  }
+
+  /* The list is always rebuilt from the server's answer — the server owns the
+   * state, including the fresh session it starts when the active one goes.
+   * `focus` is a row index or 'first': the rebuilt list would otherwise drop
+   * the keyboard onto <body> mid-task. */
+  function renderSessions(payload, focus) {
+    const list = sessionsIn(payload);
+    const active = activeSessionId();
+    sessionsPayload = payload;
+    deleteAllControl.reset();
+    deleteAllControl.idle.disabled = !list.length;
+
+    dom.sessionsBody.textContent = '';
+    if (!list.length) {
+      dom.sessionsBody.appendChild(el('p', 'muted', 'No saved sessions in this workspace.'));
+      dom.sessionsBody.appendChild(el('p', 'muted',
+        'A session only gets a file once it has messages, so an empty chat leaves nothing here.'));
+      // Nothing to land on: the way out is the only control left.
+      dom.sessionsClose.focus();
+      return;
+    }
+
+    const ul = el('ul', 'session-list');
+    list.forEach(function (item, index) {
+      const id = str(item.id);
+      const current = id !== '' && id === active;
+      const li = el('li', 'session-row' + (current ? ' current' : ''));
+      if (current) { li.setAttribute('aria-current', 'true'); }
+
+      const btn = el('button', 'session-item');
+      btn.type = 'button';
+      btn.appendChild(el('span', 'session-id', id));
+      if (item.preview) { btn.appendChild(el('span', 'session-preview', clip(firstLine(item.preview), 200))); }
+      const meta = el('span', 'session-meta');
+      const count = Number(item.messageCount);
+      const messages = isFinite(count) ? count : 0;
+      meta.appendChild(el('span', null, messages === 1 ? '1 message' : messages + ' messages'));
+      meta.appendChild(el('span', null, timeLabel(item.lastModified)));
+      btn.appendChild(meta);
+      btn.addEventListener('click', function () { switchSession({ action: 'resume', id: id }, btn); });
+
+      const actions = el('span', 'session-actions');
+      const remove = deleteControl(actions, 'Delete', function (control) {
+        deleteSession(id, index, control, btn);
+      });
+      remove.idle.title = 'Delete ' + id + ' from disk';
+
+      li.appendChild(btn);
+      li.appendChild(actions);
+      ul.appendChild(li);
+    });
+    dom.sessionsBody.appendChild(ul);
+
+    const rows = dom.sessionsBody.querySelectorAll('.session-item');
+    const target = typeof focus === 'number'
+      ? rows[Math.min(Math.max(0, focus), rows.length - 1)]
+      : rows[0];
+    (target || dom.sessionsClose).focus();
+  }
 
   async function openSessions() {
     dom.overlay.hidden = false;
+    sessionError('');
+    sessionNote('');
+    deleteAllControl.reset();
     dom.sessionsBody.textContent = '';
     dom.sessionsBody.appendChild(el('p', 'muted', 'Loading…'));
     try {
-      const data = await request('/api/sessions');
-      const list = data && Array.isArray(data.sessions) ? data.sessions : [];
-      dom.sessionsBody.textContent = '';
-      if (!list.length) {
-        dom.sessionsBody.appendChild(el('p', 'muted', 'No saved sessions.'));
-        return;
-      }
-      const ul = el('ul', 'session-list');
-      list.forEach(function (item) {
-        const li = el('li');
-        const btn = el('button', 'session-item');
-        btn.type = 'button';
-        const current = str(item.id) === str(state.status && state.status.sessionId);
-        if (current) { btn.classList.add('current'); }
-        btn.appendChild(el('span', 'session-id', str(item.id)));
-        if (item.preview) { btn.appendChild(el('span', 'session-preview', clip(firstLine(item.preview), 200))); }
-        const meta = el('span', 'session-meta');
-        meta.appendChild(el('span', null, str(Number(item.messageCount) || 0) + ' messages'));
-        meta.appendChild(el('span', null, timeLabel(item.lastModified)));
-        btn.appendChild(meta);
-        btn.addEventListener('click', function () { switchSession({ action: 'resume', id: str(item.id) }, btn); });
-        li.appendChild(btn);
-        ul.appendChild(li);
-      });
-      dom.sessionsBody.appendChild(ul);
+      renderSessions(await request('/api/sessions'), 'first');
     } catch (err) {
       dom.sessionsBody.textContent = '';
       dom.sessionsBody.appendChild(el('p', 'err', 'Could not load sessions: ' + err.message));
+      deleteAllControl.idle.disabled = true;
+      dom.sessionsClose.focus();
+    }
+  }
+
+  /* A row delete: the answer is the new list, and the row's index is where the
+   * keyboard goes back to. A failure leaves the list exactly as it was, with
+   * the server's message above it — nothing is left half-armed. */
+  async function deleteSession(id, index, control, rowButton) {
+    if (sessionsBusy) { return; }
+    sessionsBusy = true;
+    control.busy();
+    rowButton.disabled = true;
+    sessionError('');
+    sessionNote('');
+    const active = id !== '' && id === activeSessionId();
+    try {
+      const res = await request('/api/session?id=' + encodeURIComponent(id), { method: 'DELETE' });
+      renderSessions(res, index);
+      sessionNote('Deleted ' + clip(id, 44) + '.' + (active ? FRESH_SESSION : ''));
+      await afterSessionDelete(active);
+    } catch (err) {
+      sessionError('Could not delete ' + clip(id, 44) + ': ' + str(err && err.message));
+      renderSessions(sessionsPayload, index);
+    } finally {
+      sessionsBusy = false;
+    }
+  }
+
+  async function deleteAllSessions(control) {
+    if (sessionsBusy) { return; }
+    sessionsBusy = true;
+    control.busy();
+    sessionError('');
+    sessionNote('');
+    const before = sessionsIn(sessionsPayload).length;
+    try {
+      const res = await request('/api/sessions', { method: 'DELETE' });
+      const left = sessionsIn(res).length;
+      const gone = Math.max(0, before - left);
+      renderSessions(res, 'first');
+      sessionNote((gone === 1 ? 'Deleted 1 session.' : 'Deleted ' + gone + ' sessions.') + FRESH_SESSION);
+      await afterSessionDelete(true);
+    } catch (err) {
+      sessionError('Could not delete the sessions: ' + str(err && err.message));
+      renderSessions(sessionsPayload, 'first');
+    } finally {
+      sessionsBusy = false;
+    }
+  }
+
+  /* Deleting the active session makes the server hand out a new id, and the
+   * page follows it by clearing the transcript — which is right, but looks like
+   * something broke unless the pane says why. Reconcile from the server first
+   * (so the header is not waiting on the stream), then explain the empty pane,
+   * but only if nobody else has. */
+  async function afterSessionDelete(active) {
+    if (!active) { return; }
+    await refreshStatus();
+    if (state.historyPromise) { await state.historyPromise; }
+    if (transcriptEmpty()) {
+      appendNotice('The session you were in was deleted — ccj started a fresh one, so this transcript is empty.');
     }
   }
 
@@ -1165,6 +1441,8 @@
       node.textContent = '';
       node.hidden = true;
     });
+    dom.wsBrowseHint.textContent = '';
+    dom.wsBrowseHint.hidden = true;
   }
 
   /* One 400 message per refusal, and the field it belongs to is decided here:
@@ -1265,6 +1543,36 @@
     await loadWorkspaces();
   }
 
+  /* The chooser runs on the machine that serves the page, so this request *is*
+   * the desktop dialog: it blocks until the user answers, or the server gives
+   * up after two minutes and reports a cancel. Either way the field is the
+   * fallback — a 400 (no desktop, no chooser) is shown next to it and stays
+   * typed-in-able. */
+  async function browseWorkspacePath() {
+    clearWorkspaceErrors();
+    dom.wsBrowse.disabled = true;
+    dom.wsBrowse.textContent = 'Waiting…';
+    dom.wsBrowseHint.textContent = 'A folder chooser was opened on the desktop — choose a folder in that window.';
+    dom.wsBrowseHint.hidden = false;
+    try {
+      const res = await request('/api/workspaces/browse', { method: 'POST' });
+      if (res && typeof res === 'object' && res.path && !res.cancelled) {
+        dom.wsNewPath.value = str(res.path);
+        dom.wsBrowseHint.textContent = '';
+        dom.wsBrowseHint.hidden = true;
+        dom.wsNewPath.focus();
+      } else {
+        dom.wsBrowseHint.textContent = 'No folder chosen — the chooser was dismissed. Type the path instead.';
+      }
+    } catch (err) {
+      dom.wsBrowseHint.hidden = true;
+      fieldError(dom.wsPathError, str(err && err.message) || 'Could not open a folder chooser.');
+      dom.wsNewPath.focus();
+    }
+    dom.wsBrowse.disabled = false;
+    dom.wsBrowse.textContent = 'Browse…';
+  }
+
   async function addWorkspace() {
     clearWorkspaceErrors();
     const name = dom.wsNewName.value.trim();
@@ -1343,7 +1651,7 @@
   function clearSettingsErrors() {
     dom.settingsError.textContent = '';
     dom.settingsError.hidden = true;
-    [dom.cfgModelError, dom.cfgApiKeyError].forEach(function (node) {
+    [dom.cfgProviderError, dom.cfgModelError, dom.cfgApiKeyError].forEach(function (node) {
       node.textContent = '';
       node.hidden = true;
     });
@@ -1359,18 +1667,362 @@
     return isFinite(n) ? n : undefined;
   }
 
-  function renderSettings(cfg) {
-    // The provider list comes from the server; the current value is kept even
-    // if this build of the server does not list it.
-    const providers = Array.isArray(cfg.providers) ? cfg.providers.slice() : [];
-    const current = str(cfg.provider);
-    if (current && providers.indexOf(current) < 0) { providers.unshift(current); }
-    if (!providers.length) { providers.push(current || 'custom'); }
-    dom.cfgProvider.textContent = '';
-    providers.forEach(function (name) {
-      dom.cfgProvider.appendChild(el('option', null, str(name)));
+  // --------------------------------------------------- provider catalogue
+
+  /* The catalogue (GET /api/models) is what the settings form offers: which
+   * providers exist, which of them are the user's own, and which models each
+   * one serves. It is optional — a typed name and a typed model still work —
+   * so a failed refresh is recorded and shown, never thrown. */
+  async function refreshCatalog() {
+    try {
+      setCatalog(await request('/api/models'));
+    } catch (err) {
+      // Keep the previous catalogue: stale suggestions beat none.
+      state.catalogError = err && err.status === 404
+        ? 'this server build does not serve a provider catalogue (GET /api/models answered 404)'
+        : (str(err && err.message) || 'the catalogue could not be loaded');
+    }
+    renderProviderOptions();
+    renderModelOptions(dom.cfgProvider.value.trim());
+    renderProviderHint();
+    renderProviderSection();
+  }
+
+  /* Only object entries are kept: a catalogue is a list of provider records
+   * with a name, a kind, an endpoint and models. */
+  function setCatalog(payload) {
+    const records = function (list) {
+      return (Array.isArray(list) ? list : []).filter(function (entry) {
+        return entry && typeof entry === 'object';
+      });
+    };
+    state.catalog = {
+      providers: records(payload && payload.providers),
+      models: records(payload && payload.models)
+    };
+    state.catalogError = '';
+  }
+
+  /* Names are matched case-insensitively, the way the server matches them. */
+  function providerInfo(name) {
+    const wanted = str(name).trim().toLowerCase();
+    if (!wanted || !state.catalog) { return null; }
+    let found = null;
+    state.catalog.providers.forEach(function (entry) {
+      if (!found && str(entry.name).toLowerCase() === wanted) { found = entry; }
     });
-    dom.cfgProvider.value = current || str(providers[0]);
+    return found;
+  }
+
+  function catalogModelsFor(provider) {
+    const wanted = str(provider).trim().toLowerCase();
+    if (!wanted || !state.catalog) { return []; }
+    return state.catalog.models.filter(function (entry) {
+      return str(entry.provider).toLowerCase() === wanted;
+    });
+  }
+
+  function customProviders() {
+    if (!state.catalog) { return []; }
+    return state.catalog.providers.filter(function (entry) { return entry.builtIn !== true; });
+  }
+
+  /* The Provider field is an input, not a <select>: the server accepts any name
+   * defined in providers.json, including one this build has never heard of, so
+   * the field must be able to hold a name the list does not have — and must
+   * never snap a typed name back to a listed one. The <datalist> is still a
+   * dropdown of everything the server knows, labelled with where it came from. */
+  function renderProviderOptions() {
+    const names = [];
+    const add = function (name) {
+      const clean = str(name).trim();
+      if (clean && names.indexOf(clean) < 0) { names.push(clean); }
+    };
+    state.configProviders.forEach(add);                       // the server's own usable list
+    if (state.catalog) { state.catalog.providers.forEach(function (p) { add(p.name); }); }
+    dom.cfgProviderOptions.textContent = '';
+    names.forEach(function (name) {
+      const option = document.createElement('option');
+      option.value = name;
+      const info = providerInfo(name);
+      if (info) {
+        option.label = name + (info.builtIn === true ? ' · built-in' : ' · your provider');
+      }
+      dom.cfgProviderOptions.appendChild(option);
+    });
+  }
+
+  /* The model dropdown is the catalogue filtered to one provider, so picking a
+   * provider narrows the list instead of mixing every model together. */
+  function renderModelOptions(provider) {
+    const entries = catalogModelsFor(provider);
+    dom.cfgModelOptions.textContent = '';
+    entries.forEach(function (entry) {
+      const option = document.createElement('option');
+      option.value = str(entry.model);
+      // The source rides on the label: a model that came from a router must be
+      // tellable apart from one that came out of the config file.
+      const source = str(entry.source);
+      if (source) { option.label = str(entry.model) + ' · ' + source; }
+      dom.cfgModelOptions.appendChild(option);
+    });
+    renderModelHint(provider, entries);
+  }
+
+  function renderModelHint(provider, entries) {
+    const name = str(provider).trim();
+    let text = '';
+    if (name && state.catalog) {
+      if (entries.length) {
+        const sources = [];
+        entries.forEach(function (entry) {
+          const source = str(entry.source);
+          if (source && sources.indexOf(source) < 0) { sources.push(source); }
+        });
+        text = (entries.length === 1 ? '1 model' : entries.length + ' models') + ' for ' + name
+          + (sources.length ? ' · source: ' + sources.join(', ') : '');
+      } else if (providerInfo(name)) {
+        text = name + ' lists no models — type the model name.';
+      }
+    }
+    dom.cfgModelHint.textContent = text;
+    dom.cfgModelHint.hidden = !text;
+  }
+
+  /* Says what the typed name is: compiled in, the user's own, or not defined
+   * yet — the last one is a real state now, not a typo to hide. */
+  function renderProviderHint() {
+    const name = dom.cfgProvider.value.trim();
+    const info = providerInfo(name);
+    let text = '';
+    if (info) {
+      const parts = [info.builtIn === true ? 'built-in provider' : 'your own provider'];
+      if (str(info.kind)) { parts.push('protocol ' + str(info.kind)); }
+      const count = Array.isArray(info.models) ? info.models.length : 0;
+      parts.push(count === 1 ? '1 model' : count + ' models');
+      text = parts.join(' · ');
+    } else if (name && state.catalog) {
+      text = '"' + name + '" is not defined on this server yet — add it under Your providers below,'
+        + ' or save it as typed.';
+    }
+    dom.cfgProviderHint.textContent = text;
+    dom.cfgProviderHint.hidden = !text;
+  }
+
+  /* A provider's endpoint and key variable belong to the provider, so choosing
+   * a known one fills them in. This also matters for correctness: the server
+   * treats a base URL that differs from the provider's default as an explicit
+   * override, so a previous provider's URL left in the field would silently win
+   * over the definition just selected. */
+  function providerChanged() {
+    const name = dom.cfgProvider.value.trim();
+    renderModelOptions(name);
+    renderProviderHint();
+    const info = providerInfo(name);
+    if (!info) { return; }
+    if (str(info.baseUrl)) { dom.cfgBaseUrl.value = str(info.baseUrl); }
+    dom.cfgApiKeyEnv.value = str(info.kind) === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+    const models = Array.isArray(info.models) ? info.models.map(str) : [];
+    if (models.length && models.indexOf(dom.cfgModel.value.trim()) < 0) {
+      dom.cfgModel.value = models[0];
+    }
+  }
+
+  // ------------------------------------------- your providers (custom ones)
+
+  function clearProviderFormErrors() {
+    [dom.cfgNewNameError, dom.cfgNewKindError, dom.cfgNewBaseUrlError, dom.cfgProviderFormError]
+      .forEach(function (node) {
+        node.textContent = '';
+        node.hidden = true;
+      });
+  }
+
+  function providerNote(text) {
+    dom.cfgProvidersNote.textContent = str(text);
+    dom.cfgProvidersNote.hidden = !text;
+  }
+
+  /* A 404 here is not a failure of the request but of the build: the two
+   * provider endpoints are newer than the rest of the API. Saying so is the
+   * difference between "nothing happened" and "it worked, trust me". */
+  function providersUnsupported(action, method) {
+    return 'This server build does not support ' + action + ' yet, so nothing was changed'
+      + ' (' + method + ' /api/providers answered 404).';
+  }
+
+  function activeProviderName() {
+    return str(state.status && state.status.provider).trim();
+  }
+
+  function providerRow(info) {
+    const name = str(info.name);
+    const li = el('li', 'provider-item');
+    li.setAttribute('data-provider', name);
+
+    const top = el('div', 'provider-top');
+    top.appendChild(el('span', 'provider-name', name));
+    top.appendChild(el('span', 'provider-badge', str(info.kind) || 'openai'));
+    if (name && name.toLowerCase() === activeProviderName().toLowerCase()) {
+      top.appendChild(el('span', 'provider-badge in-use', 'in use'));
+    }
+    const actions = el('span', 'provider-actions');
+    const remove = deleteControl(actions, 'Remove', function (control) {
+      removeProvider(name, control);
+    }, { confirm: 'Remove?', busy: 'Removing…' });
+    remove.idle.title = 'Remove the definition of ' + name + ' — its models stop being offered';
+    top.appendChild(actions);
+
+    const count = Array.isArray(info.models) ? info.models.length : 0;
+    li.appendChild(top);
+    li.appendChild(el('span', 'provider-url', str(info.baseUrl) || '—'));
+    li.appendChild(el('span', 'provider-meta',
+      count === 0 ? 'no models listed' : count === 1 ? '1 model' : count + ' models'));
+    return li;
+  }
+
+  /* Built-ins are code, so this list is only ever the user's own definitions —
+   * and it says so out loud when there are none, rather than leaving an empty
+   * box whose meaning the user has to guess. */
+  function renderProviderSection() {
+    dom.cfgProviderList.textContent = '';
+    if (state.catalogError) {
+      dom.cfgProviderList.appendChild(el('li', 'muted',
+        'Providers could not be listed: ' + state.catalogError));
+      return;
+    }
+    const custom = customProviders();
+    if (!custom.length) {
+      dom.cfgProviderList.appendChild(el('li', 'muted provider-empty', 'No custom providers yet.'));
+      return;
+    }
+    custom.forEach(function (info) { dom.cfgProviderList.appendChild(providerRow(info)); });
+  }
+
+  function setProviderFormOpen(open) {
+    dom.cfgProviderForm.hidden = !open;
+    dom.cfgProviderAddToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  /* Both provider endpoints answer with the whole catalogue, so the list, the
+   * dropdowns and the model counts all come from the server's answer — never
+   * from the form's own idea of what it just sent. */
+  function acceptCatalogue(payload, note) {
+    if (payload && typeof payload === 'object' && Array.isArray(payload.providers)) {
+      setCatalog(payload);
+    }
+    renderProviderOptions();
+    renderModelOptions(dom.cfgProvider.value.trim());
+    renderProviderHint();
+    renderProviderSection();
+    providerNote(note);
+  }
+
+  function parseModelList(raw) {
+    const models = [];
+    str(raw).split(',').forEach(function (part) {
+      const name = part.trim();
+      if (name && models.indexOf(name) < 0) { models.push(name); }
+    });
+    return models;
+  }
+
+  /* One 400 message per refusal, and the field it belongs to is decided here:
+   * a bad name lands under Name, the protocol under Protocol, the endpoint
+   * under Base URL — the same rule the workspaces form uses. */
+  function showProviderFormError(err) {
+    const message = str(err && err.message) || 'Could not add the provider.';
+    if (err && err.status === 404) {
+      providerNote(providersUnsupported('adding providers', 'POST'));
+      return;
+    }
+    if (/kind|protocol/i.test(message)) {
+      fieldError(dom.cfgNewKindError, message);
+      dom.cfgNewKind.focus();
+    } else if (/base\s*url|url|endpoint/i.test(message)) {
+      fieldError(dom.cfgNewBaseUrlError, message);
+      dom.cfgNewBaseUrl.focus();
+    } else if (/name|duplicate|exist|taken|reserved/i.test(message)) {
+      fieldError(dom.cfgNewNameError, message);
+      dom.cfgNewName.focus();
+    } else {
+      dom.cfgProviderFormError.textContent = message;
+      dom.cfgProviderFormError.hidden = false;
+    }
+  }
+
+  async function addProvider() {
+    providerNote('');
+    clearProviderFormErrors();
+    const name = dom.cfgNewName.value.trim();
+    const baseUrl = dom.cfgNewBaseUrl.value.trim();
+    if (!name) {
+      fieldError(dom.cfgNewNameError, 'Enter a name for the provider.');
+      dom.cfgNewName.focus();
+      return;
+    }
+    if (!baseUrl) {
+      fieldError(dom.cfgNewBaseUrlError, 'Enter the base URL this provider is reached at.');
+      dom.cfgNewBaseUrl.focus();
+      return;
+    }
+    const payload = {
+      name: name,
+      kind: dom.cfgNewKind.value,
+      baseUrl: baseUrl,
+      apiKeyEnv: dom.cfgNewApiKeyEnv.value.trim(),
+      models: parseModelList(dom.cfgNewModels.value)
+    };
+    dom.cfgProviderSave.disabled = true;
+    try {
+      const res = await postJSON('/api/providers', payload);
+      dom.cfgNewName.value = '';
+      dom.cfgNewBaseUrl.value = '';
+      dom.cfgNewApiKeyEnv.value = '';
+      dom.cfgNewModels.value = '';
+      acceptCatalogue(res, 'Provider ' + name + ' saved — select it above and press Save to use it.');
+      // Defining the name that is already typed above settles that row's fields.
+      if (dom.cfgProvider.value.trim().toLowerCase() === name.toLowerCase()) { providerChanged(); }
+    } catch (err) {
+      showProviderFormError(err);
+    }
+    dom.cfgProviderSave.disabled = false;
+  }
+
+  async function removeProvider(name, control) {
+    providerNote('');
+    clearProviderFormErrors();
+    control.busy();
+    try {
+      const res = await request('/api/providers?name=' + encodeURIComponent(name), { method: 'DELETE' });
+      // The answer is the new catalogue; the /api/config name list is older, so
+      // the removed name is dropped here rather than offered until the next open.
+      const gone = str(name).trim().toLowerCase();
+      state.configProviders = state.configProviders.filter(function (entry) {
+        return str(entry).trim().toLowerCase() !== gone;
+      });
+      acceptCatalogue(res, 'Provider ' + name + ' removed.');
+    } catch (err) {
+      control.reset();
+      providerNote(err && err.status === 404
+        ? providersUnsupported('removing providers', 'DELETE')
+        : 'Could not remove ' + name + ': ' + str(err && err.message));
+    }
+  }
+
+  function renderSettings(cfg) {
+    // The names the server says are usable. The current one stays in the
+    // dropdown even if this build no longer lists it, and the field keeps
+    // whatever it holds: provider names are configuration, not a closed set.
+    const providers = Array.isArray(cfg.providers) ? cfg.providers.map(str).filter(Boolean) : [];
+    const current = str(cfg.provider);
+    if (current && providers.indexOf(current) < 0) { providers.push(current); }
+    state.configProviders = providers;
+
+    renderProviderOptions();
+    dom.cfgProvider.value = current;
+    renderModelOptions(current);
+    renderProviderHint();
 
     dom.cfgModel.value = str(cfg.model);
     dom.cfgBaseUrl.value = str(cfg.baseUrl);
@@ -1407,13 +2059,16 @@
       : 'No config file path reported by the server.';
 
     clearSettingsErrors();
+    clearProviderFormErrors();
+    providerNote('');
+    setProviderFormOpen(false);
   }
 
   /* Only the fields this form manages are sent; apiKey is omitted when the
    * field is empty so the stored key survives an unrelated change. */
   function settingsPayload() {
     const payload = {
-      provider: dom.cfgProvider.value,
+      provider: dom.cfgProvider.value.trim(),
       model: dom.cfgModel.value.trim(),
       baseUrl: dom.cfgBaseUrl.value.trim(),
       apiKeyEnv: dom.cfgApiKeyEnv.value.trim() || 'OPENAI_API_KEY'
@@ -1445,7 +2100,11 @@
     if (status === 401 || status === 403 || /api[- ]?key|unauthor|forbidden|invalid key|401|403/i.test(message)) {
       fieldError(dom.cfgApiKeyError, message);
     } else if (/model/i.test(message)) {
+      // "no model configured" also names the provider, so the model branch wins.
       fieldError(dom.cfgModelError, message);
+    } else if (/provider/i.test(message)) {
+      fieldError(dom.cfgProviderError, message);
+      dom.cfgProvider.focus();
     } else {
       dom.settingsError.textContent = message;
       dom.settingsError.hidden = false;
@@ -1460,6 +2119,8 @@
       closeSettings();
       if (res && typeof res === 'object') { applyStatus(res); }   // chips now, status event later
       appendNotice(configSummary(res, 'Settings saved'));
+      // A save can change which provider is active, and the list marks that.
+      await refreshCatalog();
     } catch (err) {
       showSaveError(err);
     }
@@ -1504,6 +2165,10 @@
     if (!dom.workspaceOverlay.hidden) { closeWorkspaces(); }
     dom.settingsOverlay.hidden = false;
 
+    // The catalogue is fetched on every open, in parallel with the config: the
+    // panel offers what this server has *now*, not what it had last time.
+    const catalog = refreshCatalog();
+
     let cfg = preloaded && typeof preloaded === 'object' ? preloaded : null;
     if (!cfg) {
       dom.settingsError.textContent = 'Loading configuration…';
@@ -1516,6 +2181,7 @@
         return;
       }
     }
+    await catalog;   // renderSettings labels the provider list from the catalogue
     renderSettings(cfg && typeof cfg === 'object' ? cfg : {});
     focusSettingsForm();
   }
@@ -1593,6 +2259,12 @@
     if (event.target === dom.overlay) { closeSessions(); }
   });
 
+  /* The dialog header carries the same two-step control the rows do, so
+   * "delete everything" is never a single click either. */
+  const deleteAllControl = deleteControl(dom.sessionsDeleteAllHost, 'Delete all', deleteAllSessions);
+  deleteAllControl.idle.disabled = true;   // nothing is listed until the list loads
+  deleteAllControl.idle.title = 'Delete every session in this workspace';
+
   dom.btnWorkspace.addEventListener('click', function () { openWorkspaces(); });
   dom.workspaceClose.addEventListener('click', closeWorkspaces);
   dom.workspaceOverlay.addEventListener('click', function (event) {
@@ -1607,6 +2279,7 @@
     event.preventDefault();
     addWorkspace();
   });
+  dom.wsBrowse.addEventListener('click', browseWorkspacePath);
 
   dom.btnSettings.addEventListener('click', function () { openSettings(); });
   dom.settingsClose.addEventListener('click', closeSettings);
@@ -1618,6 +2291,18 @@
     saveSettings();
   });
   dom.settingsTest.addEventListener('click', testSettings);
+  /* `input` rather than `change`: it fires for typing *and* for picking an
+   * entry out of the datalist, so the model list tracks the provider live. */
+  dom.cfgProvider.addEventListener('input', providerChanged);
+  dom.cfgProviderAddToggle.addEventListener('click', function () {
+    const open = dom.cfgProviderForm.hidden;
+    setProviderFormOpen(open);
+    if (open) { dom.cfgNewName.focus(); }
+  });
+  dom.cfgProviderForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    addProvider();
+  });
   dom.cfgClearKey.addEventListener('change', function () {
     const clearing = dom.cfgClearKey.checked;
     dom.cfgApiKey.disabled = clearing;
@@ -1670,6 +2355,7 @@
   // --------------------------------------------------------------- start
 
   async function init() {
+    initTheme();
     paintAuto();
     setBusy(false);
     // The first status tells us which session the page is showing; its history
