@@ -58,6 +58,19 @@ you started `ccj` in (`-C` overrides it); sessions live under `~/.oh-my-ccj` and
 projects (`--home` isolates them). The key lives in the environment or the config file — `ccj`
 is a small program, not a service.
 
+### Try it without an API key
+
+```bash
+scripts/playground.sh                              # REPL against a local fake model
+scripts/playground.sh -p "read README.md"          # one-shot
+```
+
+The playground starts a throwaway OpenAI-compatible endpoint on localhost that turns `read <path>`,
+`run <command>`, `list [glob]` and `search <regex>` into **real** tool calls, then hands you the
+normal CLI: same approval prompts, same tool cards, same session handling. Nothing leaves the
+machine, no key is involved, and the working directory is this repository — the fastest way to watch
+the loop work end to end.
+
 ## What it does
 
 | Capability | Detail |
