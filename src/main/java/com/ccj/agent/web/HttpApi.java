@@ -108,6 +108,8 @@ public final class HttpApi implements AutoCloseable {
         case "/api/approval" -> approval(exchange);
         case "/api/auto-approve" -> autoApprove(exchange);
         case "/api/session" -> session(exchange);
+        case "/api/config" -> config(exchange);
+        case "/api/config/test" -> configTest(exchange);
         default -> error(exchange, 404, "no such endpoint: " + path);
       }
     } catch (IllegalArgumentException e) {
@@ -165,6 +167,28 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     respond(exchange, 200, Json.object().put("resolved", true).put("allow", allow));
+  }
+
+  private void config(HttpExchange exchange) throws IOException {
+    String method = exchange.getRequestMethod();
+    if ("GET".equals(method)) {
+      respond(exchange, 200, hub.configJson());
+      return;
+    }
+    if (!"POST".equals(method)) {
+      error(exchange, 405, "GET or POST required");
+      return;
+    }
+    // Validation failures are IllegalArgumentException, which route() answers with 400.
+    respond(exchange, 200, hub.applyConfig(Json.parse(readBody(exchange))));
+  }
+
+  private void configTest(HttpExchange exchange) throws IOException {
+    if (!"POST".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "POST required");
+      return;
+    }
+    respond(exchange, 200, hub.testConfiguration(Json.parse(readBody(exchange))));
   }
 
   private void autoApprove(HttpExchange exchange) throws IOException {

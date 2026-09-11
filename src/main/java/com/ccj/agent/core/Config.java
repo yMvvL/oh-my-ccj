@@ -1,10 +1,14 @@
 package com.ccj.agent.core;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -175,6 +179,86 @@ public record Config(
   /** Same as {@link #merge} with file, then environment, then the caller's overrides. */
   public static Config layered(Path configFile, Map<String, String> env, Config overrides) {
     return empty().merge(fromFile(configFile)).merge(fromEnv(env)).merge(overrides).resolved();
+  }
+
+  /**
+   * Writes the settings the UI manages into {@code file}, keeping every other key that is already
+   * there — a hand-written system prompt or output cap must survive a visit to the settings form.
+   *
+   * <p>Fields that are null are removed, and a blank {@code apiKey} is removed rather than stored as
+   * an empty string. The file is created owner-only because it may hold a key.
+   */
+  public static void writeInto(Path file, Config managed) {
+    ObjectNode root;
+    if (Files.isRegularFile(file)) {
+      JsonNode existing = readTree(file);
+      if (!existing.isObject()) {
+        throw new IllegalArgumentException("config file " + file + " must contain a JSON object");
+      }
+      root = (ObjectNode) existing;
+    } else {
+      root = Json.object();
+    }
+
+    putText(root, "provider", managed.provider());
+    putText(root, "model", managed.model());
+    putText(root, "baseUrl", managed.baseUrl());
+    putText(root, "apiKey", managed.apiKey() == null || managed.apiKey().isBlank() ? null : managed.apiKey());
+    putText(root, "apiKeyEnv", managed.apiKeyEnv());
+    putNumber(root, "maxSteps", managed.maxSteps());
+    putNumber(root, "temperature", managed.temperature());
+    putNumber(root, "maxTokens", managed.maxTokens());
+
+    try {
+      Path parent = file.toAbsolutePath().getParent();
+      if (parent != null) {
+        Files.createDirectories(parent);
+      }
+      Files.writeString(
+          file,
+          Json.writePretty(root) + "\n",
+          StandardCharsets.UTF_8,
+          StandardOpenOption.CREATE,
+          StandardOpenOption.TRUNCATE_EXISTING);
+      restrictToOwner(file);
+    } catch (IOException e) {
+      throw new UncheckedIOException("cannot write " + file, e);
+    }
+  }
+
+  private static JsonNode readTree(Path file) {
+    try {
+      return Json.parse(Files.readString(file));
+    } catch (IOException e) {
+      throw new UncheckedIOException("cannot read " + file, e);
+    }
+  }
+
+  /** Best effort: non-POSIX filesystems keep their default rather than failing the save. */
+  private static void restrictToOwner(Path file) {
+    try {
+      Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+    } catch (UnsupportedOperationException | IOException ignored) {
+      // Nothing to do; the save itself already succeeded.
+    }
+  }
+
+  private static void putText(ObjectNode root, String field, String value) {
+    if (value == null || value.isBlank()) {
+      root.remove(field);
+    } else {
+      root.put(field, value);
+    }
+  }
+
+  private static void putNumber(ObjectNode root, String field, Number value) {
+    if (value == null) {
+      root.remove(field);
+    } else if (value instanceof Integer integer) {
+      root.put(field, integer.intValue());
+    } else {
+      root.put(field, value.doubleValue());
+    }
   }
 
   /** Redacted view, safe to print. */

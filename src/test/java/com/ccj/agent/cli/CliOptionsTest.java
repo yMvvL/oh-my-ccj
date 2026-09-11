@@ -1,6 +1,7 @@
 package com.ccj.agent.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -108,5 +109,36 @@ class CliOptionsTest {
     assertNull(overrides.maxSteps());
     assertNull(overrides.maxTokens());
     assertNull(overrides.outputLimitBytes());
+  }
+
+  @Test
+  void frontEndFlagsAndTheirDefaults() {
+    CliOptions bare = CliOptions.parse(new String[] {});
+
+    assertFalse(bare.web(), "the web UI is the default, so --web is only ever explicit");
+    assertFalse(bare.repl());
+    assertFalse(bare.noOpen());
+
+    CliOptions repl = CliOptions.parse(new String[] {"--repl"});
+    assertTrue(repl.repl());
+    assertFalse(repl.web());
+
+    CliOptions scripted = CliOptions.parse(new String[] {"--web", "--no-open", "--port", "9000"});
+    assertTrue(scripted.web());
+    assertTrue(scripted.noOpen());
+    assertEquals(9000, scripted.port());
+
+    assertThrows(
+        CliOptions.UsageException.class,
+        () -> CliOptions.parse(new String[] {"--repl", "--web"}));
+  }
+
+  @Test
+  void demoIsIndependentOfTheFrontEnd() {
+    CliOptions demo = CliOptions.parse(new String[] {"--demo"});
+
+    assertTrue(demo.demo());
+    assertFalse(demo.repl(), "the front end still comes from the mode flags");
+    assertNull(demo.print());
   }
 }

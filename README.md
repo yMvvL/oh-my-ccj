@@ -2,7 +2,7 @@
 
 A coding agent runtime written from scratch in plain Java 21. No agent framework, no HTTP client
 library, no CLI library — `java.net.http` for transport, `com.sun.net.httpserver` for the web UI and
-the test doubles, 6.2k lines of hand-written Java plus a 1.6k-line vanilla page, 139 tests.
+the test doubles, 6.5k lines of hand-written Java plus a 2k-line vanilla page, 152 tests.
 
 `ccj` streams a conversation with a model, lets the model call tools that touch your filesystem,
 feeds the results back, and repeats until the model answers. It is a small, readable implementation
@@ -24,26 +24,17 @@ Added the check on line 42 and the suite passes.
 
 ```bash
 mvn package                      # builds target/ccj.jar (shaded, no classpath juggling)
-./ccj --help                     # launcher; builds the jar on first use
 
-./ccj --demo                     # try it now: no key, no config, no network
-./ccj --demo --web --open        # ... or in a browser
-
-# then point it at a real model:
-mkdir -p ~/.oh-my-ccj
-cat > ~/.oh-my-ccj/config.json <<'JSON'
-{
-  "provider": "openai",
-  "model": "gpt-4o-mini",
-  "apiKeyEnv": "OPENAI_API_KEY"
-}
-JSON
-export OPENAI_API_KEY=sk-...
-
-ccj                                    # interactive REPL
-ccj -p "what does src/Main.java do?"   # one-shot
-ccj --web --open                       # browser UI
+./ccj                            # opens the web UI; configure your model there
+./ccj --demo                     # the same, with a local stand-in model: no key, no network
+./ccj --repl                     # terminal REPL instead of the browser
+./ccj -p "what does src/Main.java do?"   # one-shot
 ```
+
+The first run has no model configured, so the web UI opens its settings panel and asks for one —
+provider, model, base URL, API key. Saving writes `~/.oh-my-ccj/config.json` (0600) and switches the
+running session over immediately: no restart, no JSON editing. Flags and environment variables still
+work for scripted use.
 
 Requires JDK 21+ and Maven. The only runtime dependency is `jackson-databind`.
 
@@ -66,9 +57,9 @@ is a small program, not a service.
 ### Try it without an API key
 
 ```bash
-ccj --demo                 # interactive REPL, no model, no key
-ccj --demo -p "read pom.xml"
-ccj --demo --web --open    # the same in a browser
+ccj --demo                        # web UI with the stand-in model
+ccj --demo --repl                 # the same in the terminal
+ccj --demo -p "read pom.xml"      # one-shot
 ```
 
 `--demo` swaps the model for a local tool router: `read <path>`, `run <command>`, `list [glob]` and
@@ -79,9 +70,9 @@ needs no key, no network and no second process. It is the fastest way to watch t
 ## Web UI
 
 ```bash
-ccj --web                 # http://127.0.0.1:8787 — same loop, in a browser
-ccj --web --open          # ... and open it
-ccj --demo --web --open   # the same with no key at all
+ccj                       # the default: serve http://127.0.0.1:8787 and open it
+ccj --no-open             # for scripts: serve it without launching a browser
+ccj --repl                # the terminal front end instead
 ```
 
 The page streams the assistant's prose, shows every tool call as a card with its arguments, timing and
@@ -91,7 +82,11 @@ are the same JSONL files the CLI uses, so a conversation started in the terminal
 the browser and vice versa. `--port` moves it, `--host` binds another interface, and binding
 anything but loopback **requires** `--web-token` — the UI can run shell commands, so an unauthenticated
 network bind is a remote code execution surface. With a token, the printed URL carries it and the
-server stores it in an HttpOnly cookie, so the browser never needs token plumbing. See
+server stores it in an HttpOnly cookie, so the browser never needs token plumbing.
+
+Model settings — provider, model, base URL, API key, step and temperature limits — live in the UI
+itself (`Settings`), and `Test connection` sends one tiny request to check them before saving. The
+key is never sent back to the browser, only whether one exists and where it comes from. See
 [docs/WEBUI.md](docs/WEBUI.md).
 
 ## What it does
@@ -104,38 +99,56 @@ server stores it in an HttpOnly cookie, so the browser never needs token plumbin
 | Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, resumable in a later process with `--resume` / `--continue`. |
 | Approval | Anything that writes or executes asks first; without a terminal it is denied, not silently allowed. |
 | Rendering | Streaming prose, tool cards with argument summaries, per-call timing, dimmed reasoning, a spinner that yields the terminal to prompts. |
-| Web UI | `ccj --web` serves the same loop as a single page: streaming transcript, tool cards, blocking approval prompts, session switching. No framework, no build step. |
+| Web UI | `ccj` serves the same loop as a single page: streaming transcript, tool cards, blocking approval prompts, session switching, and a settings panel that configures the model at runtime. No framework, no build step. |
 
 ## Usage
 
 ```
-One-shot:
-  -p, --print <prompt>     run a single turn, print the answer, and exit
+Usage: ccj [options]
+
+Modes:
+      (no flags)               serve the web UI, opening it in a browser
+          --repl               interactive REPL in this terminal
+          --web                the default, stated explicitly (for scripts)
+          --no-open            serve the web UI without opening a browser
+      -p, --print <prompt>     run a single turn, print the answer, and exit
+
+Demo:
+      --demo                   no model and no key: read/run/list/search become real tool calls,
+                               so the loop, the tools and the approval prompts can be tried out
 
 Model:
-      --provider <name>    provider to use (openai, anthropic, ...)
-      --model <name>       model identifier
-      --base-url <url>     override the provider base URL
-      --api-key <key>      API key literal
-      --api-key-env <var>  environment variable holding the API key
-      --temperature <n>    sampling temperature
-      --max-tokens <n>     response token cap
-      --max-steps <n>      model turns per user input (default 25)
-      --system <text>      system prompt for this run
+          --provider <name>    provider to use (openai, anthropic, ...)
+          --model <name>       model identifier
+          --base-url <url>     override the provider base URL
+          --api-key <key>      API key literal
+          --api-key-env <var>  environment variable holding the API key
+          --temperature <n>    sampling temperature
+          --max-tokens <n>     response token cap
+          --max-steps <n>      model turns per user input (default 25)
+          --system <text>      system prompt for this run
 
 Sessions:
-      --resume <id>        reopen a session by id
-      --continue           reopen the most recent session
-      --list-sessions      print sessions and exit
+          --resume <id>        reopen a session by id
+          --continue           reopen the most recent session
+          --list-sessions      print sessions and exit
+
+Web:
+          --port <n>           web UI port (default 8787)
+          --host <addr>        bind address (default 127.0.0.1; anything else needs --web-token)
+          --web-token <token>  require this token from every web request
 
 Runtime:
-      --config <file>      config file (default: <home>/config.json)
-      --home <dir>         application home (default: ~/.oh-my-ccj)
-  -C, --cwd <dir>          working directory tools resolve relative paths against
-      --tools              print available tools and exit
-      --yolo               approve every tool call, alias --auto-approve
-  -h, --help               print this help
-  -v, --version            print the version
+          --config <file>      config file (default: <home>/config.json)
+          --home <dir>         application home (default: ~/.oh-my-ccj)
+      -C, --cwd <dir>          working directory tools resolve relative paths against
+          --tools              print available tools and exit
+          --yolo               approve every tool call, alias --auto-approve
+      -h, --help               print this help
+      -v, --version            print the version
+
+The web UI is the default front end; --repl gives the terminal one. In the REPL, type
+/help for commands. Model settings live in the web UI and can be changed there at runtime.
 ```
 
 REPL commands: `/help`, `/exit`, `/clear`, `/new`, `/resume <id>`, `/sessions`, `/model <name>`,
@@ -224,7 +237,7 @@ mappings and the reasoning behind the design.
 ## Development
 
 ```bash
-mvn test                                  # 139 tests, no network, no API key
+mvn test                                  # 152 tests, no network, no API key
 mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
 mvn -Dtest=WebApiTest test                # HTTP + SSE + approval handshake only
 mvn -DskipTests package                   # fat jar
@@ -240,11 +253,11 @@ file on disk, session written.
 |---|---|
 | providers (SSE parsing, both wire mappings, retry policy) | 29 |
 | tools (matching, truncation, timeouts, denial paths) | 34 |
-| core (loop behaviour, config precedence) | 22 |
+| core (loop behaviour, config precedence, config persistence) | 26 |
 | session (codec round-trips, append/reopen, listing) | 19 |
-| CLI (argument parsing) | 8 |
+| CLI (argument parsing, mode selection) | 10 |
 | end-to-end (CLI → HTTP → tool → disk) | 9 |
-| web API (HTTP, SSE, approvals, token gate) | 10 |
+| web API (HTTP, SSE, approvals, token gate, settings) | 17 |
 | demo provider (routing, termination) | 8 |
 
 ## Limitations
@@ -255,5 +268,7 @@ file on disk, session written.
 - Bash runs as the current user with your full environment.
 - Sessions grow without bound; there is no compaction or summarisation.
 - The OpenAI path targets the chat-completions API, not the newer Responses API.
+- The API key is stored in plaintext when you let the UI save it (the file is `0600`); keeping it
+  in the environment instead is one dropdown away.
 - The web UI is a local console: one turn at a time, one session, no accounts. It binds loopback by
   default and refuses a public bind without a token, because the agent can run shell commands.

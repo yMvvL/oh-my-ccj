@@ -31,10 +31,11 @@ public record CliOptions(
     String cwd,
     boolean demo,
     boolean web,
+    boolean repl,
+    boolean noOpen,
     Integer port,
     String host,
     String webToken,
-    boolean open,
     boolean help,
     boolean version) {
 
@@ -84,6 +85,8 @@ public record CliOptions(
     String cwd = null;
     boolean demo = false;
     boolean web = false;
+    boolean repl = false;
+    boolean noOpen = false;
     Integer port = null;
     String host = null;
     String webToken = null;
@@ -136,8 +139,12 @@ public record CliOptions(
           demo = true;
           i++;
         }
-        case "--open" -> {
-          open = true;
+        case "--repl" -> {
+          repl = true;
+          i++;
+        }
+        case "--no-open" -> {
+          noOpen = true;
           i++;
         }
         case "--port" -> {
@@ -212,6 +219,10 @@ public record CliOptions(
       }
     }
 
+    if (repl && web) {
+      throw new UsageException("--repl and --web ask for different front ends; pick one");
+    }
+
     return new CliOptions(
         print,
         model,
@@ -233,10 +244,11 @@ public record CliOptions(
         cwd,
         demo,
         web,
+        repl,
+        noOpen,
         port,
         host,
         webToken,
-        open,
         help,
         version);
   }
@@ -245,7 +257,11 @@ public record CliOptions(
     return """
         Usage: ccj [options]
 
-    One-shot:
+    Modes:
+          (no flags)               serve the web UI, opening it in a browser
+              --repl               interactive REPL in this terminal
+              --web                the default, stated explicitly (for scripts)
+              --no-open            serve the web UI without opening a browser
           -p, --print <prompt>     run a single turn, print the answer, and exit
 
     Demo:
@@ -269,11 +285,9 @@ public record CliOptions(
               --list-sessions      print sessions and exit
 
         Web:
-              --web                serve a browser UI instead of the REPL
               --port <n>           web UI port (default 8787)
               --host <addr>        bind address (default 127.0.0.1; anything else needs --web-token)
               --web-token <token>  require this token from every web request
-              --open               open the browser at the served URL
 
         Runtime:
               --config <file>      config file (default: <home>/config.json)
@@ -284,7 +298,8 @@ public record CliOptions(
           -h, --help               print this help
           -v, --version            print the version
 
-        Without -p, ccj starts a REPL; type /help there for commands.
+        The web UI is the default front end; --repl gives the terminal one. In the REPL, type
+        /help for commands. Model settings live in the web UI and can be changed there at runtime.
         """;
   }
 

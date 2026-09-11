@@ -3,12 +3,14 @@ package com.ccj.agent.core;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -188,5 +190,67 @@ class ConfigTest {
     assertEquals(
         Path.of("/home/someone/.oh-my-ccj"),
         AppPaths.fromEnv(Map.of("HOME", "/home/someone")).home());
+  }
+
+  @Test
+  void writeIntoPersistsManagedFieldsAndKeepsTheRest() throws IOException {
+    Path file = tmp.resolve("nested/config.json");
+
+    Config.writeInto(
+        file,
+        new Config(
+            "anthropic", "claude-x", "https://relay.example.com/", "sk-abc", "MY_KEY", 0.5, 2048, 12,
+            null, null, null));
+
+    Config reread = Config.fromFile(file);
+    assertEquals("anthropic", reread.provider());
+    assertEquals("claude-x", reread.model());
+    assertEquals("https://relay.example.com/", reread.baseUrl());
+    assertEquals("sk-abc", reread.apiKey());
+    assertEquals("MY_KEY", reread.apiKeyEnv());
+    assertEquals(0.5, reread.temperature().doubleValue());
+    assertEquals(2048, reread.maxTokens().intValue());
+    assertEquals(12, reread.maxSteps().intValue());
+    assertEquals(
+        "rw-------",
+        PosixFilePermissions.toString(Files.getPosixFilePermissions(file)),
+        "the file may hold a key");
+  }
+
+  @Test
+  void writeIntoLeavesFieldsItDoesNotManageAlone() throws IOException {
+    Path file = tmp.resolve("config.json");
+    Files.writeString(
+        file, "{\"systemPrompt\": \"keep me\", \"outputLimitBytes\": 4096, \"model\": \"old\"}");
+
+    Config.writeInto(file, Config.empty().merge(new Config(null, "new-model", null, null, null, null, null, null, null, null, null)));
+
+    Config merged = Config.fromFile(file);
+    assertEquals("keep me", merged.systemPrompt());
+    assertEquals(4096, merged.outputLimitBytes().intValue());
+    assertEquals("new-model", merged.model());
+    assertNull(merged.provider(), "provider was not managed by this call, so nothing was added");
+  }
+
+  @Test
+  void aBlankApiKeyIsRemovedRatherThanStored() throws IOException {
+    Path file = tmp.resolve("config.json");
+    Config.writeInto(file, Config.empty().merge(new Config(null, "m", null, "sk-secret", null, null, null, null, null, null, null)));
+    assertTrue(Files.readString(file).contains("sk-secret"));
+
+    Config.writeInto(file, Config.fromFile(file).merge(new Config(null, null, null, "", null, null, null, null, null, null, null)));
+
+    assertFalse(Files.readString(file).contains("sk-secret"));
+    assertNull(Config.fromFile(file).apiKey());
+  }
+
+  @Test
+  void writeIntoRejectsAFileThatIsNotAnObject() throws IOException {
+    Path file = tmp.resolve("config.json");
+    Files.writeString(file, "[1, 2, 3]");
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> Config.writeInto(file, Config.empty().merge(new Config(null, "m", null, null, null, null, null, null, null, null, null))));
   }
 }

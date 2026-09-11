@@ -36,6 +36,7 @@
         <span>Approve all</span>
         <span class="toggle-state" id="auto-state">off</span>
       </button>
+      <button type="button" class="btn" id="btn-settings" aria-haspopup="dialog">Settings</button>
       <button type="button" class="btn danger" id="btn-abort" disabled>Abort</button>
       <button type="button" class="btn ghost" id="btn-side" aria-expanded="true" aria-controls="side" title="Toggle side panel">Panel</button>
     </div>
@@ -87,6 +88,73 @@
     <div class="overlay-body" id="sessions-body">
       <p class="muted">Loading…</p>
     </div>
+  </div>
+</div>
+
+<div id="settings-overlay" class="overlay" hidden>
+  <div class="overlay-card settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <header class="overlay-head">
+      <h2 id="settings-title">Settings</h2>
+      <button type="button" class="btn ghost" id="settings-close">Close</button>
+    </header>
+
+    <form class="overlay-body settings-body" id="settings-form" autocomplete="off">
+      <p class="err settings-error" id="settings-error" hidden></p>
+
+      <div class="field">
+        <label for="cfg-provider">Provider</label>
+        <select id="cfg-provider"></select>
+      </div>
+
+      <div class="field">
+        <label for="cfg-model">Model</label>
+        <input type="text" id="cfg-model" spellcheck="false" placeholder="gpt-4o-mini">
+        <span class="field-error" id="cfg-model-error" hidden></span>
+      </div>
+
+      <div class="field">
+        <label for="cfg-baseurl">Base URL</label>
+        <input type="text" id="cfg-baseurl" spellcheck="false" placeholder="https://api.openai.com/v1">
+      </div>
+
+      <div class="field">
+        <label for="cfg-apikey">API key</label>
+        <input type="password" id="cfg-apikey" autocomplete="new-password" spellcheck="false">
+        <span class="field-hint" id="cfg-apikey-hint" hidden></span>
+        <span class="field-error" id="cfg-apikey-error" hidden></span>
+        <label class="field-check" id="cfg-clearkey-wrap" hidden>
+          <input type="checkbox" id="cfg-clearkey">
+          <span>clear stored key</span>
+        </label>
+      </div>
+
+      <div class="field">
+        <label for="cfg-apikeyenv">API key env var</label>
+        <input type="text" id="cfg-apikeyenv" spellcheck="false" placeholder="OPENAI_API_KEY">
+        <span class="field-hint" id="cfg-apikeyenv-hint" hidden></span>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="cfg-maxsteps">Max steps</label>
+          <input type="number" id="cfg-maxsteps" min="1" step="1" placeholder="25">
+        </div>
+        <div class="field">
+          <label for="cfg-temperature">Temperature</label>
+          <input type="number" id="cfg-temperature" min="0" max="2" step="any" placeholder="default">
+        </div>
+      </div>
+
+      <p class="settings-test-result" id="settings-test-result" hidden></p>
+
+      <div class="settings-actions">
+        <button type="button" class="btn" id="settings-test">Test connection</button>
+        <span class="hint" id="settings-test-hint">Sends one tiny request to the provider using these values. Nothing is saved.</span>
+        <button type="submit" class="btn primary" id="settings-save">Save</button>
+      </div>
+
+      <p class="settings-foot" id="settings-foot"></p>
+    </form>
   </div>
 </div>
 

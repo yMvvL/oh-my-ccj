@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.ccj.agent.core.AgentOptions;
+import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
 import com.ccj.agent.core.Message;
 import com.ccj.agent.core.Provider;
@@ -31,7 +31,9 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
@@ -53,6 +55,9 @@ class WebApiTest {
 
   private Path cwd;
   private Path sessions;
+  private Path configFile;
+  private final AtomicInteger factoryCalls = new AtomicInteger();
+  private volatile MockProvider lastBuilt;
   private MockProvider provider;
   private AgentHub hub;
   private HttpApi api;
@@ -62,7 +67,8 @@ class WebApiTest {
   void setUp() throws IOException {
     cwd = Files.createDirectories(tmp.resolve("ws"));
     sessions = tmp.resolve("sessions");
-    provider = new MockProvider();
+    configFile = tmp.resolve("config.json");
+    provider = new MockProvider("mock");
     start(null);
   }
 
@@ -77,21 +83,46 @@ class WebApiTest {
   }
 
   private void start(String token) throws IOException {
-    hub =
-        new AgentHub(
-            provider,
-            Tools.standard(),
-            new AgentHub.Settings(
-                new AgentOptions("mock-model", null, null, null, 6),
-                "test",
-                "http://mock.invalid/v1",
-                cwd,
-                sessions,
-                0,
-                false),
-            SessionStore.create(sessions));
+    hub = hub(provider, testConfig());
     api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), token);
     origin = "http://127.0.0.1:" + api.port();
+  }
+
+  private static Config testConfig() {
+    return new Config(
+            "openai", "mock-model", "http://mock.invalid/v1", "sk-test", null, null, null, 6, null,
+            0, null)
+        .resolved();
+  }
+
+  /**
+   * Mirrors what the CLI injects: a factory that validates like the real one and hands back a
+   * provider named after the model, so a runtime swap is observable from the outside.
+   */
+  private AgentHub hub(Provider initial, Config config) {
+    return new AgentHub(
+        initial,
+        config,
+        Tools.standard(),
+        new AgentHub.Settings(
+            "test",
+            cwd,
+            sessions,
+            configFile,
+            Map.of(),
+            (candidate, env) -> {
+              factoryCalls.incrementAndGet();
+              if (candidate.provider() == null
+                  || !List.of("openai", "anthropic").contains(candidate.provider())) {
+                throw new IllegalArgumentException("unknown provider '" + candidate.provider() + "'");
+              }
+              lastBuilt =
+                  new MockProvider(candidate.model() == null ? "mock-model" : candidate.model());
+              return lastBuilt;
+            },
+            List.of("openai", "anthropic"),
+            false),
+        SessionStore.create(sessions));
   }
 
   // ------------------------------------------------------------------ tests
@@ -113,7 +144,7 @@ class WebApiTest {
   void statusDescribesTheModelSessionAndTools() throws Exception {
     JsonNode status = json("/api/status");
 
-    assertEquals("mock", status.path("provider").asText());
+    assertEquals("openai", status.path("provider").asText());
     assertEquals("mock-model", status.path("model").asText());
     assertEquals("http://mock.invalid/v1", status.path("baseUrl").asText());
     assertEquals(cwd.toString(), status.path("cwd").asText());
@@ -128,7 +159,7 @@ class WebApiTest {
     try (Sse sse = watch()) {
       JsonNode status = sse.await("status", 3000);
 
-      assertEquals("mock", status.path("provider").asText());
+      assertEquals("openai", status.path("provider").asText());
       assertEquals(6, status.path("tools").size());
       assertFalse(status.path("busy").asBoolean());
     }
@@ -298,6 +329,133 @@ class WebApiTest {
     assertEquals(200, withHeader.statusCode());
   }
 
+  // ------------------------------------------------------------------ settings
+
+  @Test
+  void anUnconfiguredServerStillServesAndExplainsItself() throws Exception {
+    api.close();
+    hub.close();
+    hub = hub(null, Config.empty().resolved());
+    api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), null);
+    origin = "http://127.0.0.1:" + api.port();
+
+    JsonNode status = json("/api/status");
+    assertFalse(status.path("configured").asBoolean());
+    assertTrue(status.path("provider").asText().isEmpty());
+    assertTrue(status.path("cwd").asText().endsWith("ws"), "the UI still needs its context");
+
+    HttpResponse<String> refused = post("/api/message", "{\"text\":\"hi\"}");
+    assertEquals(409, refused.statusCode());
+    assertTrue(refused.body().contains("Settings"), refused.body());
+
+    JsonNode config = json("/api/config");
+    assertFalse(config.path("configured").asBoolean());
+    assertTrue(config.path("providers").size() >= 2, config.toString());
+    assertTrue(config.path("configFile").asText().endsWith("config.json"));
+    assertEquals("none", config.path("apiKeySource").asText());
+
+    try (Sse sse = watch()) {
+      assertFalse(sse.await("status", 3000).path("configured").asBoolean());
+    }
+  }
+
+  @Test
+  void savingSettingsSwitchesTheModelAndPersistsTheFile() throws Exception {
+    Files.writeString(
+        configFile,
+        "{\"systemPrompt\": \"keep me\", \"outputLimitBytes\": 4096, \"model\": \"old\"}");
+
+    JsonNode saved =
+        postJson(
+            "/api/config",
+            "{\"provider\":\"anthropic\",\"model\":\"claude-test\",\"baseUrl\":\"http://relay.invalid\",\"apiKey\":\"sk-written\",\"maxSteps\":9}");
+
+    assertEquals("claude-test", saved.path("model").asText());
+    assertEquals("anthropic", saved.path("provider").asText());
+    assertTrue(saved.path("configured").asBoolean());
+    assertEquals("claude-test", lastBuilt.name(), "the new provider must be the one in use");
+
+    JsonNode file = Json.parse(Files.readString(configFile));
+    assertEquals("anthropic", file.path("provider").asText());
+    assertEquals("claude-test", file.path("model").asText());
+    assertEquals("sk-written", file.path("apiKey").asText());
+    assertEquals(9, file.path("maxSteps").asInt());
+    assertEquals("keep me", file.path("systemPrompt").asText(), "unmanaged keys must survive");
+    assertEquals(4096, file.path("outputLimitBytes").asInt());
+    assertEquals(
+        "rw-------",
+        java.nio.file.attribute.PosixFilePermissions.toString(
+            Files.getPosixFilePermissions(configFile)),
+        "the file may hold a key");
+
+    JsonNode config = json("/api/config");
+    assertEquals("config", config.path("apiKeySource").asText());
+    assertFalse(config.toString().contains("sk-written"), "the key must never leave the server");
+
+    // and the next turn really goes to the rebuilt provider
+    lastBuilt.reply(Message.Assistant.text("answered by the new model"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"hello\"}");
+      assertEquals("answered by the new model", sse.await("done", 5000).path("finalText").asText());
+    }
+  }
+
+  @Test
+  void aRejectedSettingChangesNothingOnDiskOrInMemory() throws Exception {
+    JsonNode before = json("/api/config");
+
+    HttpResponse<String> rejected = post("/api/config", "{\"provider\":\"gemini\"}");
+
+    assertEquals(400, rejected.statusCode(), rejected.body());
+    assertTrue(rejected.body().contains("gemini"), rejected.body());
+    assertFalse(Files.exists(configFile), "a rejected change must not create a config file");
+    assertEquals(before.path("provider").asText(), json("/api/config").path("provider").asText());
+    assertEquals("openai", json("/api/status").path("provider").asText());
+  }
+
+  @Test
+  void outOfRangeValuesAreRejected() throws Exception {
+    assertEquals(400, post("/api/config", "{\"maxSteps\":0}").statusCode());
+    assertEquals(400, post("/api/config", "{\"temperature\":9}").statusCode());
+    assertEquals(400, post("/api/config", "{\"maxSteps\":\"lots\"}").statusCode());
+    assertFalse(Files.exists(configFile));
+  }
+
+  @Test
+  void clearingAStoredKeyFallsBackToTheEnvironment() throws Exception {
+    postJson("/api/config", "{\"apiKey\":\"sk-temp\"}");
+    assertEquals("config", json("/api/config").path("apiKeySource").asText());
+
+    JsonNode cleared = postJson("/api/config", "{\"clearApiKey\":true}");
+
+    assertTrue(cleared.path("configured").asBoolean(), cleared.toString());
+    assertFalse(Files.readString(configFile).contains("sk-temp"), "the key must be gone");
+    assertEquals("none", json("/api/config").path("apiKeySource").asText());
+  }
+
+  @Test
+  void testingSettingsDoesNotSaveThem() throws Exception {
+    factoryCalls.set(0);
+
+    JsonNode result = postJson("/api/config/test", "{\"provider\":\"anthropic\",\"model\":\"probe\"}");
+
+    assertTrue(result.path("ok").asBoolean(), result.toString());
+    assertTrue(result.path("elapsedMs").asInt() >= 0);
+    assertEquals(1, factoryCalls.get(), "the probe must build a throwaway provider");
+    assertFalse(Files.exists(configFile), "testing must not persist anything");
+    assertEquals("openai", json("/api/config").path("provider").asText(), "in-memory config unchanged");
+    assertEquals("openai", json("/api/status").path("provider").asText());
+  }
+
+  @Test
+  void aFailingProbeIsReportedAsARejection() throws Exception {
+    HttpResponse<String> failure =
+        post("/api/config/test", "{\"provider\":\"gemini\",\"model\":\"x\"}");
+
+    assertEquals(400, failure.statusCode(), failure.body());
+    assertTrue(failure.body().contains("gemini"), failure.body());
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private static Message.Assistant bashCall(String command) {
@@ -450,9 +608,14 @@ class WebApiTest {
   /** Scripted provider: one queued assistant turn per request, optionally delayed by a latch. */
   private static final class MockProvider implements Provider {
 
+    private final String name;
     private final Deque<Message.Assistant> script = new ArrayDeque<>();
     private final List<Provider.Request> requests = new CopyOnWriteArrayList<>();
     private volatile CountDownLatch gate;
+
+    MockProvider(String name) {
+      this.name = name;
+    }
 
     MockProvider reply(Message.Assistant assistant) {
       script.add(assistant);
@@ -476,7 +639,7 @@ class WebApiTest {
 
     @Override
     public String name() {
-      return "mock";
+      return name;
     }
 
     @Override

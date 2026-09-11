@@ -93,6 +93,7 @@
     btnSessions: $('btn-sessions'),
     btnAuto: $('btn-auto'),
     autoState: $('auto-state'),
+    btnSettings: $('btn-settings'),
     btnAbort: $('btn-abort'),
     btnSide: $('btn-side'),
     transcript: $('transcript'),
@@ -107,7 +108,28 @@
     sessionInfo: $('session-info'),
     overlay: $('sessions-overlay'),
     sessionsBody: $('sessions-body'),
-    sessionsClose: $('sessions-close')
+    sessionsClose: $('sessions-close'),
+    settingsOverlay: $('settings-overlay'),
+    settingsForm: $('settings-form'),
+    settingsClose: $('settings-close'),
+    settingsError: $('settings-error'),
+    settingsTest: $('settings-test'),
+    settingsTestResult: $('settings-test-result'),
+    settingsSave: $('settings-save'),
+    settingsFoot: $('settings-foot'),
+    cfgProvider: $('cfg-provider'),
+    cfgModel: $('cfg-model'),
+    cfgModelError: $('cfg-model-error'),
+    cfgBaseUrl: $('cfg-baseurl'),
+    cfgApiKey: $('cfg-apikey'),
+    cfgApiKeyHint: $('cfg-apikey-hint'),
+    cfgApiKeyError: $('cfg-apikey-error'),
+    cfgClearKey: $('cfg-clearkey'),
+    cfgClearKeyWrap: $('cfg-clearkey-wrap'),
+    cfgApiKeyEnv: $('cfg-apikeyenv'),
+    cfgApiKeyEnvHint: $('cfg-apikeyenv-hint'),
+    cfgMaxSteps: $('cfg-maxsteps'),
+    cfgTemperature: $('cfg-temperature')
   };
 
   // ---------------------------------------------------------------- state
@@ -124,7 +146,8 @@
     toolCards: new Map(),  // tool call id -> { root, ... }
     approvals: new Map(),  // approval id -> record
     stick: true,           // transcript pinned to the bottom
-    status: null
+    status: null,
+    configured: null       // status.configured: null until known, then boolean
   };
 
   // --------------------------------------------------------- text batching
@@ -255,11 +278,19 @@
     else { setLive('idle'); }
   }
 
+  /* The composer stays usable while nothing is configured — the server answers
+   * 409 with a readable message — but the reason has to be on screen. */
+  function composerHint() {
+    if (state.busy) { return 'A turn is running — Send is disabled while the agent works.'; }
+    if (state.configured === false) { return 'No model configured — open Settings to choose a provider and model.'; }
+    return '';
+  }
+
   function setBusy(busy) {
     state.busy = !!busy;
     dom.btnAbort.disabled = !state.busy;
     dom.send.disabled = state.busy;
-    dom.hint.textContent = state.busy ? 'A turn is running — Send is disabled while the agent works.' : '';
+    dom.hint.textContent = composerHint();
     refreshLive();
   }
 
@@ -276,18 +307,35 @@
   function autoApproveOn() { return state.autoApprove; }
 
   function setChips(status) {
-    if ('provider' in status) {
-      dom.chipProvider.textContent = str(status.provider) || 'provider';
-      dom.chipProvider.title = 'provider: ' + str(status.provider);
+    const configured = typeof status.configured === 'boolean' ? status.configured : state.configured;
+    state.configured = configured;
+
+    if (configured === false) {
+      // Nothing is selected yet, so the provider/model/base URL chips would be
+      // placeholders. One honest chip beats three empty ones.
+      dom.chipProvider.textContent = 'not configured';
+      dom.chipProvider.title = 'No model configured — open Settings.';
+      dom.chipProvider.classList.add('chip-warn');
+      dom.chipModel.hidden = true;
+      dom.chipBaseUrl.hidden = true;
+    } else {
+      dom.chipProvider.classList.remove('chip-warn');
+      dom.chipModel.hidden = false;
+      dom.chipBaseUrl.hidden = false;
+      if ('provider' in status) {
+        dom.chipProvider.textContent = str(status.provider) || 'provider';
+        dom.chipProvider.title = 'provider: ' + str(status.provider);
+      }
+      if ('model' in status) {
+        dom.chipModel.textContent = str(status.model) || 'model';
+        dom.chipModel.title = 'model: ' + str(status.model);
+      }
+      if ('baseUrl' in status) {
+        dom.chipBaseUrl.textContent = clip(status.baseUrl, 40) || 'base URL';
+        dom.chipBaseUrl.title = 'base URL: ' + str(status.baseUrl);
+      }
     }
-    if ('model' in status) {
-      dom.chipModel.textContent = str(status.model) || 'model';
-      dom.chipModel.title = 'model: ' + str(status.model);
-    }
-    if ('baseUrl' in status) {
-      dom.chipBaseUrl.textContent = clip(status.baseUrl, 40) || 'base URL';
-      dom.chipBaseUrl.title = 'base URL: ' + str(status.baseUrl);
-    }
+
     const id = str(status.sessionId);
     const count = Number(status.messageCount);
     if ('sessionId' in status || 'messageCount' in status) {
@@ -360,6 +408,10 @@
     dom.usage.textContent = str(text) || '—';
     return appendLine('ev ev-notice', text);
   }
+
+  /* Like appendNotice, but for UI-authored lines: token-usage events own the
+   * Usage panel, and a settings message must not overwrite it. */
+  function appendTranscriptNotice(text) { return appendLine('ev ev-notice', text); }
 
   function assistantBlock() {
     if (state.block && state.block.root.parentNode === dom.transcript) { return state.block; }
@@ -778,6 +830,214 @@
     }
   }
 
+  // ------------------------------------------------------------ settings
+
+  /* The stored key never reaches the DOM: renderSettings() empties the field
+   * and only its placeholder reports that something is saved. */
+  const KEY_PLACEHOLDER = {
+    config: '•••••••• saved',
+    env: 'from the environment',
+    none: 'paste your API key'
+  };
+
+  function fieldError(node, message) {
+    node.textContent = message;
+    node.hidden = false;
+  }
+
+  function clearSettingsErrors() {
+    dom.settingsError.textContent = '';
+    dom.settingsError.hidden = true;
+    [dom.cfgModelError, dom.cfgApiKeyError].forEach(function (node) {
+      node.textContent = '';
+      node.hidden = true;
+    });
+    dom.settingsTestResult.textContent = '';
+    dom.settingsTestResult.className = 'settings-test-result';
+    dom.settingsTestResult.hidden = true;
+  }
+
+  function numField(node) {
+    const raw = node.value.trim();
+    if (raw === '') { return undefined; }
+    const n = Number(raw);
+    return isFinite(n) ? n : undefined;
+  }
+
+  function renderSettings(cfg) {
+    // The provider list comes from the server; the current value is kept even
+    // if this build of the server does not list it.
+    const providers = Array.isArray(cfg.providers) ? cfg.providers.slice() : [];
+    const current = str(cfg.provider);
+    if (current && providers.indexOf(current) < 0) { providers.unshift(current); }
+    if (!providers.length) { providers.push(current || 'custom'); }
+    dom.cfgProvider.textContent = '';
+    providers.forEach(function (name) {
+      dom.cfgProvider.appendChild(el('option', null, str(name)));
+    });
+    dom.cfgProvider.value = current || str(providers[0]);
+
+    dom.cfgModel.value = str(cfg.model);
+    dom.cfgBaseUrl.value = str(cfg.baseUrl);
+    dom.cfgApiKeyEnv.value = str(cfg.apiKeyEnv) || 'OPENAI_API_KEY';
+    dom.cfgMaxSteps.value = cfg.maxSteps === null || cfg.maxSteps === undefined || !isFinite(Number(cfg.maxSteps))
+      ? '' : String(cfg.maxSteps);
+    dom.cfgTemperature.value =
+      cfg.temperature === null || cfg.temperature === undefined ? '' : str(cfg.temperature);
+
+    const source = str(cfg.apiKeySource);
+    dom.cfgApiKey.value = '';
+    dom.cfgApiKey.disabled = false;
+    dom.cfgApiKey.placeholder = KEY_PLACEHOLDER[source] || KEY_PLACEHOLDER.none;
+    if (source === 'env') {
+      dom.cfgApiKeyHint.textContent =
+        'using ' + (str(cfg.apiKeyEnv) || 'the environment variable') + ' from the environment';
+      dom.cfgApiKeyHint.hidden = false;
+    } else if (source === 'config') {
+      dom.cfgApiKeyHint.textContent = 'A key is saved in the config file. Leave this empty to keep it.';
+      dom.cfgApiKeyHint.hidden = false;
+    } else {
+      dom.cfgApiKeyHint.textContent = '';
+      dom.cfgApiKeyHint.hidden = true;
+    }
+
+    dom.cfgClearKey.checked = false;
+    dom.cfgClearKeyWrap.hidden = source !== 'config';
+
+    dom.cfgApiKeyEnvHint.textContent = source === 'env' ? 'the key is read from this variable' : '';
+    dom.cfgApiKeyEnvHint.hidden = source !== 'env';
+
+    dom.settingsFoot.textContent = str(cfg.configFile)
+      ? 'Settings are stored in ' + str(cfg.configFile)
+      : 'No config file path reported by the server.';
+
+    clearSettingsErrors();
+  }
+
+  /* Only the fields this form manages are sent; apiKey is omitted when the
+   * field is empty so the stored key survives an unrelated change. */
+  function settingsPayload() {
+    const payload = {
+      provider: dom.cfgProvider.value,
+      model: dom.cfgModel.value.trim(),
+      baseUrl: dom.cfgBaseUrl.value.trim(),
+      apiKeyEnv: dom.cfgApiKeyEnv.value.trim() || 'OPENAI_API_KEY'
+    };
+    const clearing = dom.cfgClearKey.checked;
+    if (clearing) {
+      payload.clearApiKey = true;
+    } else if (dom.cfgApiKey.value) {
+      payload.apiKey = dom.cfgApiKey.value;
+    }
+    const steps = numField(dom.cfgMaxSteps);
+    if (steps !== undefined) { payload.maxSteps = Math.max(1, Math.round(steps)); }
+    const temperature = numField(dom.cfgTemperature);
+    if (temperature !== undefined) { payload.temperature = temperature; }
+    return payload;
+  }
+
+  function configSummary(status, prefix) {
+    if (!status || typeof status !== 'object') { return prefix; }
+    const bits = [];
+    if (status.provider) { bits.push('provider ' + str(status.provider)); }
+    if (status.model) { bits.push('model ' + str(status.model)); }
+    return bits.length ? prefix + ' — ' + bits.join(', ') : prefix;
+  }
+
+  function showSaveError(err) {
+    const message = str(err && err.message) || 'Save failed.';
+    const status = err && err.status;
+    if (status === 401 || status === 403 || /api[- ]?key|unauthor|forbidden|invalid key|401|403/i.test(message)) {
+      fieldError(dom.cfgApiKeyError, message);
+    } else if (/model/i.test(message)) {
+      fieldError(dom.cfgModelError, message);
+    } else {
+      dom.settingsError.textContent = message;
+      dom.settingsError.hidden = false;
+    }
+  }
+
+  async function saveSettings() {
+    clearSettingsErrors();
+    dom.settingsSave.disabled = true;
+    try {
+      const res = await postJSON('/api/config', settingsPayload());
+      closeSettings();
+      if (res && typeof res === 'object') { applyStatus(res); }   // chips now, status event later
+      appendTranscriptNotice(configSummary(res, 'Settings saved'));
+    } catch (err) {
+      showSaveError(err);
+    }
+    dom.settingsSave.disabled = false;
+  }
+
+  function showTestResult(text, kind) {
+    dom.settingsTestResult.textContent = text;
+    dom.settingsTestResult.className = 'settings-test-result ' + kind;
+    dom.settingsTestResult.hidden = false;
+  }
+
+  async function testSettings() {
+    clearSettingsErrors();
+    dom.settingsTest.disabled = true;
+    dom.settingsTest.textContent = 'Testing…';
+    try {
+      const res = await postJSON('/api/config/test', settingsPayload());
+      const reply = clip(firstLine(str(res && res.reply)), 200) || '(empty reply)';
+      const elapsed = msLabel(res && res.elapsedMs);
+      showTestResult('ok — reply: “' + reply + '”' + (elapsed ? ' (' + elapsed + ')' : ''), 'ok');
+    } catch (err) {
+      showTestResult(str(err && err.message) || 'Test failed.', 'bad');
+    }
+    dom.settingsTest.textContent = 'Test connection';
+    dom.settingsTest.disabled = false;
+  }
+
+  function focusSettingsForm() { dom.cfgProvider.focus(); }
+
+  function closeSettings() {
+    if (dom.settingsOverlay.hidden) { return; }
+    dom.settingsOverlay.hidden = true;
+    // The panel is opened from the button (or automatically on a first run);
+    // either way the button is where focus belongs when it closes.
+    dom.btnSettings.focus();
+  }
+
+  /* `preloaded` skips the round trip when the caller already has GET /api/config. */
+  async function openSettings(preloaded) {
+    if (!dom.overlay.hidden) { closeSessions(); }
+    dom.settingsOverlay.hidden = false;
+
+    let cfg = preloaded && typeof preloaded === 'object' ? preloaded : null;
+    if (!cfg) {
+      dom.settingsError.textContent = 'Loading configuration…';
+      dom.settingsError.hidden = false;
+      try {
+        cfg = await request('/api/config');
+      } catch (err) {
+        dom.settingsError.textContent = 'Could not load settings: ' + str(err && err.message);
+        dom.settingsError.hidden = false;
+        return;
+      }
+    }
+    renderSettings(cfg && typeof cfg === 'object' ? cfg : {});
+    focusSettingsForm();
+  }
+
+  /* A first run has no model, and the page cannot do anything useful until one
+   * is picked, so the panel opens itself. */
+  async function maybeOpenSettingsOnFirstLoad() {
+    let cfg = null;
+    try {
+      cfg = await request('/api/config');
+    } catch (err) {
+      return false;
+    }
+    if (!cfg || typeof cfg !== 'object' || cfg.configured !== false) { return false; }
+    await openSettings(cfg);
+    return true;
+  }
+
   // ------------------------------------------------------------ composer
 
   async function sendMessage() {
@@ -792,9 +1052,11 @@
       setBusy(true);
     } catch (err) {
       if (err.status === 409) {
-        // The server refused a second turn; never retry, just say so.
+        // 409 means "a turn is already running" or, on a fresh install, "no
+        // model configured". Only the first one makes the page busy — the
+        // second must leave the composer usable so the user can retry.
         appendError(err.message);
-        setBusy(true);
+        setBusy(state.configured === false ? false : true);
       } else {
         appendError('send failed: ' + err.message);
       }
@@ -834,8 +1096,27 @@
   dom.overlay.addEventListener('click', function (event) {
     if (event.target === dom.overlay) { closeSessions(); }
   });
+
+  dom.btnSettings.addEventListener('click', function () { openSettings(); });
+  dom.settingsClose.addEventListener('click', closeSettings);
+  dom.settingsOverlay.addEventListener('click', function (event) {
+    if (event.target === dom.settingsOverlay) { closeSettings(); }
+  });
+  dom.settingsForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    saveSettings();
+  });
+  dom.settingsTest.addEventListener('click', testSettings);
+  dom.cfgClearKey.addEventListener('change', function () {
+    const clearing = dom.cfgClearKey.checked;
+    dom.cfgApiKey.disabled = clearing;
+    if (clearing) { dom.cfgApiKey.value = ''; }
+  });
+
   document.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape' && !dom.overlay.hidden) { closeSessions(); }
+    if (event.key !== 'Escape') { return; }
+    if (!dom.settingsOverlay.hidden) { closeSettings(); }
+    else if (!dom.overlay.hidden) { closeSessions(); }
   });
 
   dom.btnAuto.addEventListener('click', async function () {
@@ -881,7 +1162,8 @@
     setBusy(false);
     await refreshStatus();
     connect();
-    dom.input.focus();
+    const settingsOpen = await maybeOpenSettingsOnFirstLoad();
+    if (!settingsOpen) { dom.input.focus(); }
   }
 
   init();

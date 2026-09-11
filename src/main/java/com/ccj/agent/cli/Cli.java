@@ -119,18 +119,32 @@ public final class Cli {
     }
 
     Config config;
+    Path configFile;
     try {
-      Path configFile = options.config() == null ? paths.configFile() : Path.of(options.config());
+      configFile = options.config() == null ? paths.configFile() : Path.of(options.config());
       config = Config.layered(configFile, env, options.overrides());
     } catch (RuntimeException e) {
       return fail(err, e);
     }
 
+    // No flag, no prompt: the web UI is the default front end, and --repl is the terminal one.
+    boolean webMode = !options.repl() && options.print() == null;
+
     Provider provider;
-    try {
-      provider = options.demo() ? new DemoProvider() : Providers.create(config, env);
-    } catch (RuntimeException e) {
-      return fail(err, e);
+    if (options.demo()) {
+      provider = new DemoProvider();
+    } else {
+      try {
+        provider = Providers.create(config, env);
+      } catch (RuntimeException e) {
+        if (!webMode) {
+          return fail(err, e);
+        }
+        // The settings form exists to fix exactly this: serve anyway and let it be configured there.
+        provider = null;
+        err.println("no model configured — add one in the web UI (Settings), or pass --model");
+        err.flush();
+      }
     }
 
     FileSession session = null;
@@ -162,9 +176,20 @@ public final class Cli {
         out.flush();
       }
 
-      if (options.web()) {
+      if (webMode) {
         return serveWeb(
-            options, provider, tools, agentOptions, cwd, config, session, sessionsDir, out, err);
+            options,
+            provider,
+            tools,
+            agentOptions,
+            cwd,
+            config,
+            configFile,
+            session,
+            sessionsDir,
+            env,
+            out,
+            err);
       }
 
       if (options.print() != null) {
@@ -203,7 +228,9 @@ public final class Cli {
       if (session != null) {
         session.close();
       }
-      provider.close();
+      if (provider != null) {
+        provider.close();
+      }
     }
   }
 
@@ -322,6 +349,9 @@ public final class Cli {
    *
    * <p>A non-loopback bind without a token is refused rather than warned about: the UI can run shell
    * commands, so exposing it on a network is a remote code execution surface.
+   *
+   * <p>{@code provider} may be null — the UI is where a model gets configured, so an unusable
+   * configuration is a state to be shown, not an error to die on.
    */
   private int serveWeb(
       CliOptions options,
@@ -330,8 +360,10 @@ public final class Cli {
       AgentOptions agentOptions,
       Path cwd,
       Config config,
+      Path configFile,
       FileSession session,
       Path sessionsDir,
+      Map<String, String> env,
       PrintStream out,
       PrintStream err) {
     String host =
@@ -351,26 +383,28 @@ public final class Cli {
 
     AgentHub.Settings settings =
         new AgentHub.Settings(
-            agentOptions,
             VERSION,
-            options.demo() ? "demo://local" : config.baseUrl(),
             cwd,
             sessionsDir,
-            config.outputLimitBytes(),
+            configFile,
+            env,
+            Providers::create,
+            Providers.supported(),
             Boolean.TRUE.equals(config.autoApprove()) || options.yolo());
-    AgentHub hub = new AgentHub(provider, tools, settings, session);
+    AgentHub hub = new AgentHub(provider, config, tools, settings, session);
     try (HttpApi api = HttpApi.start(hub, new InetSocketAddress(host, port), options.webToken())) {
       out.println("oh-my-ccj " + VERSION + " — web UI: " + api.url());
       out.println(
-          "session "
+          (provider == null
+                  ? "no model configured — Settings in the UI"
+                  : "model " + agentOptions.model() + " (" + provider.name() + ")")
+              + " — session "
               + session.id()
-              + " — model "
-              + modelLabel(agentOptions.model())
               + " — cwd "
               + cwd);
       out.println("Ctrl+C to stop");
       out.flush();
-      if (options.open()) {
+      if (!options.noOpen()) {
         openBrowser(api.url(), err);
       }
       new CountDownLatch(1).await();
