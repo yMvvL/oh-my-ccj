@@ -5,14 +5,14 @@ How `ccj` is put together, why each seam is where it is, and what the wire actua
 ## Layers
 
 ```
-  cli/          CliOptions -> Config -> Cli -> (one-shot | REPL)
+  cli/          CliOptions -> Config -> Cli -> (one-shot | REPL | --web)
    |                                        the only System.exit in the codebase
    v
   core/         AgentLoop ---- Provider (interface)  ---- provider/ (HTTP + SSE)
                   |            ToolRegistry (interface) ---- tool/ (filesystem, shell)
                   |            Session (interface)      ---- session/ (JSONL on disk)
                   |            AgentListener (interface) -- ui/ (ConsoleRenderer)
-                  v            ToolContext(Approver)
+                  v                                        -- web/ (AgentHub + HttpApi + page)
              Config / AppPaths / Message / Json
 ```
 

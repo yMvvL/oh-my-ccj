@@ -29,6 +29,11 @@ public record CliOptions(
     String home,
     String system,
     String cwd,
+    boolean web,
+    Integer port,
+    String host,
+    String webToken,
+    boolean open,
     boolean help,
     boolean version) {
 
@@ -76,6 +81,11 @@ public record CliOptions(
     String home = null;
     String system = null;
     String cwd = null;
+    boolean web = false;
+    Integer port = null;
+    String host = null;
+    String webToken = null;
+    boolean open = false;
     boolean help = false;
     boolean version = false;
 
@@ -115,6 +125,26 @@ public record CliOptions(
         case "--tools" -> {
           toolsFlag = true;
           i++;
+        }
+        case "--web" -> {
+          web = true;
+          i++;
+        }
+        case "--open" -> {
+          open = true;
+          i++;
+        }
+        case "--port" -> {
+          port = integer(name, take(args, i, name, inline));
+          i += inline == null ? 2 : 1;
+        }
+        case "--host" -> {
+          host = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
+        case "--web-token" -> {
+          webToken = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
         }
         case "-p", "--print" -> {
           print = take(args, i, name, inline);
@@ -195,6 +225,11 @@ public record CliOptions(
         home,
         system,
         cwd,
+        web,
+        port,
+        host,
+        webToken,
+        open,
         help,
         version);
   }
@@ -221,6 +256,13 @@ public record CliOptions(
               --resume <id>        reopen a session by id
               --continue           reopen the most recent session
               --list-sessions      print sessions and exit
+
+        Web:
+              --web                serve a browser UI instead of the REPL
+              --port <n>           web UI port (default 8787)
+              --host <addr>        bind address (default 127.0.0.1; anything else needs --web-token)
+              --web-token <token>  require this token from every web request
+              --open               open the browser at the served URL
 
         Runtime:
               --config <file>      config file (default: <home>/config.json)

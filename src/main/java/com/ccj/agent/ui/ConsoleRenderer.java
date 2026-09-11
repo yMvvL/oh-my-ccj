@@ -1,10 +1,8 @@
 package com.ccj.agent.ui;
 
 import com.ccj.agent.core.AgentListener;
-import com.ccj.agent.core.Json;
 import com.ccj.agent.core.Message;
 import com.ccj.agent.core.ToolResult;
-import com.fasterxml.jackson.databind.JsonNode;
 import java.io.PrintStream;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -19,7 +17,6 @@ import java.util.Set;
  */
 public final class ConsoleRenderer implements AgentListener {
 
-  private static final int SUMMARY_WIDTH = 80;
   private static final int RESULT_LINES = 3;
 
   private final PrintStream out;
@@ -27,7 +24,6 @@ public final class ConsoleRenderer implements AgentListener {
   private final boolean color;
   private final Spinner spinner;
 
-  private final Set<String> pendingStart = new LinkedHashSet<>();
   private final Set<String> rendered = new LinkedHashSet<>();
 
   private boolean lineOpen;
@@ -52,7 +48,6 @@ public final class ConsoleRenderer implements AgentListener {
   public void onTurnStart(int step) {
     turnTextStarted = false;
     reasoningStarted = false;
-    pendingStart.clear();
     rendered.clear();
   }
 
@@ -96,7 +91,7 @@ public final class ConsoleRenderer implements AgentListener {
     ensureNewline();
 
     for (Message.ToolCall call : message.toolCalls()) {
-      if (pendingStart.remove(call.id()) || !rendered.contains(call.id())) {
+      if (!rendered.contains(call.id())) {
         printToolCard(call);
         rendered.add(call.id());
       }
@@ -110,13 +105,10 @@ public final class ConsoleRenderer implements AgentListener {
     if (!spinnerPaused) {
       spinner.start();
     }
-    // The start event carries no arguments; the card is printed once onAssistant has them.
-    if (call.arguments() == null || call.arguments().isBlank()) {
-      pendingStart.add(call.id());
-      return;
+    if (!rendered.contains(call.id())) {
+      printToolCard(call);
+      rendered.add(call.id());
     }
-    printToolCard(call);
-    rendered.add(call.id());
   }
 
   @Override
@@ -173,7 +165,6 @@ public final class ConsoleRenderer implements AgentListener {
     ensureNewline();
     out.flush();
     err.flush();
-    pendingStart.clear();
     rendered.clear();
     turnTextStarted = false;
     reasoningStarted = false;
@@ -196,7 +187,7 @@ public final class ConsoleRenderer implements AgentListener {
     StringBuilder line = new StringBuilder();
     line.append(Ansi.style("33", "⚙", color)).append(' ');
     line.append(Ansi.style("1", call.name(), color));
-    String summary = summarize(call);
+    String summary = ToolSummary.summarize(call);
     if (!summary.isEmpty()) {
       line.append(' ').append(Ansi.style("2", summary, color));
     }
@@ -217,52 +208,6 @@ public final class ConsoleRenderer implements AgentListener {
     if (remaining > 0) {
       out.println(Ansi.style("2", "    … (" + remaining + " more lines)", color));
     }
-  }
-
-  private String summarize(Message.ToolCall call) {
-    String raw = call.arguments();
-    if (raw == null || raw.isBlank()) {
-      return "";
-    }
-    JsonNode args;
-    try {
-      args = Json.parse(raw);
-    } catch (IllegalArgumentException e) {
-      return clip(raw);
-    }
-    if (!args.isObject()) {
-      return clip(raw);
-    }
-    String tool = call.name() == null ? "" : call.name();
-    String value =
-        switch (tool) {
-          case "read", "write", "edit" -> firstText(args, "path", "file_path", "file");
-          case "bash" -> firstText(args, "command", "cmd", "script");
-          case "grep", "glob" -> firstText(args, "pattern", "query");
-          default -> null;
-        };
-    return value != null && !value.isBlank() ? clip(value) : clip(Json.write(args));
-  }
-
-  private static String firstText(JsonNode args, String... fields) {
-    for (String field : fields) {
-      JsonNode value = args.get(field);
-      if (value != null && value.isTextual()) {
-        return value.asText();
-      }
-    }
-    return null;
-  }
-
-  private static String clip(String text) {
-    if (text == null) {
-      return "";
-    }
-    String flat = text.replaceAll("\\s+", " ").strip();
-    if (flat.length() <= SUMMARY_WIDTH) {
-      return flat;
-    }
-    return flat.substring(0, SUMMARY_WIDTH - 1).stripTrailing() + "…";
   }
 
   /** Single-line stderr spinner, active only on a real terminal so pipes and tests stay clean. */

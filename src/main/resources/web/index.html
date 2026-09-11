@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>ccj</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="brand">
+      <span class="brand-mark">ccj</span>
+      <span id="conn-pill" class="conn-pill" hidden>reconnecting…</span>
+    </div>
+
+    <div class="meta" id="meta">
+      <span class="chip" id="chip-provider" title="provider">provider</span>
+      <span class="chip" id="chip-model" title="model">model</span>
+      <span class="chip chip-url" id="chip-baseurl" title="base URL">base URL</span>
+      <span class="chip chip-session" id="chip-session" title="session">no session</span>
+    </div>
+
+    <div class="live" id="live" data-state="idle">
+      <span class="live-dot" aria-hidden="true"></span>
+      <span id="live-text">idle</span>
+    </div>
+
+    <div class="actions">
+      <button type="button" class="btn" id="btn-new">New session</button>
+      <button type="button" class="btn" id="btn-sessions" aria-haspopup="dialog">Sessions</button>
+      <button type="button" class="btn toggle" id="btn-auto" aria-pressed="false">
+        <span class="switch" aria-hidden="true"></span>
+        <span>Approve all</span>
+        <span class="toggle-state" id="auto-state">off</span>
+      </button>
+      <button type="button" class="btn danger" id="btn-abort" disabled>Abort</button>
+      <button type="button" class="btn ghost" id="btn-side" aria-expanded="true" aria-controls="side" title="Toggle side panel">Panel</button>
+    </div>
+  </header>
+
+  <div id="layout">
+    <main id="main">
+      <div id="transcript" class="transcript" aria-live="polite" aria-relevant="additions text">
+        <p class="muted placeholder">Connecting to ccj…</p>
+      </div>
+
+      <form id="composer" class="composer" autocomplete="off">
+        <button type="button" id="jump" class="jump" hidden>jump to latest</button>
+        <label class="sr-only" for="input">Message</label>
+        <textarea id="input" rows="3" spellcheck="false"
+                  placeholder="Message the agent — Enter sends, Shift+Enter adds a newline"></textarea>
+        <div class="composer-row">
+          <span class="hint" id="composer-hint"></span>
+          <button type="submit" id="send" class="btn primary">Send</button>
+        </div>
+      </form>
+    </main>
+
+    <aside id="side" class="side" aria-label="Agent details">
+      <section class="side-sec">
+        <h2>Tools</h2>
+        <ul class="tool-list" id="tool-list">
+          <li class="muted">No tools reported.</li>
+        </ul>
+      </section>
+      <section class="side-sec">
+        <h2>Usage</h2>
+        <div class="usage" id="usage">—</div>
+      </section>
+      <section class="side-sec">
+        <h2>Session</h2>
+        <div class="kv" id="session-info">—</div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div id="sessions-overlay" class="overlay" hidden>
+  <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="sessions-title">
+    <header class="overlay-head">
+      <h2 id="sessions-title">Sessions</h2>
+      <button type="button" class="btn ghost" id="sessions-close">Close</button>
+    </header>
+    <div class="overlay-body" id="sessions-body">
+      <p class="muted">Loading…</p>
+    </div>
+  </div>
+</div>
+
+<noscript><p class="noscript">ccj --web needs JavaScript.</p></noscript>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

@@ -121,7 +121,10 @@ public final class AgentLoop {
     switch (event) {
       case Provider.Event.TextDelta d -> listener.onText(d.text());
       case Provider.Event.ReasoningDelta d -> listener.onReasoning(d.text());
-      case Provider.Event.ToolCallStart s -> listener.onToolStart(new Message.ToolCall(s.id(), s.name(), ""));
+      // The provider announces a call before its arguments are assembled; front ends render the
+      // card when the call is actually about to run (see executeTool), so this wire-level signal is
+      // informational only.
+      case Provider.Event.ToolCallStart ignored -> {}
       case Provider.Event.Usage u -> listener.onNotice(
           "tokens: " + u.inputTokens() + " in / " + u.outputTokens() + " out");
       case Provider.Event.Retry r -> listener.onNotice(
@@ -131,6 +134,7 @@ public final class AgentLoop {
 
   private void executeTool(Message.ToolCall call) {
     long started = System.nanoTime();
+    listener.onToolStart(call);
     ToolResult result = tools.execute(call, toolContext);
     long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
     listener.onToolEnd(call, result, elapsedMillis);

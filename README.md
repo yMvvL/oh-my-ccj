@@ -1,8 +1,8 @@
 # oh-my-ccj
 
 A coding agent runtime written from scratch in plain Java 21. No agent framework, no HTTP client
-library, no CLI library — `java.net.http` for transport, `com.sun.net.httpserver` for the test
-doubles, ~5k lines of hand-written code, 119 tests.
+library, no CLI library — `java.net.http` for transport, `com.sun.net.httpserver` for the web UI and
+the test doubles, ~6k lines of hand-written Java plus a 1.6k-line vanilla page, 137 tests.
 
 `ccj` streams a conversation with a model, lets the model call tools that touch your filesystem,
 feeds the results back, and repeats until the model answers. It is a small, readable implementation
@@ -71,6 +71,24 @@ normal CLI: same approval prompts, same tool cards, same session handling. Nothi
 machine, no key is involved, and the working directory is this repository — the fastest way to watch
 the loop work end to end.
 
+## Web UI
+
+```bash
+ccj --web                 # http://127.0.0.1:8787 — same loop, in a browser
+ccj --web --open          # ... and open it
+scripts/playground.sh --web --open   # the same thing with no API key
+```
+
+The page streams the assistant's prose, shows every tool call as a card with its arguments, timing and
+output, and renders an approval request as a blocking card with Approve / Deny — because that is
+exactly what it is: the loop thread is parked until someone answers, and a timeout denies. Sessions
+are the same JSONL files the CLI uses, so a conversation started in the terminal can be resumed in
+the browser and vice versa. `--port` moves it, `--host` binds another interface, and binding
+anything but loopback **requires** `--web-token` — the UI can run shell commands, so an unauthenticated
+network bind is a remote code execution surface. With a token, the printed URL carries it and the
+server stores it in an HttpOnly cookie, so the browser never needs token plumbing. See
+[docs/WEBUI.md](docs/WEBUI.md).
+
 ## What it does
 
 | Capability | Detail |
@@ -81,6 +99,7 @@ the loop work end to end.
 | Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, resumable in a later process with `--resume` / `--continue`. |
 | Approval | Anything that writes or executes asks first; without a terminal it is denied, not silently allowed. |
 | Rendering | Streaming prose, tool cards with argument summaries, per-call timing, dimmed reasoning, a spinner that yields the terminal to prompts. |
+| Web UI | `ccj --web` serves the same loop as a single page: streaming transcript, tool cards, blocking approval prompts, session switching. No framework, no build step. |
 
 ## Usage
 
@@ -183,6 +202,7 @@ exceptions all come back as error results the model can read and correct.
 ```
 cli/       argument parsing, wiring, REPL, exit codes   (the only place that calls System.exit)
 ui/        AgentListener implementation: streaming text, tool cards, spinner, ANSI
+web/       the same loop behind HTTP: agent hub, SSE stream, approval handshake, single page
 session/   JSONL message codec, FileSession, SessionStore
 tool/      read write edit bash glob grep + approval-aware helpers
 provider/  OpenAI-compatible and Anthropic providers over java.net.http, plus the SSE reader
@@ -198,8 +218,9 @@ mappings and the reasoning behind the design.
 ## Development
 
 ```bash
-mvn test                                  # 119 tests, no network, no API key
+mvn test                                  # 137 tests, no network, no API key
 mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
+mvn -Dtest=WebApiTest test                # HTTP + SSE + approval handshake only
 mvn -DskipTests package                   # fat jar
 ```
 
@@ -217,6 +238,7 @@ file on disk, session written.
 | session (codec round-trips, append/reopen, listing) | 19 |
 | CLI (argument parsing) | 8 |
 | end-to-end (CLI → HTTP → tool → disk) | 9 |
+| web API (HTTP, SSE, approvals, token gate) | 10 |
 
 ## Limitations
 
@@ -226,3 +248,5 @@ file on disk, session written.
 - Bash runs as the current user with your full environment.
 - Sessions grow without bound; there is no compaction or summarisation.
 - The OpenAI path targets the chat-completions API, not the newer Responses API.
+- The web UI is a local console: one turn at a time, one session, no accounts. It binds loopback by
+  default and refuses a public bind without a token, because the agent can run shell commands.

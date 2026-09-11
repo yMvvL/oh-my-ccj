@@ -15,11 +15,16 @@ import com.ccj.agent.session.SessionStore;
 import com.ccj.agent.tool.Tools;
 import com.ccj.agent.ui.Ansi;
 import com.ccj.agent.ui.ConsoleRenderer;
+import com.ccj.agent.web.AgentHub;
+import com.ccj.agent.web.HttpApi;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,6 +33,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -46,6 +52,7 @@ public final class Cli {
 
   public static final String VERSION = "0.1.0";
   public static final String PROMPT = "ccj> ";
+  public static final int DEFAULT_WEB_PORT = 8787;
 
   private static final DateTimeFormatter TIMESTAMP =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -146,6 +153,11 @@ public final class Cli {
               config.temperature(),
               config.maxTokens(),
               config.maxSteps());
+
+      if (options.web()) {
+        return serveWeb(
+            options, provider, tools, agentOptions, cwd, config, session, sessionsDir, out, err);
+      }
 
       if (options.print() != null) {
         return oneShot(
@@ -295,6 +307,107 @@ public final class Cli {
       return null;
     }
     return cwd;
+  }
+
+  /**
+   * Serves the browser UI and blocks until the process is interrupted.
+   *
+   * <p>A non-loopback bind without a token is refused rather than warned about: the UI can run shell
+   * commands, so exposing it on a network is a remote code execution surface.
+   */
+  private int serveWeb(
+      CliOptions options,
+      Provider provider,
+      ToolRegistry tools,
+      AgentOptions agentOptions,
+      Path cwd,
+      Config config,
+      FileSession session,
+      Path sessionsDir,
+      PrintStream out,
+      PrintStream err) {
+    String host =
+        options.host() == null || options.host().isBlank() ? "127.0.0.1" : options.host().strip();
+    int port = options.port() == null ? DEFAULT_WEB_PORT : options.port();
+    if (port < 1 || port > 65535) {
+      err.println("error: --port must be between 1 and 65535");
+      err.flush();
+      return 2;
+    }
+    if (!isLoopback(host) && (options.webToken() == null || options.webToken().isBlank())) {
+      err.println("error: refusing to serve the web UI on " + host + " without a token");
+      err.println("  the UI can run shell commands; pass --web-token <secret> or bind 127.0.0.1");
+      err.flush();
+      return 2;
+    }
+
+    AgentHub.Settings settings =
+        new AgentHub.Settings(
+            agentOptions,
+            VERSION,
+            config.baseUrl(),
+            cwd,
+            sessionsDir,
+            config.outputLimitBytes(),
+            Boolean.TRUE.equals(config.autoApprove()) || options.yolo());
+    AgentHub hub = new AgentHub(provider, tools, settings, session);
+    try (HttpApi api = HttpApi.start(hub, new InetSocketAddress(host, port), options.webToken())) {
+      out.println("oh-my-ccj " + VERSION + " — web UI: " + api.url());
+      out.println(
+          "session "
+              + session.id()
+              + " — model "
+              + modelLabel(agentOptions.model())
+              + " — cwd "
+              + cwd);
+      out.println("Ctrl+C to stop");
+      out.flush();
+      if (options.open()) {
+        openBrowser(api.url(), err);
+      }
+      new CountDownLatch(1).await();
+      return 0;
+    } catch (IOException e) {
+      err.println("error: cannot serve " + host + ":" + port + " — " + message(e));
+      err.flush();
+      return 1;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return 0;
+    } finally {
+      hub.close();
+    }
+  }
+
+  private static boolean isLoopback(String host) {
+    String normalized = host.strip().toLowerCase(Locale.ROOT);
+    if (normalized.equals("localhost")) {
+      return true;
+    }
+    try {
+      return InetAddress.getByName(normalized).isLoopbackAddress();
+    } catch (UnknownHostException e) {
+      return false;
+    }
+  }
+
+  private static void openBrowser(String url, PrintStream err) {
+    String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+    List<String> command =
+        os.contains("mac")
+            ? List.of("open", url)
+            : os.contains("win")
+                ? List.of("rundll32", "url.dll,FileProtocolHandler", url)
+                : List.of("xdg-open", url);
+    try {
+      new ProcessBuilder(command)
+          .redirectErrorStream(true)
+          .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+          .start();
+    } catch (IOException e) {
+      err.println("could not open a browser (" + message(e) + "); open " + url);
+      err.flush();
+    }
   }
 
   private static int fail(PrintStream err, RuntimeException e) {
