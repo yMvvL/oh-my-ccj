@@ -34,6 +34,8 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `DELETE` | `/api/workspace?name=...` | forget a workspace; its session files stay on disk |
 | `GET` | `/api/models` | the provider catalogue: providers, their protocol and endpoint, their models |
 | `GET`/`POST` | `/api/providers` | list or define a provider (`{name, kind, baseUrl, apiKeyEnv, models}`) |
+| `POST` | `/api/models` | remember a model for a provider (`{provider, model}`), built-ins included |
+| `DELETE` | `/api/models?provider=&model=` | forget a model; the one in use is protected |
 | `DELETE` | `/api/providers?name=...` | remove a definition; the one in use is protected |
 | `GET` | `/api/config` | what the settings form needs: current values, whether a key exists, where it is stored |
 | `POST` | `/api/config` | save provider/model/key settings and switch to them immediately |
@@ -118,6 +120,10 @@ The built-in names are code; anything else is a definition the user owns, kept i
 - Definitions are validated before they are stored, and a definition that could not work is never
   selectable. Removing the provider currently in use is refused — the next turn would have nowhere to
   go — and switching away makes it removable.
+- Model lists are editable **per provider, built-ins included**: a hand-typed model is not a
+  one-off, and the list a picker offers must survive the next render. The first edit records the
+  whole list, after which it is authoritative — that is what makes a removal stick, and what makes
+  an addition survive a restart. Removing the model currently in use is refused.
 - The catalogue endpoint (`/api/models`) is what the settings form reads. It is deliberately
   synchronous and offline: a settings form must render instantly, and a router-backed catalogue can
   cache whatever it fetches. See [ROUTER.md](ROUTER.md).

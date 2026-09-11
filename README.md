@@ -94,7 +94,7 @@ key is never sent back to the browser, only whether one exists and where it come
 | Capability | Detail |
 |---|---|
 | Providers | Any OpenAI-compatible endpoint (`/chat/completions`, SSE) and Anthropic (`/v1/messages`, SSE). Streaming with incremental tool-call assembly, retry with backoff on 408/429/5xx. |
-| Custom providers | Define your own provider in the settings panel or over HTTP: a name, a protocol, an endpoint, an optional key variable and the models it serves. A relay, a gateway, a local vLLM or your own API router is a definition, not a release. |
+| Custom providers | Define your own provider in the settings panel or over HTTP: a name, a protocol, an endpoint, an optional key variable and the models it serves. A relay, a gateway, a local vLLM or your own API router is a definition, not a release. The model list of **any** provider — built-ins included — is editable and persisted, so a hand-typed model is a remembered choice rather than a one-off. |
 | Tools | `read`, `write`, `edit`, `bash`, `glob`, `grep` — each with a hand-written JSON Schema and self-describing errors. |
 | Loop | One model turn at a time; every requested tool runs, its result goes back, and the model is asked again. Bounded by `--max-steps`. |
 | Usage | Prompt/output tokens, steps, tool calls and the **cache hit rate** per session, parsed from both protocols (`prompt_tokens_details.cached_tokens`, `prompt_cache_hit_tokens`, `cache_read_input_tokens`), shown live in the side panel and in each turn's token line, and persisted with the session so resuming continues the count. |
@@ -298,7 +298,7 @@ file on disk, session written.
 | session (codec round-trips, append/reopen, listing) | 19 |
 | CLI (argument parsing, mode selection) | 10 |
 | end-to-end (CLI → HTTP → tool → disk) | 9 |
-| web API (HTTP, SSE, approvals, token gate, settings, workspaces, deletion) | 32 |
+| web API (HTTP, SSE, approvals, token gate, settings, workspaces, deletion, models) | 36 |
 | workspaces (registry rules, persistence, isolation) | 7 |
 | folder chooser (subprocess plumbing, timeout, single-dialog guard) | 5 |
 | provider registry and catalogue | 8 |

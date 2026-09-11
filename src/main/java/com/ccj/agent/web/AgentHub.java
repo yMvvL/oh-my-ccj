@@ -446,6 +446,84 @@ public final class AgentHub implements AutoCloseable {
     return modelsJson();
   }
 
+  /**
+   * Remembers a model for a provider so a hand-typed name survives the next render — the list a
+   * picker offers is not the same thing as the model currently in use.
+   */
+  public ObjectNode addModel(String provider, String model) {
+    ProviderStore store = requireProviderStore();
+    String name = knownProvider(provider);
+    String value = model == null ? "" : model.strip();
+    if (value.isEmpty()) {
+      throw new IllegalArgumentException("a model name is required");
+    }
+    List<String> models = new java.util.ArrayList<>(offeredModels(name));
+    if (!models.contains(value)) {
+      models.add(value);
+      store.setModels(name, models);
+      publish("notice", Json.object().put("text", "model '" + value + "' added to " + name));
+      publishStatus();
+    }
+    return modelsJson();
+  }
+
+  /** Forgets a model for a provider. Refused for the model currently in use: pick another first. */
+  public ObjectNode removeModel(String provider, String model) {
+    ProviderStore store = requireProviderStore();
+    String name = knownProvider(provider);
+    String value = model == null ? "" : model.strip();
+    if (config.model() != null
+        && config.model().equals(value)
+        && name.equalsIgnoreCase(config.provider() == null ? "" : config.provider())) {
+      throw new IllegalArgumentException(
+          "cannot remove the model in use ('" + value + "'); switch to another one first");
+    }
+    List<String> models = new java.util.ArrayList<>(offeredModels(name));
+    if (!models.remove(value)) {
+      throw new IllegalArgumentException("'" + value + "' is not a model of " + name);
+    }
+    store.setModels(name, models);
+    publish("notice", Json.object().put("text", "model '" + value + "' removed from " + name));
+    publishStatus();
+    return modelsJson();
+  }
+
+  /** What the catalogue currently offers for a provider, which is what an edit starts from. */
+  private List<String> offeredModels(String provider) {
+    ModelCatalog catalog = settings.modelCatalog();
+    if (catalog == null) {
+      return List.of();
+    }
+    return catalog.providers().stream()
+        .filter(entry -> entry.name().equalsIgnoreCase(provider))
+        .findFirst()
+        .map(ModelCatalog.ProviderInfo::models)
+        .orElse(List.of());
+  }
+
+  private String knownProvider(String provider) {
+    String name = provider == null ? "" : provider.strip();
+    if (name.isEmpty()) {
+      throw new IllegalArgumentException("a provider name is required");
+    }
+    ModelCatalog catalog = settings.modelCatalog();
+    boolean known =
+        catalog != null
+            && catalog.providers().stream().anyMatch(entry -> entry.name().equalsIgnoreCase(name));
+    if (!known) {
+      throw new IllegalArgumentException(
+          "no provider named '"
+              + name
+              + "'; add one first, or use one of: "
+              + (catalog == null
+                  ? ""
+                  : String.join(
+                      ", ",
+                      catalog.providers().stream().map(ModelCatalog.ProviderInfo::name).toList())));
+    }
+    return name;
+  }
+
   private ProviderStore requireProviderStore() {
     if (settings.providerStore() == null) {
       throw new IllegalStateException("this server was started without a provider registry");

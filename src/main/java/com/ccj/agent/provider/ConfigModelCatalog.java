@@ -43,7 +43,7 @@ public final class ConfigModelCatalog implements ModelCatalog {
               kind,
               Config.defaultBaseUrl(kind),
               true,
-              List.of(defaultModelFor(kind))));
+              effective(name, List.of(defaultModelFor(kind)))));
     }
     if (store != null) {
       for (ProviderDefinition definition : store.list()) {
@@ -54,7 +54,7 @@ public final class ConfigModelCatalog implements ModelCatalog {
                   definition.kind(),
                   definition.baseUrl(),
                   false,
-                  definition.models()));
+                  effective(definition.name(), definition.models())));
         }
       }
     }
@@ -70,6 +70,15 @@ public final class ConfigModelCatalog implements ModelCatalog {
       }
     }
     return List.copyOf(models);
+  }
+
+  /**
+   * The list to offer for a provider: whatever the user last recorded wins, so a model they removed
+   * stays removed and one they added stays added; otherwise the provider's own list applies.
+   */
+  private List<String> effective(String provider, List<String> fallback) {
+    List<String> recorded = store == null ? List.of() : store.modelsFor(provider);
+    return recorded.isEmpty() ? fallback : recorded;
   }
 
   private static String defaultModelFor(String kind) {

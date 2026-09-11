@@ -35,6 +35,13 @@ public final class ProviderStore {
   private final Path file;
   private final Map<String, ProviderDefinition> definitions = new LinkedHashMap<>();
 
+  /**
+   * Model lists the user edited, per provider name — including built-ins, which have no definition
+   * of their own. Once a list is recorded here it is authoritative, so removing a model sticks;
+   * before that the catalogue's own list applies.
+   */
+  private final Map<String, List<String>> modelLists = new LinkedHashMap<>();
+
   private ProviderStore(Path home) {
     this.home = home.toAbsolutePath().normalize();
     this.file = this.home.resolve(FILE_NAME);
@@ -50,6 +57,38 @@ public final class ProviderStore {
 
   public Path file() {
     return file;
+  }
+
+  /** The recorded list for a provider, or empty when the catalogue's own list should be used. */
+  public synchronized List<String> modelsFor(String provider) {
+    if (provider == null) {
+      return List.of();
+    }
+    return modelLists.getOrDefault(provider.strip().toLowerCase(), List.of());
+  }
+
+  /**
+   * Records the model list for a provider. The caller passes the list it wants to end up with,
+   * because only the catalogue knows what "the list without this model" means.
+   */
+  public synchronized void setModels(String provider, List<String> models) {
+    String key = provider == null ? "" : provider.strip().toLowerCase();
+    if (key.isEmpty()) {
+      throw new IllegalArgumentException("a provider name is required");
+    }
+    List<String> clean = new java.util.ArrayList<>();
+    for (String model : models == null ? List.<String>of() : models) {
+      String value = model == null ? "" : model.strip();
+      if (!value.isEmpty() && !clean.contains(value)) {
+        clean.add(value);
+      }
+    }
+    if (clean.isEmpty()) {
+      modelLists.remove(key);
+    } else {
+      modelLists.put(key, List.copyOf(clean));
+    }
+    write();
   }
 
   public synchronized List<ProviderDefinition> list() {
@@ -89,6 +128,21 @@ public final class ProviderStore {
     } catch (IOException e) {
       throw new UncheckedIOException("cannot read " + file, e);
     }
+    JsonNode models = root.path("models");
+    if (models.isObject()) {
+      models
+          .fields()
+          .forEachRemaining(
+              entry -> {
+                List<String> recorded = new ArrayList<>();
+                if (entry.getValue().isArray()) {
+                  entry.getValue().forEach(model -> recorded.add(model.asText()));
+                }
+                if (!recorded.isEmpty()) {
+                  modelLists.put(entry.getKey().toLowerCase(), List.copyOf(recorded));
+                }
+              });
+    }
     JsonNode entries = root.path("providers");
     if (!entries.isObject()) {
       return;
@@ -102,14 +156,14 @@ public final class ProviderStore {
               String kind = body.path("kind").asText(ProviderDefinition.OPENAI);
               String baseUrl = body.path("baseUrl").asText("");
               String apiKeyEnv = body.path("apiKeyEnv").asText("");
-              List<String> models = new ArrayList<>();
+              List<String> modelNames = new ArrayList<>();
               JsonNode list = body.path("models");
               if (list.isArray()) {
-                list.forEach(model -> models.add(model.asText()));
+                list.forEach(model -> modelNames.add(model.asText()));
               }
               try {
                 ProviderDefinition definition =
-                    new ProviderDefinition(name, kind, baseUrl, apiKeyEnv, models).requireValid();
+                    new ProviderDefinition(name, kind, baseUrl, apiKeyEnv, modelNames).requireValid();
                 definitions.put(definition.name().toLowerCase(), definition);
               } catch (IllegalArgumentException ignored) {
                 // An entry we cannot use is skipped: one broken definition must not hide the rest.
@@ -119,6 +173,14 @@ public final class ProviderStore {
 
   private void write() {
     ObjectNode root = Json.object();
+    if (!modelLists.isEmpty()) {
+      ObjectNode models = root.putObject("models");
+      modelLists.forEach(
+          (provider, list) -> {
+            ArrayNode array = models.putArray(provider);
+            list.forEach(array::add);
+          });
+    }
     ObjectNode entries = root.putObject("providers");
     for (ProviderDefinition definition : definitions.values()) {
       ObjectNode body = entries.putObject(definition.name());

@@ -112,7 +112,7 @@ public final class HttpApi implements AutoCloseable {
         case "/api/session" -> session(exchange);
         case "/api/workspaces" -> workspaces(exchange);
         case "/api/workspace" -> workspace(exchange);
-        case "/api/models" -> get(exchange, hub.modelsJson());
+        case "/api/models" -> models(exchange);
         case "/api/providers" -> providers(exchange);
         case "/api/config" -> config(exchange);
         case "/api/config/test" -> configTest(exchange);
@@ -244,6 +244,30 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     respond(exchange, 200, Json.object().put("path", chosen.get().toString()));
+  }
+
+  private void models(HttpExchange exchange) throws IOException {
+    String method = exchange.getRequestMethod();
+    if ("GET".equals(method)) {
+      respond(exchange, 200, hub.modelsJson());
+      return;
+    }
+    if ("POST".equals(method)) {
+      JsonNode body = Json.parse(readBody(exchange));
+      respond(
+          exchange,
+          200,
+          hub.addModel(body.path("provider").asText(""), body.path("model").asText("")));
+      return;
+    }
+    if ("DELETE".equals(method)) {
+      respond(
+          exchange,
+          200,
+          hub.removeModel(queryParam(exchange, "provider"), queryParam(exchange, "model")));
+      return;
+    }
+    error(exchange, 405, "GET, POST or DELETE required");
   }
 
   private void providers(HttpExchange exchange) throws IOException {

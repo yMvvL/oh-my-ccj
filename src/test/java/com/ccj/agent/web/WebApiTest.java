@@ -1087,6 +1087,62 @@ class WebApiTest {
     assertEquals(1, requests.size(), "one turn, one request");
   }
 
+  @Test
+  void aModelAddedToABuiltInProviderIsRemembered() throws Exception {
+    // The exact complaint: type a model under a provider that has no definition of its own.
+    JsonNode after = postJson("/api/models", "{\"provider\":\"openai\",\"model\":\"gpt-5-preview\"}");
+
+    JsonNode openai = providerOf(after, "openai");
+    assertEquals(List.of("gpt-4o-mini", "gpt-5-preview"), modelsOf(openai), "added, not replaced");
+    assertTrue(after.path("models").toString().contains("gpt-5-preview"), "offered as a choice");
+    assertTrue(
+        Files.readString(tmp.resolve("providers.json")).contains("gpt-5-preview"),
+        "and written down, so it survives a restart");
+
+    // removing it sticks, because a recorded list is authoritative
+    HttpResponse<String> removed =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create(origin + "/api/models?provider=openai&model=gpt-5-preview"))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, removed.statusCode(), removed.body());
+    assertEquals(List.of("gpt-4o-mini"), modelsOf(providerOf(Json.parse(removed.body()), "openai")));
+    assertEquals(
+        List.of("gpt-4o-mini"),
+        modelsOf(providerOf(json("/api/models"), "openai")),
+        "still gone on the next read");
+
+    // a restart of the store must not bring it back either
+    assertEquals(List.of("gpt-4o-mini"), modelsOf(providerOf(json("/api/models"), "openai")));
+  }
+
+  @Test
+  void modelEditsAreValidated() throws Exception {
+    assertEquals(400, post("/api/models", "{\"provider\":\"nope\",\"model\":\"m\"}").statusCode());
+    assertEquals(400, post("/api/models", "{\"provider\":\"openai\"}").statusCode());
+    assertEquals(400, post("/api/models", "{\"model\":\"m\"}").statusCode());
+    assertEquals(200, get("/api/models?provider=openai&model=x").statusCode(), "GET lists the catalogue");
+    assertTrue(providerStore.modelsFor("openai").isEmpty(), "nothing recorded by the refusals");
+  }
+
+  @Test
+  void theModelInUseCannotBeRemoved() throws Exception {
+    postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"gpt-4o-mini\"}");
+
+    HttpResponse<String> refusal =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create(origin + "/api/models?provider=openai&model=gpt-4o-mini"))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(400, refusal.statusCode(), refusal.body());
+    assertTrue(refusal.body().contains("in use"), refusal.body());
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private static Message.Assistant call(String name, String field, String value) {
@@ -1177,6 +1233,10 @@ class WebApiTest {
     List<String> levels = new ArrayList<>();
     config.path("reasoningLevels").forEach(level -> levels.add(level.asText()));
     return levels;
+  }
+
+  private static JsonNode providerOf(JsonNode catalog, String name) {
+    return lastWhere(catalog.path("providers"), entry -> entry.path("name").asText().equals(name));
   }
 
   private static List<String> modelsOf(JsonNode provider) {
