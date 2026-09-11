@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
-# Launcher for the packaged CLI. Builds the fat jar on first use.
+# Launcher for the packaged CLI. Resolves symlinks (so it works from anywhere on PATH) and rebuilds
+# the jar when it is missing or older than the sources.
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+self="$(readlink -f "${BASH_SOURCE[0]}")"
+here="$(cd "$(dirname "$self")" && pwd)"
 jar="$here/target/ccj.jar"
 
+build=0
 if [[ ! -f "$jar" ]]; then
-  echo "oh-my-ccj: no jar yet, running 'mvn -DskipTests package' first" >&2
+  build=1
+elif [[ -d "$here/src/main" ]] && [[ -n "$(find "$here/src/main" -name '*.java' -newer "$jar" -print -quit)" ]]; then
+  build=1
+fi
+
+if (( build )); then
+  echo "oh-my-ccj: building target/ccj.jar" >&2
   (cd "$here" && mvn -q -DskipTests package) >&2
 fi
 

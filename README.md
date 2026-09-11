@@ -42,6 +42,22 @@ ccj -p "what does src/Main.java do?"   # one-shot
 
 Requires JDK 21+ and Maven. The only runtime dependency is `jackson-databind`.
 
+## Install
+
+Put the launcher on your `PATH` once and use `ccj` from any directory, like any other CLI:
+
+```bash
+mvn -DskipTests package                       # or let the launcher build it on first use
+ln -sfn "$PWD/ccj" ~/.local/bin/ccj           # ~/.local/bin is on PATH by default
+cd ~/some/other/project && ccj -p "explain this repo"
+```
+
+The launcher runs `java -jar target/ccj.jar` and rebuilds when a file under `src/main` is newer than
+the jar, so the symlink can never run stale code. Tools resolve relative paths against the directory
+you started `ccj` in (`-C` overrides it); sessions live under `~/.oh-my-ccj` and are shared across
+projects (`--home` isolates them). The key lives in the environment or the config file — `ccj`
+is a small program, not a service.
+
 ## What it does
 
 | Capability | Detail |
