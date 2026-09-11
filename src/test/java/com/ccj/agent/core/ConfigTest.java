@@ -108,7 +108,7 @@ class ConfigTest {
         Config.layered(
             file,
             Map.of("CCJ_MODEL", "env-model"),
-            new Config(null, null, null, null, null, null, null, 4, null, null, null));
+            new Config(null, null, null, null, null, null, null, 4, null, null, null, null));
 
     assertEquals("openai", layered.provider());
     assertEquals("env-model", layered.model());
@@ -124,7 +124,7 @@ class ConfigTest {
     assertEquals(Config.DEFAULT_MAX_STEPS, openai.maxSteps().intValue());
     assertFalse(openai.autoApprove());
 
-    Config anthropic = new Config("Anthropic", null, null, null, null, null, null, null, null, null, null).resolved();
+    Config anthropic = new Config("Anthropic", null, null, null, null, null, null, null, null, null, null, null).resolved();
     assertEquals("anthropic", anthropic.provider());
     assertEquals(Config.ANTHROPIC_BASE_URL, anthropic.baseUrl());
     assertEquals(Config.ANTHROPIC_KEY_ENV, anthropic.apiKeyEnv());
@@ -135,26 +135,26 @@ class ConfigTest {
     assertEquals(Config.DEFAULT_OPENAI_MODEL, Config.empty().resolved().model());
     assertEquals(
         Config.DEFAULT_ANTHROPIC_MODEL,
-        new Config("anthropic", null, null, null, null, null, null, null, null, null, null)
+        new Config("anthropic", null, null, null, null, null, null, null, null, null, null, null)
             .resolved()
             .model());
     assertEquals(
         Config.DEFAULT_OPENAI_MODEL,
-        new Config(null, null, Config.OPENAI_BASE_URL, null, null, null, null, null, null, null, null)
+        new Config(null, null, Config.OPENAI_BASE_URL, null, null, null, null, null, null, null, null, null)
             .resolved()
             .model());
 
     Config relay =
         new Config(
                 null, null, "https://relay.example.com/v1", null, null, null, null, null, null, null,
-                null)
+                null, null)
             .resolved();
     assertNull(relay.model(), "relays name models freely; guessing one would hide the real error");
 
     assertEquals(
         "my-model",
         Config.empty()
-            .merge(new Config(null, "my-model", null, null, null, null, null, null, null, null, null))
+            .merge(new Config(null, "my-model", null, null, null, null, null, null, null, null, null, null))
             .resolved()
             .model());
   }
@@ -162,7 +162,7 @@ class ConfigTest {
   @Test
   void apiKeyComesFromConfigThenEnvironment() {
     Config fromConfig =
-        Config.empty().merge(new Config(null, null, null, "sk-literal", null, null, null, null, null, null, null));
+        Config.empty().merge(new Config(null, null, null, "sk-literal", null, null, null, null, null, null, null, null));
     assertEquals("sk-literal", fromConfig.resolvedApiKey(Map.of("OPENAI_API_KEY", "sk-env")));
 
     Config fromEnv = Config.empty().resolved();
@@ -174,7 +174,7 @@ class ConfigTest {
   void describeRedactsTheKey() {
     Config config =
         Config.empty()
-            .merge(new Config(null, null, null, "sk-supersecret1234", null, null, null, null, null, null, null))
+            .merge(new Config(null, null, null, "sk-supersecret1234", null, null, null, null, null, null, null, null))
             .resolved();
 
     String shown = config.describe(Map.of()).get("apiKey");
@@ -200,7 +200,7 @@ class ConfigTest {
         file,
         new Config(
             "anthropic", "claude-x", "https://relay.example.com/", "sk-abc", "MY_KEY", 0.5, 2048, 12,
-            null, null, null));
+            null, null, null, null));
 
     Config reread = Config.fromFile(file);
     assertEquals("anthropic", reread.provider());
@@ -223,7 +223,7 @@ class ConfigTest {
     Files.writeString(
         file, "{\"systemPrompt\": \"keep me\", \"outputLimitBytes\": 4096, \"model\": \"old\"}");
 
-    Config.writeInto(file, Config.empty().merge(new Config(null, "new-model", null, null, null, null, null, null, null, null, null)));
+    Config.writeInto(file, Config.empty().merge(new Config(null, "new-model", null, null, null, null, null, null, null, null, null, null)));
 
     Config merged = Config.fromFile(file);
     assertEquals("keep me", merged.systemPrompt());
@@ -235,10 +235,10 @@ class ConfigTest {
   @Test
   void aBlankApiKeyIsRemovedRatherThanStored() throws IOException {
     Path file = tmp.resolve("config.json");
-    Config.writeInto(file, Config.empty().merge(new Config(null, "m", null, "sk-secret", null, null, null, null, null, null, null)));
+    Config.writeInto(file, Config.empty().merge(new Config(null, "m", null, "sk-secret", null, null, null, null, null, null, null, null)));
     assertTrue(Files.readString(file).contains("sk-secret"));
 
-    Config.writeInto(file, Config.fromFile(file).merge(new Config(null, null, null, "", null, null, null, null, null, null, null)));
+    Config.writeInto(file, Config.fromFile(file).merge(new Config(null, null, null, "", null, null, null, null, null, null, null, null)));
 
     assertFalse(Files.readString(file).contains("sk-secret"));
     assertNull(Config.fromFile(file).apiKey());
@@ -251,6 +251,34 @@ class ConfigTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> Config.writeInto(file, Config.empty().merge(new Config(null, "m", null, null, null, null, null, null, null, null, null))));
+        () -> Config.writeInto(file, Config.empty().merge(new Config(null, "m", null, null, null, null, null, null, null, null, null, null))));
+  }
+
+  @Test
+  void reasoningTiersRoundTripAndAreValidated() throws IOException {
+    Path file = tmp.resolve("config.json");
+    Config.writeInto(file, Config.empty().merge(reasoning("high")));
+    assertEquals("high", Config.fromFile(file).reasoning());
+
+    assertEquals("low", Config.empty().merge(reasoning("LOW")).resolved().reasoning());
+    assertNull(Config.empty().resolved().reasoning(), "absent means the provider decides");
+    assertEquals("max", Config.fromEnv(Map.of("CCJ_REASONING", "max")).reasoning());
+
+    IllegalArgumentException bad =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> Config.empty().merge(reasoning("turbo")).resolved());
+    assertTrue(bad.getMessage().contains("low, high, max"), bad.getMessage());
+  }
+
+  @Test
+  void aLaterSourceOverridesTheReasoningTier() {
+    Config merged = Config.empty().merge(reasoning("low")).merge(reasoning("max"));
+
+    assertEquals("max", merged.resolved().reasoning());
+  }
+
+  private static Config reasoning(String level) {
+    return new Config(null, null, null, null, null, null, null, null, null, null, null, level);
   }
 }

@@ -9,7 +9,12 @@ package com.ccj.agent.core;
  *     tokens forever
  */
 public record AgentOptions(
-    String model, String system, Double temperature, Integer maxTokens, int maxSteps) {
+    String model,
+    String system,
+    Double temperature,
+    Integer maxTokens,
+    int maxSteps,
+    String reasoning) {
 
   public AgentOptions {
     if (maxSteps <= 0) {
@@ -18,7 +23,12 @@ public record AgentOptions(
   }
 
   public static AgentOptions defaults() {
-    return new AgentOptions(null, null, null, null, 25);
+    return new AgentOptions(null, null, null, null, 25, null);
+  }
+
+  /** The effort tier the model should spend, or null to leave it to the provider. */
+  public String reasoning() {
+    return reasoning;
   }
 
   public String systemPrompt() {

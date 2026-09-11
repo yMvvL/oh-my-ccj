@@ -31,7 +31,8 @@ public interface Provider extends AutoCloseable {
       List<Message> messages,
       List<ToolSpec> tools,
       Double temperature,
-      Integer maxTokens) {
+      Integer maxTokens,
+      String reasoning) {
 
     public Request {
       messages = messages == null ? List.of() : List.copyOf(messages);

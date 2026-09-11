@@ -94,7 +94,7 @@ class DemoProviderTest {
     List<String> started = new ArrayList<>();
     Provider.Request request =
         new Provider.Request(
-            "demo", null, List.of(new Message.User("read pom.xml")), List.of(), null, null);
+            "demo", null, List.of(new Message.User("read pom.xml")), List.of(), null, null, null);
 
     Message.Assistant reply =
         provider.complete(

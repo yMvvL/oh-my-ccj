@@ -209,7 +209,11 @@ public final class HttpApi implements AutoCloseable {
   private void sessions(HttpExchange exchange) throws IOException {
     String method = exchange.getRequestMethod();
     if ("GET".equals(method)) {
-      respond(exchange, 200, Json.object().set("sessions", hub.sessionsJson()));
+      String workspace = queryParam(exchange, "workspace");
+      ObjectNode body = Json.object();
+      body.put("workspace", workspace == null ? "" : workspace);
+      body.set("sessions", hub.sessionsJson(workspace));
+      respond(exchange, 200, body);
       return;
     }
     if ("DELETE".equals(method)) {

@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -33,7 +34,8 @@ public record Config(
     Integer maxSteps,
     Boolean autoApprove,
     Integer outputLimitBytes,
-    String systemPrompt) {
+    String systemPrompt,
+    String reasoning) {
 
   public static final String DEFAULT_PROVIDER = "openai";
   public static final String OPENAI_BASE_URL = "https://api.openai.com/v1";
@@ -45,8 +47,11 @@ public record Config(
   public static final int DEFAULT_MAX_STEPS = 25;
   public static final int DEFAULT_OUTPUT_LIMIT_BYTES = 32 * 1024;
 
+  /** Reasoning effort tiers, in ascending order; null means "say nothing, let the model decide". */
+  public static final List<String> REASONING_LEVELS = List.of("low", "high", "max");
+
   public static Config empty() {
-    return new Config(null, null, null, null, null, null, null, null, null, null, null);
+    return new Config(null, null, null, null, null, null, null, null, null, null, null, null);
   }
 
   /** Returns this configuration with every field {@code higher} specifies taking over. */
@@ -65,7 +70,8 @@ public record Config(
         pick(maxSteps, higher.maxSteps),
         pick(autoApprove, higher.autoApprove),
         pick(outputLimitBytes, higher.outputLimitBytes),
-        pick(systemPrompt, higher.systemPrompt));
+        pick(systemPrompt, higher.systemPrompt),
+        pick(reasoning, higher.reasoning));
   }
 
   /** Fills in defaults that depend on the chosen provider. */
@@ -87,7 +93,24 @@ public record Config(
         maxSteps == null ? DEFAULT_MAX_STEPS : maxSteps,
         autoApprove != null && autoApprove,
         outputLimitBytes == null ? DEFAULT_OUTPUT_LIMIT_BYTES : outputLimitBytes,
-        systemPrompt);
+        systemPrompt,
+        normaliseReasoning(reasoning));
+  }
+
+  /**
+   * The effort tier, lower-cased and checked. An unknown value is a typo worth reporting rather than
+   * a setting to silently ignore: it changes what the model spends tokens on.
+   */
+  public static String normaliseReasoning(String reasoning) {
+    if (reasoning == null || reasoning.isBlank()) {
+      return null;
+    }
+    String value = reasoning.strip().toLowerCase();
+    if (!REASONING_LEVELS.contains(value)) {
+      throw new IllegalArgumentException(
+          "unknown reasoning level '" + reasoning + "'; use " + String.join(", ", REASONING_LEVELS));
+    }
+    return value;
   }
 
   public static String defaultBaseUrl(String provider) {
@@ -157,7 +180,8 @@ public record Config(
         integer(root, "maxSteps"),
         bool(root, "autoApprove"),
         integer(root, "outputLimitBytes"),
-        text(root, "systemPrompt"));
+        text(root, "systemPrompt"),
+        text(root, "reasoning"));
   }
 
   /** Reads {@code CCJ_*} variables. */
@@ -173,7 +197,8 @@ public record Config(
         parseInteger(env.get("CCJ_MAX_STEPS")),
         parseBoolean(env.get("CCJ_AUTO_APPROVE")),
         parseInteger(env.get("CCJ_OUTPUT_LIMIT_BYTES")),
-        env.get("CCJ_SYSTEM_PROMPT"));
+        env.get("CCJ_SYSTEM_PROMPT"),
+        env.get("CCJ_REASONING"));
   }
 
   /** Same as {@link #merge} with file, then environment, then the caller's overrides. */
@@ -208,6 +233,7 @@ public record Config(
     putNumber(root, "maxSteps", managed.maxSteps());
     putNumber(root, "temperature", managed.temperature());
     putNumber(root, "maxTokens", managed.maxTokens());
+    putText(root, "reasoning", managed.reasoning());
 
     try {
       Path parent = file.toAbsolutePath().getParent();
@@ -271,6 +297,7 @@ public record Config(
     out.put("maxSteps", String.valueOf(maxSteps));
     out.put("autoApprove", String.valueOf(autoApprove));
     out.put("outputLimitBytes", String.valueOf(outputLimitBytes));
+    out.put("reasoning", reasoning == null ? "(provider default)" : reasoning);
     return out;
   }
 

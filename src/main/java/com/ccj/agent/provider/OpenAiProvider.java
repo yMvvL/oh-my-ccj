@@ -114,8 +114,24 @@ public final class OpenAiProvider implements Provider {
     if (request.temperature() != null) {
       root.put("temperature", request.temperature().doubleValue());
     }
-    if (request.maxTokens() != null) {
-      root.put("max_tokens", request.maxTokens());
+    String effort = request.reasoning();
+    if (effort == null) {
+      if (request.maxTokens() != null) {
+        root.put("max_tokens", request.maxTokens());
+      }
+    } else {
+      // Reasoning endpoints take "reasoning_effort"; the protocol tops out at high, so "max" asks
+      // for that plus a much larger completion budget, which is the only other lever it has.
+      root.put("reasoning_effort", "max".equals(effort) ? "high" : effort);
+      int budget =
+          "max".equals(effort)
+              ? Math.max(request.maxTokens() == null ? 0 : request.maxTokens(), 32_768)
+              : 0;
+      if (budget > 0) {
+        root.put("max_completion_tokens", budget);
+      } else if (request.maxTokens() != null) {
+        root.put("max_tokens", request.maxTokens());
+      }
     }
     return root;
   }

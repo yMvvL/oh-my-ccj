@@ -106,7 +106,7 @@ class WebApiTest {
   private static Config testConfig() {
     return new Config(
             "openai", "mock-model", "http://mock.invalid/v1", "sk-test", null, null, null, 6, null,
-            0, null)
+            0, null, null)
         .resolved();
   }
 
@@ -990,6 +990,49 @@ class WebApiTest {
     assertTrue(providerStore.list().isEmpty());
   }
 
+  @Test
+  void sessionsOfAnyWorkspaceCanBeListedWithoutSwitching() throws Exception {
+    provider.reply(Message.Assistant.text("from ws"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"in the first\"}");
+      sse.await("done", 5000);
+    }
+    String firstId = json("/api/status").path("sessionId").asText();
+    postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + tmp.resolve("other") + "\"}");
+    postJson("/api/workspace", "{\"name\":\"other\"}");
+
+    // Folding a folder must not move the active workspace, only read its contents.
+    JsonNode others = json("/api/sessions?workspace=ws");
+    assertEquals("ws", others.path("workspace").asText());
+    assertEquals(1, others.path("sessions").size());
+    assertEquals(firstId, others.path("sessions").get(0).path("id").asText());
+    assertEquals(
+        "other", json("/api/status").path("workspace").path("name").asText(), "still active: other");
+
+    assertEquals(0, json("/api/sessions?workspace=other").path("sessions").size());
+    assertEquals(0, json("/api/sessions").path("sessions").size(), "no parameter means the active one");
+    assertEquals(400, get("/api/sessions?workspace=nope").statusCode());
+  }
+
+  @Test
+  void theReasoningTierCanBeChosenChangedAndCleared() throws Exception {
+    JsonNode saved = postJson("/api/config", "{\"reasoning\":\"high\"}");
+
+    assertEquals("high", saved.path("reasoning").asText());
+    assertEquals(List.of("low", "high", "max"), levels(saved), "the picker offers these");
+    assertEquals("high", json("/api/config").path("reasoning").asText());
+
+    assertEquals("max", postJson("/api/config", "{\"reasoning\":\"max\"}").path("reasoning").asText());
+
+    JsonNode cleared = postJson("/api/config", "{\"reasoning\":\"default\"}");
+    assertTrue(cleared.path("reasoning").isNull(), "default means the provider decides");
+    assertTrue(json("/api/config").path("reasoning").isNull());
+
+    HttpResponse<String> bad = post("/api/config", "{\"reasoning\":\"turbo\"}");
+    assertEquals(400, bad.statusCode(), bad.body());
+    assertTrue(bad.body().contains("low, high, max"), bad.body());
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private static Message.Assistant call(String name, String field, String value) {
@@ -1074,6 +1117,12 @@ class WebApiTest {
       }
     }
     throw new AssertionError("no entry matched in " + array);
+  }
+
+  private static List<String> levels(JsonNode config) {
+    List<String> levels = new ArrayList<>();
+    config.path("reasoningLevels").forEach(level -> levels.add(level.asText()));
+    return levels;
   }
 
   private static List<String> modelsOf(JsonNode provider) {

@@ -122,6 +122,28 @@ The built-in names are code; anything else is a definition the user owns, kept i
   synchronous and offline: a settings form must render instantly, and a router-backed catalogue can
   cache whatever it fetches. See [ROUTER.md](ROUTER.md).
 
+## Choosing a model (the composer picker)
+
+The model is chosen where it matters — in a control directly above the message box, not buried in a
+settings page. It opens a two-column panel: providers on the left, the models that provider offers on
+the right, and, once a model is picked, an effort tier. The tiers travel with every request:
+
+| Tier | OpenAI-compatible | Anthropic |
+|---|---|---|
+| `default` | nothing sent — the provider decides | nothing sent |
+| `low` | `reasoning_effort: "low"` | extended thinking, budget 2048 |
+| `high` | `reasoning_effort: "high"` | extended thinking, budget 8192 |
+| `max` | `reasoning_effort: "high"` plus `max_completion_tokens: 32768` | extended thinking, budget 32768 (and `max_tokens` raised to exceed it) |
+
+Two details are protocol facts rather than choices: the OpenAI-shaped API has no effort above `high`,
+so `max` buys room to think instead; and Anthropic rejects a custom `temperature` while thinking is
+enabled, so the tier and a temperature are mutually exclusive there. A tier that is never chosen sends
+nothing at all, which is what keeps every non-reasoning model working unchanged.
+
+The value is stored as `reasoning` in `config.json`, reported in `status` (with the list of levels so
+the picker needs no second source), accepted by `POST /api/config`, and cleared by posting
+`"reasoning": "default"`.
+
 ## Settings
 
 `ccj` with no arguments serves the web UI, and the UI is where a model gets configured — no JSON

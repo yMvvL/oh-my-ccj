@@ -19,7 +19,7 @@ class ProvidersTest {
   @TempDir Path tmp;
 
   private static Provider.Request ping(String model) {
-    return new Provider.Request(model, null, List.of(new Message.User("hi")), List.of(), null, 16);
+    return new Provider.Request(model, null, List.of(new Message.User("hi")), List.of(), null, 16, null);
   }
 
   @Test
@@ -36,7 +36,7 @@ class ProvidersTest {
   @Test
   void fallsBackToDefaultsForUnsetProviderAndBaseUrl() {
     Config partial =
-        new Config(null, "gpt-x", null, "k", null, null, null, null, null, null, null).resolved();
+        new Config(null, "gpt-x", null, "k", null, null, null, null, null, null, null, null).resolved();
     Provider provider = Providers.create(partial, Map.of());
 
     assertEquals("openai", provider.name());
@@ -65,7 +65,7 @@ class ProvidersTest {
   @Test
   void usesTheProviderDefaultModelOnItsOwnEndpoint() {
     Config config =
-        new Config("openai", null, null, "k", null, null, null, null, null, null, null).resolved();
+        new Config("openai", null, null, "k", null, null, null, null, null, null, null, null).resolved();
 
     assertEquals(Config.DEFAULT_OPENAI_MODEL, config.model());
     assertEquals("openai", Providers.create(config, Map.of()).name());
@@ -76,7 +76,7 @@ class ProvidersTest {
     Config relay =
         new Config(
                 "openai", null, "https://relay.example.com/v1", "k", null, null, null, null, null,
-                null, null)
+                null, null, null)
             .resolved();
 
     IllegalArgumentException failure =
@@ -101,7 +101,7 @@ class ProvidersTest {
   }
 
   private static Config config(String provider, String model, String apiKey) {
-    return new Config(provider, model, null, apiKey, null, null, null, null, null, null, null)
+    return new Config(provider, model, null, apiKey, null, null, null, null, null, null, null, null)
         .resolved();
   }
 
@@ -113,7 +113,7 @@ class ProvidersTest {
           new ProviderDefinition(
               "myrelay", ProviderDefinition.ANTHROPIC, server.url(), "MY_KEY", List.of("claude-x")));
       Config config =
-          new Config("myrelay", "claude-x", null, null, null, null, null, null, null, null, null)
+          new Config("myrelay", "claude-x", null, null, null, null, null, null, null, null, null, null)
               .resolved();
 
       Provider provider = Providers.create(config, Map.of("MY_KEY", "sk-from-env"), store);
@@ -134,7 +134,7 @@ class ProvidersTest {
           new ProviderDefinition(
               "myrelay", ProviderDefinition.OPENAI, "https://ignored.invalid/v1", null, List.of("m")));
       Config config =
-          new Config("myrelay", "m", override.url(), null, null, null, null, null, null, null, null)
+          new Config("myrelay", "m", override.url(), null, null, null, null, null, null, null, null, null)
               .resolved();
 
       Provider provider = Providers.create(config, Map.of("OPENAI_API_KEY", "sk"), store);

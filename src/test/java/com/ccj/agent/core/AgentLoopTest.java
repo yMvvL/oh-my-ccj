@@ -251,7 +251,7 @@ class AgentLoopTest {
     ScriptedProvider provider =
         new ScriptedProvider(
             ScriptedProvider.Reply.calls(new Message.ToolCall("c1", "bash", "{}")));
-    Harness h = harness(new AgentOptions(null, null, null, null, 2), ToolRegistry.of(tool), provider);
+    Harness h = harness(new AgentOptions(null, null, null, null, 2, null), ToolRegistry.of(tool), provider);
 
     AgentLoop.Result result = h.loop().run("loop forever");
 
@@ -361,5 +361,16 @@ class AgentLoopTest {
     assertTrue(
         h.notices().stream().noneMatch(n -> n.contains("cached")),
         "an unreported rate must not be invented: " + h.notices());
+  }
+
+  @Test
+  void theReasoningTierReachesEveryRequest() {
+    ScriptedProvider provider = new ScriptedProvider(ScriptedProvider.Reply.text("hi"));
+    Harness h =
+        harness(new AgentOptions(null, null, null, null, 6, "high"), new ToolRegistry(), provider);
+
+    h.loop().run("think hard");
+
+    assertEquals("high", h.provider().requests().get(0).reasoning());
   }
 }

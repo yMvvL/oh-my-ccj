@@ -133,7 +133,7 @@ class AnthropicProviderTest {
       AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
       Provider.Request minimal =
           new Provider.Request(
-              "claude-mini", null, List.of(new Message.User("hi")), List.of(), null, 512);
+              "claude-mini", null, List.of(new Message.User("hi")), List.of(), null, 512, null);
 
       provider.complete(minimal, event -> {});
 
@@ -219,7 +219,7 @@ class AnthropicProviderTest {
             new Message.User("next")),
         List.of(new ToolSpec("read", "Read a file", TOOL_SCHEMA)),
         0.7,
-        null);
+        null, null);
   }
 
   @Test
@@ -256,5 +256,46 @@ class AnthropicProviderTest {
       assertTrue(events.contains(new Provider.Event.Usage(129, 4, 100)), events.toString());
       provider.close();
     }
+  }
+
+  @Test
+  void theReasoningTierBecomesAnExtendedThinkingBudget() throws Exception {
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+
+      provider.complete(reasoningRequest("low"), event -> {});
+      JsonNode low = Json.parse(server.body(0));
+      assertEquals("enabled", low.path("thinking").path("type").asText());
+      assertEquals(2048, low.path("thinking").path("budget_tokens").asInt());
+      assertFalse(low.has("temperature"), "the API rejects a custom temperature while thinking");
+
+      provider.complete(reasoningRequest("max"), event -> {});
+      JsonNode max = Json.parse(server.body(1));
+      assertEquals(32768, max.path("thinking").path("budget_tokens").asInt());
+      assertTrue(
+          max.path("max_tokens").asInt() > 32768,
+          "max_tokens must exceed the thinking budget: " + max.path("max_tokens").asInt());
+
+      provider.close();
+    }
+  }
+
+  @Test
+  void withoutATierTheRequestIsUnchanged() throws Exception {
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+
+      provider.complete(request(), event -> {});
+
+      JsonNode body = Json.parse(server.body(0));
+      assertFalse(body.has("thinking"), body.toString());
+      assertEquals(0.7, body.path("temperature").asDouble(), 0.001, "temperature still applies");
+      provider.close();
+    }
+  }
+
+  private Provider.Request reasoningRequest(String level) {
+    return new Provider.Request(
+        "claude-test", "be nice", List.of(new Message.User("hi")), List.of(), 0.5, 4096, level);
   }
 }

@@ -109,7 +109,17 @@ public final class AnthropicProvider implements Provider {
       }
     }
     root.put("stream", true);
-    if (request.temperature() != null) {
+    String effort = request.reasoning();
+    if (effort != null) {
+      // Extended thinking: a budget in tokens, max_tokens must exceed it, and temperature cannot be
+      // customised while thinking is on — the API rejects the combination rather than ignoring it.
+      int budget = "low".equals(effort) ? 2_048 : "high".equals(effort) ? 8_192 : 32_768;
+      root.putObject("thinking").put("type", "enabled").put("budget_tokens", budget);
+      int cap = root.path("max_tokens").asInt(4_096);
+      if (cap <= budget) {
+        root.put("max_tokens", budget + 1_024);
+      }
+    } else if (request.temperature() != null) {
       root.put("temperature", request.temperature().doubleValue());
     }
     return root;

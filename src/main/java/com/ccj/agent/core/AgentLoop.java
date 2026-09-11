@@ -108,7 +108,8 @@ public final class AgentLoop {
             session.messages(),
             tools.specs(),
             options.temperature(),
-            options.maxTokens());
+            options.maxTokens(),
+            options.reasoning());
     try {
       return provider.complete(request, this::forward);
     } catch (Exception e) {

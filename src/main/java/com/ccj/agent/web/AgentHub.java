@@ -209,6 +209,14 @@ public final class AgentHub implements AutoCloseable {
     node.put("messageCount", current == null ? 0 : current.messages().size());
     node.put("autoApprove", autoApprove.get());
     node.put("busy", busy.get());
+    if (active.reasoning() == null) {
+      node.putNull("reasoning");
+    } else {
+      node.put("reasoning", active.reasoning());
+    }
+    // The picker sits above the composer, so the levels travel with the live status too.
+    ArrayNode levels = node.putArray("reasoningLevels");
+    Config.REASONING_LEVELS.forEach(levels::add);
     node.set("usage", usageFields());
     ArrayNode toolList = node.putArray("tools");
     for (ToolSpec spec : tools.specs()) {
@@ -220,8 +228,30 @@ public final class AgentHub implements AutoCloseable {
   }
 
   public ArrayNode sessionsJson() {
+    return sessionsJson(null);
+  }
+
+  /**
+   * Sessions of one workspace, or of the active one when {@code workspace} is null.
+   *
+   * <p>A tree view has to be able to show a folded folder's contents before switching to it, which is
+   * exactly this call: reading another workspace's list must not move the active one.
+   */
+  public ArrayNode sessionsJson(String workspace) {
+    Path directory = sessionsDir();
+    if (workspace != null && !workspace.isBlank()) {
+      Workspace target =
+          settings
+              .workspaces()
+              .find(workspace)
+              .orElseThrow(
+                  () ->
+                      new IllegalArgumentException(
+                          "no workspace named '" + workspace.strip() + "'"));
+      directory = target.sessionsDir();
+    }
     ArrayNode array = Json.mapper().createArrayNode();
-    for (SessionStore.Summary summary : SessionStore.list(sessionsDir())) {
+    for (SessionStore.Summary summary : SessionStore.list(directory)) {
       ObjectNode node = array.addObject();
       node.put("id", summary.id());
       node.put("preview", summary.preview());
@@ -491,6 +521,13 @@ public final class AgentHub implements AutoCloseable {
     node.put("apiKeyEnv", active.apiKeyEnv());
     node.put("apiKeySource", apiKeySource);
     node.put("maxSteps", active.maxSteps());
+    if (active.reasoning() == null) {
+      node.putNull("reasoning");
+    } else {
+      node.put("reasoning", active.reasoning());
+    }
+    ArrayNode levels = node.putArray("reasoningLevels");
+    Config.REASONING_LEVELS.forEach(levels::add);
     if (active.temperature() == null) {
       node.putNull("temperature");
     } else {
@@ -560,7 +597,7 @@ public final class AgentHub implements AutoCloseable {
                   List.of(new Message.User("ping")),
                   List.of(),
                   0.0,
-                  16),
+                  16, null),
               event -> {});
       long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
       String text = reply.text().isBlank() ? "(empty reply)" : reply.text().strip();
@@ -583,6 +620,11 @@ public final class AgentHub implements AutoCloseable {
     if (maxSteps != null && maxSteps < 1) {
       throw new IllegalArgumentException("maxSteps must be at least 1");
     }
+    String reasoning = text(posted, "reasoning");
+    if (reasoning != null) {
+      // "default" is the picker's way of saying "let the provider decide", i.e. clear the tier.
+      reasoning = "default".equalsIgnoreCase(reasoning) ? "" : Config.normaliseReasoning(reasoning);
+    }
     Double temperature = number(posted, "temperature");
     if (temperature != null && (temperature < 0 || temperature > 2)) {
       throw new IllegalArgumentException("temperature must be between 0 and 2");
@@ -598,7 +640,8 @@ public final class AgentHub implements AutoCloseable {
         maxSteps,
         null,
         null,
-        null);
+        null,
+        reasoning);
   }
 
   private static String text(JsonNode node, String field) {
@@ -703,7 +746,7 @@ public final class AgentHub implements AutoCloseable {
             active.systemPrompt(),
             active.temperature(),
             active.maxTokens(),
-            active.maxSteps());
+            active.maxSteps(), null);
     ToolContext context = new ToolContext(cwd(), this::askApproval, active.outputLimitBytes());
     return new AgentLoop(current, tools, session(), options, context, new WebListener());
   }

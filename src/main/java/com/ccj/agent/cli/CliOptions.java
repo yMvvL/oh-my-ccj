@@ -62,7 +62,7 @@ public record CliOptions(
         maxSteps,
         yolo ? Boolean.TRUE : null,
         null,
-        system);
+        system, null);
   }
 
   public static CliOptions parse(String[] args) {

@@ -118,7 +118,7 @@ class OpenAiProviderTest {
       OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
       Provider.Request minimal =
           new Provider.Request(
-              "gpt-mini", null, List.of(new Message.User("hi")), List.of(), null, null);
+              "gpt-mini", null, List.of(new Message.User("hi")), List.of(), null, null, null);
 
       provider.complete(minimal, event -> {});
 
@@ -214,7 +214,7 @@ class OpenAiProviderTest {
             new Message.ToolResult("call_1", "read", "boom", true)),
         List.of(new ToolSpec("read", "Read a file", TOOL_SCHEMA)),
         0.5,
-        128);
+        128, null);
   }
 
   @Test
@@ -275,5 +275,51 @@ class OpenAiProviderTest {
           "no cache fields means unknown, which must not be rendered as 0%");
       provider.close();
     }
+  }
+
+  @Test
+  void theReasoningTierBecomesReasoningEffortAndTheTopTierAlsoRaisesTheBudget() throws Exception {
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+
+      provider.complete(reasoningRequest("low"), event -> {});
+      JsonNode low = Json.parse(server.body(0));
+      assertEquals("low", low.path("reasoning_effort").asText());
+      assertFalse(low.has("max_completion_tokens"), low.toString());
+
+      provider.complete(reasoningRequest("high"), event -> {});
+      assertEquals("high", Json.parse(server.body(1)).path("reasoning_effort").asText());
+
+      provider.complete(reasoningRequest("max"), event -> {});
+      JsonNode max = Json.parse(server.body(2));
+      assertEquals("high", max.path("reasoning_effort").asText(), "the protocol tops out at high");
+      assertEquals(32768, max.path("max_completion_tokens").asInt(), "max also buys room to think");
+      assertFalse(max.has("max_tokens"), "the two caps are not sent together");
+
+      provider.close();
+    }
+  }
+
+  @Test
+  void withoutATierNothingAboutReasoningIsSent() throws Exception {
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+
+      provider.complete(request(), event -> {});
+
+      JsonNode body = Json.parse(server.body(0));
+      assertFalse(body.has("reasoning_effort"), body.toString());
+      assertEquals(128, body.path("max_tokens").asInt(), "the plain cap stays as before");
+      provider.close();
+    }
+  }
+
+  private Provider.Request reasoningRequest(String level) {
+    return new Provider.Request(
+        "gpt-test", "be nice", List.of(new Message.User("hi")), List.of(toolSpec()), 0.5, 128, level);
+  }
+
+  private static ToolSpec toolSpec() {
+    return new ToolSpec("read", "Read a file", TOOL_SCHEMA);
   }
 }

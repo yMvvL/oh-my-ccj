@@ -194,7 +194,7 @@ public final class Cli {
               config.systemPrompt(),
               config.temperature(),
               config.maxTokens(),
-              config.maxSteps());
+              config.maxSteps(), null);
 
       if (options.demo() && options.print() == null) {
         out.println(
@@ -703,7 +703,7 @@ public final class Cli {
                     agentOptions.system(),
                     agentOptions.temperature(),
                     agentOptions.maxTokens(),
-                    agentOptions.maxSteps());
+                    agentOptions.maxSteps(), null);
             rebuild();
             out.println("model set to " + argument);
           }
