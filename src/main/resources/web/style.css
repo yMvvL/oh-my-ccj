@@ -1253,10 +1253,14 @@ body {
 .picker-option-meta { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-left: auto; }
 
 .picker-empty { font-size: 12px; line-height: 1.4; color: var(--fg-faint); padding: 4px 2px; overflow-wrap: anywhere; }
+/* A failed fetch says so in the list it could not fill, next to the stale
+ * rows rather than instead of them. */
+.picker-empty.picker-warn { color: var(--warn); }
 
 /* The hand-typed model: a provider with no listed models (or a model the
- * catalogue does not know) is still usable, exactly as the flat field was. */
-.picker-manual { display: flex; gap: var(--sp-1); margin-top: 2px; }
+ * catalogue does not know) is still usable, exactly as the flat field was.
+ * Use and Remember can wrap under the field in the narrow column. */
+.picker-manual { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: 2px; }
 .picker-manual input,
 .field .picker-manual input {
   width: auto;
@@ -1277,6 +1281,19 @@ body {
   outline: none;
 }
 .picker-manual .btn { flex: 0 0 auto; }
+
+/* A model row is a row, not a button: the option and its two-step Remove are
+ * siblings, because a destructive control cannot live inside the button that
+ * chooses. The option still takes the width that is left. */
+.picker-model { display: flex; align-items: flex-start; gap: 2px; }
+.picker-model > .picker-option { width: auto; flex: 1 1 0; min-width: 0; }
+.picker-option-actions { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.picker-option-actions .confirm-row { flex-wrap: wrap; justify-content: flex-end; }
+
+/* The foot of a column: the Add provider… entry under the provider list, and
+ * the one line that says what the hand-typed model's two actions do. */
+.picker-foot { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); margin-top: 2px; }
+.picker-foot-hint { margin: 0; font-size: 11px; line-height: 1.35; color: var(--fg-faint); }
 
 .picker-effort { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); }
 .picker-effort-label {

@@ -136,6 +136,11 @@
                 <p class="picker-col-head" id="picker-providers-head">Provider</p>
                 <ul class="picker-list" id="picker-providers" data-role="providers"
                     aria-labelledby="picker-providers-head"></ul>
+                <div class="picker-foot">
+                  <button type="button" class="btn sm" id="picker-provider-add" data-role="addProvider">Add provider…</button>
+                  <p class="picker-foot-hint">Providers are defined on the server; this opens the same
+                    form as Settings, on Your providers.</p>
+                </div>
               </div>
               <div class="picker-col">
                 <p class="picker-col-head" id="picker-models-head">Model</p>
@@ -146,7 +151,11 @@
                   <input type="text" id="picker-model-input" data-role="modelInput"
                          spellcheck="false" autocomplete="off" placeholder="type a model name">
                   <button type="button" class="btn sm" id="picker-model-use" data-role="modelUse">Use</button>
+                  <button type="button" class="btn ghost sm" id="picker-model-remember"
+                          data-role="modelRemember">Remember</button>
                 </div>
+                <p class="picker-foot-hint">Use selects the typed model and remembers it for this provider;
+                  Remember only adds it to the list.</p>
               </div>
             </div>
             <div class="picker-effort" id="picker-effort" data-role="effort"
@@ -235,6 +244,12 @@
                   <p class="picker-col-head" id="cfg-picker-providers-head">Provider</p>
                   <ul class="picker-list" id="cfg-picker-providers" data-role="providers"
                       aria-labelledby="cfg-picker-providers-head"></ul>
+                  <div class="picker-foot">
+                    <button type="button" class="btn sm" id="cfg-picker-provider-add"
+                            data-role="addProvider">Add provider…</button>
+                    <p class="picker-foot-hint">Providers are defined on the server; this opens the same
+                      form as Settings, on Your providers.</p>
+                  </div>
                 </div>
                 <div class="picker-col">
                   <p class="picker-col-head" id="cfg-picker-models-head">Model</p>
@@ -245,7 +260,11 @@
                     <input type="text" id="cfg-picker-model-input" data-role="modelInput"
                            spellcheck="false" autocomplete="off" placeholder="type a model name">
                     <button type="button" class="btn sm" id="cfg-picker-model-use" data-role="modelUse">Use</button>
+                    <button type="button" class="btn ghost sm" id="cfg-picker-model-remember"
+                            data-role="modelRemember">Remember</button>
                   </div>
+                  <p class="picker-foot-hint">Use selects the typed model and remembers it for this provider;
+                    Remember only adds it to the list.</p>
                 </div>
               </div>
               <div class="picker-effort" id="cfg-picker-effort" data-role="effort"

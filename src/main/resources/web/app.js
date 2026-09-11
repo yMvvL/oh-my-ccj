@@ -1994,6 +1994,8 @@
       models: root.querySelector('[data-role="models"]'),
       modelInput: root.querySelector('[data-role="modelInput"]'),
       modelUse: root.querySelector('[data-role="modelUse"]'),
+      modelRemember: root.querySelector('[data-role="modelRemember"]'),
+      addProvider: root.querySelector('[data-role="addProvider"]'),
       effort: root.querySelector('[data-role="effort"]'),
       effortHint: root.querySelector('[data-role="effortHint"]'),
       error: root.querySelector('[data-role="error"]')
@@ -2036,17 +2038,30 @@
       return meta;
     }
 
+    /* The provider column. A failed catalogue fetch never becomes a one-row
+     * list: the last good answer, if there is one, is kept and the reason is
+     * shown above it; with no answer at all only the reason is shown. The
+     * selected provider is an extra row on top of a real list, never a
+     * substitute for one — which is what made every other provider look gone. */
     function renderProviders() {
       nodes.providers.textContent = '';
-      const list = pickerProviders();
+      const loaded = state.catalog !== null;
+      const list = loaded ? pickerProviders() : [];
       const selected = picker.selection.provider;
       const browsed = picker.browsed || selected;
-      if (selected && !pickerProviderKnown(selected)) {
+      if (loaded && selected && !pickerProviderKnown(selected)) {
         list.unshift({ name: selected, kind: '', baseUrl: '', builtIn: false, known: false, models: [] });
       }
+      if (state.catalogError) {
+        nodes.providers.appendChild(el('li', 'picker-empty picker-warn',
+          'Provider list unavailable: ' + state.catalogError
+          + (loaded ? ' Showing the last list that loaded.' : '')));
+      }
       if (!list.length) {
-        nodes.providers.appendChild(el('li', 'picker-empty',
-          state.catalogError ? 'Providers unavailable: ' + state.catalogError : 'No providers reported.'));
+        if (!state.catalogError) {
+          nodes.providers.appendChild(el('li', 'picker-empty',
+            loaded ? 'No providers reported.' : 'Loading providers…'));
+        }
         return;
       }
       list.forEach(function (p) {
@@ -2075,6 +2090,11 @@
       });
     }
 
+    /* The model column is the catalogue's list for the provider being browsed
+     * — the selected provider unless the user is deliberately browsing another
+     * row in the left column, and openPanel and setStatus put it back in step
+     * with the selection. The model in use, and the picker's own choice, are
+     * added when the catalogue does not list them, so neither can look lost. */
     function renderModels() {
       nodes.models.textContent = '';
       const provider = picker.browsed || picker.selection.provider;
@@ -2082,13 +2102,19 @@
         nodes.models.appendChild(el('li', 'picker-empty', 'Choose a provider first.'));
         return;
       }
+      const wanted = provider.toLowerCase();
       const entries = catalogModelsFor(provider).slice();
-      const current = picker.selection.provider.toLowerCase() === provider.toLowerCase()
-        ? picker.selection.model : '';
+      const chosen = str(picker.selection.provider).toLowerCase() === wanted
+        ? str(picker.selection.model).trim() : '';
+      const inUse = str(state.status && state.status.provider).toLowerCase() === wanted
+        ? str(state.status && state.status.model).trim() : '';
       const names = entries.map(function (entry) { return str(entry.model).toLowerCase(); });
-      if (current && names.indexOf(current.toLowerCase()) < 0) {
-        entries.unshift({ provider: provider, model: current, source: '' });
-      }
+      [inUse, chosen].forEach(function (name) {
+        if (name && names.indexOf(name.toLowerCase()) < 0) {
+          names.push(name.toLowerCase());
+          entries.unshift({ provider: provider, model: name, source: '' });
+        }
+      });
       if (!entries.length) {
         // "lists no models" is only true when the catalogue answered; without
         // one, the honest thing is that the list is simply not available.
@@ -2101,19 +2127,27 @@
       }
       entries.forEach(function (entry) {
         const model = str(entry.model);
-        const li = el('li');
+        const li = el('li', 'picker-model');
         const btn = el('button', 'picker-option');
         btn.type = 'button';
         btn.dataset.model = model;
-        const isCurrent = current !== '' && model.toLowerCase() === current.toLowerCase();
+        const isCurrent = chosen !== '' && model.toLowerCase() === chosen.toLowerCase();
+        const isInUse = inUse !== '' && model.toLowerCase() === inUse.toLowerCase();
         btn.classList.toggle('active', isCurrent);
         btn.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
         btn.appendChild(el('span', 'picker-option-name', model));
-        btn.appendChild(optionMeta([str(entry.source)]));
+        btn.appendChild(optionMeta([isInUse ? 'in use' : str(entry.source)]));
         btn.addEventListener('click', function () {
           choose('model', { provider: provider, model: model });
         });
         li.appendChild(btn);
+        // Forget this model: the same two-step control as every other remove.
+        const actions = el('span', 'picker-option-actions');
+        const forget = deleteControl(actions, 'Remove', function (control) {
+          removeModel(provider, model, control);
+        }, { confirm: 'Remove?', busy: 'Removing…' });
+        forget.idle.title = 'Forget ' + model + ' for ' + provider + ' — it stops being offered';
+        li.appendChild(actions);
         nodes.models.appendChild(li);
       });
     }
@@ -2172,15 +2206,56 @@
       });
     }
 
+    /* A 400 from /api/models is the server saying why: the model in use can
+     * never be forgotten, and a name that is not this provider's cannot be
+     * either. The panel says it; nothing is changed. */
+    function modelError(err) {
+      if (err && err.status === 404) {
+        return 'This server build does not remember models yet, so nothing was changed'
+          + ' (POST/DELETE /api/models answered 404).';
+      }
+      return str(err && err.message) || 'The model could not be saved.';
+    }
+
+    async function removeModel(provider, model, control) {
+      clearError();
+      control.busy();
+      try {
+        const res = await request('/api/models?provider=' + encodeURIComponent(provider)
+          + '&model=' + encodeURIComponent(model), { method: 'DELETE' });
+        acceptModelCatalogue(res);
+      } catch (err) {
+        control.reset();
+        showError(modelError(err));
+      }
+    }
+
     /* The model column keeps a text field next to the list so a provider with
      * no listed models — or a model the catalogue does not know — is still
-     * selectable by hand, the way the settings panel used to allow. */
-    function useManualModel() {
+     * usable by hand. `Use` is the whole gesture: remember the name for this
+     * provider, then switch to it. `Remember` stops after the first half, for
+     * a model the user wants kept but not active yet. Both re-render from the
+     * server's answer — the whole catalogue — and leave the panel open. */
+    async function useManualModel(toListOnly) {
       const model = nodes.modelInput.value.trim();
       const provider = picker.browsed || picker.selection.provider;
       if (!provider) { showError('Choose a provider first.'); return; }
       if (!model) { showError('Type a model name first.'); return; }
-      choose('model', { provider: provider, model: model });
+      clearError();
+      nodes.modelUse.disabled = true;
+      nodes.modelRemember.disabled = true;
+      try {
+        const res = await postJSON('/api/models', { provider: provider, model: model });
+        acceptModelCatalogue(res);
+        nodes.modelInput.value = '';
+      } catch (err) {
+        showError(modelError(err));
+        return;
+      } finally {
+        nodes.modelUse.disabled = false;
+        nodes.modelRemember.disabled = false;
+      }
+      if (!toListOnly) { choose('model', { provider: provider, model: model }); }
     }
 
     picker.render = function () {
@@ -2206,6 +2281,7 @@
      * repeated status frames of an idle page never steal focus inside the
      * open panel. */
     picker.setStatus = function (status) {
+      const beforeProvider = picker.selection.provider;
       const before = picker.selection.provider + '\u0000' + picker.selection.model
         + '\u0000' + picker.selection.reasoning;
       if ('provider' in status) { picker.selection.provider = str(status.provider); }
@@ -2214,7 +2290,11 @@
       if (Array.isArray(status.reasoningLevels) && status.reasoningLevels.length) {
         state.reasoningLevels = status.reasoningLevels.map(str);
       }
-      if (!picker.browsed) { picker.browsed = picker.selection.provider; }
+      // The model column belongs to the selected provider; a provider change
+      // from anywhere (another tab, a Save) moves the column with it.
+      if (!picker.browsed || picker.selection.provider !== beforeProvider) {
+        picker.browsed = picker.selection.provider;
+      }
       const after = picker.selection.provider + '\u0000' + picker.selection.model
         + '\u0000' + picker.selection.reasoning;
       if (before !== after) { picker.render(); }
@@ -2223,7 +2303,9 @@
     picker.openPanel = function () {
       if (picker.open) { return; }
       picker.open = true;
-      if (!picker.browsed) { picker.browsed = picker.selection.provider; }
+      // The column follows the selection: a browse left over from the last
+      // time the panel was open must not put another provider's models there.
+      picker.browsed = picker.selection.provider;
       nodes.modelInput.value = '';
       nodes.panel.hidden = false;
       nodes.trigger.setAttribute('aria-expanded', 'true');
@@ -2248,14 +2330,16 @@
       event.preventDefault();
       if (picker.open) { picker.closePanel(true); } else { picker.openPanel(); }
     });
-    nodes.modelUse.addEventListener('click', useManualModel);
+    nodes.modelUse.addEventListener('click', function () { useManualModel(false); });
+    nodes.modelRemember.addEventListener('click', function () { useManualModel(true); });
+    nodes.addProvider.addEventListener('click', function () { openAddProviderForm(); });
     /* Enter in the model field applies it — and must not reach the composer,
      * where the same key sends the message. */
     nodes.modelInput.addEventListener('keydown', function (event) {
       if (event.key !== 'Enter') { return; }
       event.preventDefault();
       event.stopPropagation();
-      useManualModel();
+      useManualModel(false);
     });
 
     return picker;
@@ -2544,6 +2628,19 @@
     dom.cfgProviderAddToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
+  /* The picker's Add provider… entry is not a second form: it opens the one
+   * under Your providers in Settings and puts the caret in its name field,
+   * which is all the gesture needs. The panel closes first — two surfaces
+   * asking about the same provider would compete for the answer. */
+  async function openAddProviderForm() {
+    pickers.forEach(function (p) { p.closePanel(false); });
+    if (dom.settingsOverlay.hidden) { await openSettings(); }
+    setProviderFormOpen(true);
+    dom.cfgNewName.focus();
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    dom.cfgProviderForm.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+  }
+
   /* Both provider endpoints answer with the whole catalogue, so the tree, the
    * pickers and the model counts all come from the server's answer — never
    * from the form's own idea of what it just sent. */
@@ -2554,6 +2651,18 @@
     refreshPickers();
     renderProviderSection();
     providerNote(note);
+  }
+
+  /* POST and DELETE /api/models answer with the whole catalogue too, so what
+   * the panel shows after a model is remembered or forgotten is the server's
+   * list, not a local guess. The note area belongs to the provider form, so it
+   * is left alone: these two say what happened through their own notice. */
+  function acceptModelCatalogue(payload) {
+    if (payload && typeof payload === 'object' && Array.isArray(payload.providers)) {
+      setCatalog(payload);
+    }
+    refreshPickers();
+    renderProviderSection();
   }
 
   function parseModelList(raw) {
