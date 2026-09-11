@@ -33,12 +33,6 @@
   <header id="topbar">
     <div class="brand">
       <span class="brand-mark">ccj</span>
-      <button type="button" class="ws-btn" id="btn-workspace" aria-haspopup="dialog"
-              title="Switch workspace">
-        <span class="ws-icon" aria-hidden="true">▣</span>
-        <span class="ws-name" id="ws-name">workspace</span>
-        <span class="ws-caret" aria-hidden="true">▾</span>
-      </button>
       <span id="conn-pill" class="conn-pill" hidden>reconnecting…</span>
     </div>
 
@@ -55,7 +49,6 @@
 
     <div class="actions">
       <button type="button" class="btn" id="btn-new">New session</button>
-      <button type="button" class="btn" id="btn-sessions" aria-haspopup="dialog">Sessions</button>
       <button type="button" class="btn toggle" id="btn-auto" aria-pressed="false">
         <span class="switch" aria-hidden="true"></span>
         <span>Approve all</span>
@@ -63,6 +56,7 @@
       </button>
       <button type="button" class="btn" id="btn-settings" aria-haspopup="dialog">Settings</button>
       <button type="button" class="btn danger" id="btn-abort" disabled>Abort</button>
+      <button type="button" class="btn ghost" id="btn-sidebar" aria-expanded="true" aria-controls="sidebar" title="Toggle the workspace sidebar">Workspaces</button>
       <button type="button" class="btn ghost" id="btn-side" aria-expanded="true" aria-controls="side" title="Toggle side panel">Panel</button>
       <button type="button" class="btn theme-btn" id="btn-theme" aria-label="Theme: System. Switch to Light." title="Theme">
         <span class="theme-icon" id="theme-icon" aria-hidden="true">◐</span>
@@ -72,6 +66,51 @@
   </header>
 
   <div id="layout">
+    <aside id="sidebar" class="sidebar" aria-labelledby="sidebar-title">
+      <header class="sidebar-head">
+        <h2 id="sidebar-title">Workspaces</h2>
+        <button type="button" class="btn ghost sm" id="sidebar-collapse"
+                aria-expanded="true" aria-controls="sidebar"
+                title="Collapse the workspace sidebar">Collapse</button>
+      </header>
+
+      <div class="sidebar-body" id="sidebar-body">
+        <p class="err sidebar-alert" id="sidebar-alert" role="alert" hidden></p>
+        <p class="sidebar-note" id="sidebar-note" role="status" hidden></p>
+
+        <ul class="ws-tree" id="ws-tree">
+          <li class="muted">Loading…</li>
+        </ul>
+
+        <div class="ws-actions">
+          <span class="delete-control" id="ws-delete-all-host"></span>
+          <button type="button" class="btn sm" id="workspace-add-toggle" aria-expanded="false"
+                  aria-controls="workspace-add-form">Add workspace…</button>
+        </div>
+
+        <form class="workspace-add-form" id="workspace-add-form" autocomplete="off" hidden>
+          <div class="field">
+            <label for="ws-new-name">Name</label>
+            <input type="text" id="ws-new-name" spellcheck="false" placeholder="api">
+            <span class="field-error" id="ws-name-error" hidden></span>
+          </div>
+          <div class="field">
+            <label for="ws-new-path">Path</label>
+            <div class="field-with-action">
+              <input type="text" id="ws-new-path" spellcheck="false" placeholder="/home/you/api">
+              <button type="button" class="btn" id="ws-browse">Browse…</button>
+            </div>
+            <span class="field-hint" id="ws-browse-hint" hidden></span>
+            <span class="field-error" id="ws-path-error" hidden></span>
+          </div>
+          <p class="field-hint">A workspace is a working directory plus its own sessions. The directory is created if it does not exist.</p>
+          <div class="workspace-add-actions">
+            <button type="submit" class="btn primary" id="workspace-save">Save</button>
+          </div>
+        </form>
+      </div>
+    </aside>
+
     <main id="main">
       <div id="transcript" class="transcript" aria-live="polite" aria-relevant="additions text">
         <p class="muted placeholder">Connecting to ccj…</p>
@@ -117,81 +156,12 @@
         </div>
       </section>
       <section class="side-sec">
-        <h2>Workspace</h2>
-        <div class="kv" id="workspace-info">—</div>
-      </section>
-      <section class="side-sec">
-        <h2>Session</h2>
-        <div class="kv" id="session-info">—</div>
-      </section>
-      <section class="side-sec">
         <h2>Tools</h2>
         <ul class="tool-list" id="tool-list">
           <li class="muted">No tools reported.</li>
         </ul>
       </section>
     </aside>
-  </div>
-</div>
-
-<div id="sessions-overlay" class="overlay" hidden>
-  <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="sessions-title">
-    <header class="overlay-head">
-      <h2 id="sessions-title">Sessions</h2>
-      <div class="overlay-head-actions">
-        <span class="delete-control" id="sessions-delete-all-host"></span>
-        <button type="button" class="btn ghost" id="sessions-close">Close</button>
-      </div>
-    </header>
-    <p class="err overlay-alert" id="sessions-error" role="alert" hidden></p>
-    <p class="overlay-note" id="sessions-note" role="status" hidden></p>
-    <div class="overlay-body" id="sessions-body">
-      <p class="muted">Loading…</p>
-    </div>
-  </div>
-</div>
-
-<div id="workspace-overlay" class="overlay" hidden>
-  <div class="overlay-card workspace-card" role="dialog" aria-modal="true" aria-labelledby="workspace-title">
-    <header class="overlay-head">
-      <h2 id="workspace-title">Workspaces</h2>
-      <button type="button" class="btn ghost" id="workspace-close">Close</button>
-    </header>
-    <div class="overlay-body workspace-body">
-      <p class="err workspace-error" id="workspace-error" role="alert" hidden></p>
-
-      <ul class="workspace-list" id="workspace-list">
-        <li class="muted">Loading…</li>
-      </ul>
-
-      <div class="workspace-add">
-        <button type="button" class="btn" id="workspace-add-toggle" aria-expanded="false"
-                aria-controls="workspace-add-form">Add workspace…</button>
-
-        <form class="workspace-add-form" id="workspace-add-form" autocomplete="off" hidden>
-          <div class="field-row">
-            <div class="field">
-              <label for="ws-new-name">Name</label>
-              <input type="text" id="ws-new-name" spellcheck="false" placeholder="api">
-              <span class="field-error" id="ws-name-error" hidden></span>
-            </div>
-            <div class="field">
-              <label for="ws-new-path">Path</label>
-              <div class="field-with-action">
-                <input type="text" id="ws-new-path" spellcheck="false" placeholder="/home/you/api">
-                <button type="button" class="btn" id="ws-browse">Browse…</button>
-              </div>
-              <span class="field-hint" id="ws-browse-hint" hidden></span>
-              <span class="field-error" id="ws-path-error" hidden></span>
-            </div>
-          </div>
-          <p class="field-hint">A workspace is a working directory plus its own sessions. The directory is created if it does not exist.</p>
-          <div class="workspace-add-actions">
-            <button type="submit" class="btn primary" id="workspace-save">Save</button>
-          </div>
-        </form>
-      </div>
-    </div>
   </div>
 </div>
 

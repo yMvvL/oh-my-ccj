@@ -1033,6 +1033,42 @@ class WebApiTest {
     assertTrue(bad.body().contains("low, high, max"), bad.body());
   }
 
+  @Test
+  void aSessionOfAnotherWorkspaceCanBeDeletedWithoutSwitching() throws Exception {
+    provider.reply(Message.Assistant.text("from ws"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"keep me\"}");
+      sse.await("done", 5000);
+    }
+    String wsSession = json("/api/status").path("sessionId").asText();
+    postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + tmp.resolve("other") + "\"}");
+    postJson("/api/workspace", "{\"name\":\"other\"}");
+    String activeNow = json("/api/status").path("sessionId").asText();
+
+    HttpResponse<String> response =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/session?workspace=ws&id=" + wsSession))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, response.statusCode(), response.body());
+    assertEquals(0, Json.parse(response.body()).path("sessions").size());
+    assertEquals(activeNow, json("/api/status").path("sessionId").asText(), "still in 'other'");
+    assertFalse(Files.exists(sessions.resolve(wsSession + ".jsonl")));
+
+    // and the delete-all route takes the same parameter
+    assertEquals(
+        200,
+        client.send(
+                HttpRequest.newBuilder(URI.create(origin + "/api/sessions?workspace=ws"))
+                    .DELETE()
+                    .build(),
+            HttpResponse.BodyHandlers.ofString())
+            .statusCode());
+    assertEquals(400, get("/api/sessions?workspace=nope").statusCode());
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private static Message.Assistant call(String name, String field, String value) {

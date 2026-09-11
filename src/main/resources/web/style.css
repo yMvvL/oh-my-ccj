@@ -123,36 +123,6 @@ body {
   color: var(--fg);
 }
 
-/* The active workspace is a control, not a label: it is the one header item
- * that changes what the whole page is about. */
-.ws-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-  max-width: 26ch;
-  font: 13px/1 var(--sans);
-  color: var(--fg);
-  background: var(--bg-elev);
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  padding: 5px 10px 5px 8px;
-  cursor: pointer;
-}
-
-.ws-btn:hover { border-color: var(--accent); }
-
-.ws-icon { color: var(--accent); font-size: 11px; }
-
-.ws-name {
-  font: 600 12px/1.4 var(--mono);
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ws-caret { color: var(--fg-faint); font-size: 10px; }
-
 .conn-pill {
   font-size: 11px;
   padding: 2px 8px;
@@ -281,6 +251,190 @@ body {
 /* ---------------------------------------------------------------- layout */
 
 #layout { flex: 1 1 auto; display: flex; min-height: 0; }
+
+/* --------------------------------------------------------------- sidebar */
+
+/* The workspace tree, a region of its own on the left of the transcript. It is
+ * a flex item, so collapsing it with `display: none` leaves no gap behind —
+ * exactly how the right-hand `.side` panel collapses, so the pair reads as
+ * two halves of the same gesture. */
+.sidebar {
+  flex: 0 0 260px;
+  width: 260px;
+  /* Below the header width the transcript must shrink, not the page: a sidebar
+   * never pushes the layout wider than the window. */
+  max-width: 82vw;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.sidebar.collapsed { display: none; }
+
+.sidebar-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-3) var(--sp-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-head h2 {
+  margin: 0;
+  font: 600 11px/1 var(--sans);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+/* The tree scrolls inside itself: a workspace with fifty sessions must not
+ * stretch the page, and the header above it stays put. */
+.sidebar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* The outcome of the last action, and why something was refused: both live
+ * inside the sidebar, next to the control that produced them. */
+.sidebar-note {
+  margin: 0;
+  font: 12px/1.45 var(--sans);
+  color: var(--fg-dim);
+}
+
+.sidebar-alert { margin: 0; font-size: 12px; }
+
+.ws-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.ws-node {
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+
+/* Selection is where the keyboard and the actions point; the accent border is
+ * reserved for the workspace the page is actually working in. */
+.ws-node.selected { background: var(--bg-elev); border-color: var(--border); }
+.ws-node.active { border-color: var(--accent); }
+
+.ws-row { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; }
+
+/* State on the left, the row's actions on the right — a second line of the
+ * card, so the workspace name above it is never squeezed to make room. */
+.ws-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-1) 4px;
+}
+
+/* A folder is one control: it selects the node and folds its sessions open.
+ * Switching stays a separate, explicit action (`Use`), so browsing the tree
+ * can never move the conversation by accident. */
+.ws-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font: 600 12px/1.3 var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ws-name:hover { background: var(--btn-hover); }
+
+.ws-chevron { flex: 0 0 auto; color: var(--fg-faint); font-size: 10px; }
+.ws-folder { flex: 0 0 auto; color: var(--accent); font-size: 11px; }
+
+.ws-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font: 11px var(--mono);
+  color: var(--fg-dim);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+/* The active workspace's count is a fact about where you are, so it is the
+ * one on the panel that is not dimmed. */
+.ws-node.active .ws-count { color: var(--fg); }
+
+.ws-badge {
+  flex: 0 0 auto;
+  font: 600 10px/1.5 var(--sans);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.ws-use, .ws-remove { flex: 0 0 auto; }
+.ws-foot .confirm-row { flex: 0 0 auto; }
+
+/* The sessions of one node, indented under a hairline that carries the eye
+ * from the folder to its contents. */
+.ws-sessions {
+  list-style: none;
+  margin: var(--sp-1) 0 var(--sp-1) var(--sp-3);
+  padding: 0 0 0 var(--sp-2);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* A session row keeps the shape it has everywhere else — content on the left,
+ * the two-step delete on the right — at the sidebar's width. */
+.ws-sessions .session-row { flex-wrap: wrap; }
+.ws-sessions .session-item { padding: var(--sp-1) var(--sp-2); font-size: 12px; }
+.ws-sessions .session-preview { font-size: 12px; margin: 2px 0 3px; }
+.ws-sessions .session-actions { margin-left: auto; }
+
+.ws-note { font-size: 12px; color: var(--fg-faint); margin: 0; padding: 2px 0; }
+.ws-note.err { color: var(--err); }
+
+.ws-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
 
 #main {
   flex: 1 1 auto;
@@ -728,10 +882,6 @@ body {
 .usage-table td.bad { color: var(--err); font-weight: 600; }
 .usage-table tr.bad th { color: var(--err); }
 
-.kv { display: grid; grid-template-columns: auto 1fr; gap: var(--sp-1) var(--sp-3); font-size: 12px; }
-.kv .k { color: var(--fg-faint); white-space: nowrap; }
-.kv .v { font-family: var(--mono); overflow-wrap: anywhere; }
-
 /* --------------------------------------------------------------- overlay */
 
 .overlay {
@@ -766,33 +916,11 @@ body {
 }
 
 .overlay-head h2 { margin: 0; font-size: 15px; }
-.overlay-head-actions { display: flex; align-items: center; gap: var(--sp-2); }
-
-/* The outcome of the last delete, and the reason an empty pane is empty. It
- * lives outside the scrolling body so it stays put while the list moves. */
-.overlay-note {
-  margin: 0;
-  padding: var(--sp-2) var(--sp-4);
-  font: 12px/1.45 var(--sans);
-  color: var(--fg-dim);
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  overflow-wrap: anywhere;
-}
-
-.overlay-alert {
-  margin: 0;
-  padding: var(--sp-2) var(--sp-4);
-  font: 12px/1.45 var(--sans);
-  border-bottom: 1px solid var(--border);
-}
 
 .overlay-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: var(--sp-3) var(--sp-4) var(--sp-4); }
 
 /* A session is a row, not a button: the row carries the two controls and the
  * hover, so deleting one is not the same gesture as opening one. */
-.session-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
-
 .session-row {
   display: flex;
   align-items: center;
@@ -833,84 +961,12 @@ body {
 .confirm-row { display: inline-flex; align-items: center; gap: var(--sp-1); }
 .delete-control { display: inline-flex; align-items: center; gap: var(--sp-1); }
 
-/* ----------------------------------------------------------- workspaces */
-
-.workspace-card { width: min(620px, 100%); }
-.workspace-body { display: flex; flex-direction: column; gap: var(--sp-3); }
-
-.workspace-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-
-.workspace-item {
-  display: flex;
-  align-items: stretch;
-  gap: var(--sp-1);
-  padding: var(--sp-1);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-/* The active workspace gets the accent border the session list uses for the
- * current session — the same idea, the same visual language. */
-.workspace-item.current { border-color: var(--accent); }
-
-.workspace-pick {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  text-align: left;
-  color: var(--fg);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: var(--sp-2);
-  font: 13px var(--sans);
-  cursor: pointer;
-}
-
-.workspace-pick:hover { background: var(--bg-elev); }
-
-.workspace-head { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
-.workspace-name { font: 600 13px var(--mono); }
-
-.workspace-badge {
-  font: 600 10px/1 var(--sans);
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-radius: 999px;
-  padding: 2px 7px;
-}
-
-.workspace-path { font: 11px/1.4 var(--mono); color: var(--fg-dim); overflow-wrap: anywhere; }
-.workspace-meta { font: 11px var(--sans); color: var(--fg-faint); }
-.workspace-remove { flex: 0 0 auto; align-self: center; }
-
-.workspace-add {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  padding-top: var(--sp-3);
-  border-top: 1px solid var(--border);
-}
-
 /* The disclosure is a button, not an empty field: it hugs its label instead of
  * stretching the width of the form it opens. */
 #workspace-add-toggle { align-self: flex-start; }
 
 .workspace-add-form { display: flex; flex-direction: column; gap: var(--sp-3); }
 .workspace-add-actions { display: flex; justify-content: flex-end; }
-.workspace-error { margin: 0; }
 
 .err { color: var(--err); white-space: pre-wrap; }
 .noscript { color: var(--err); padding: 20px; font-family: var(--sans); }
@@ -1084,10 +1140,13 @@ body {
   .transcript { padding: var(--sp-3) var(--sp-3) var(--sp-2); }
   .ev-user .bubble { max-width: 90%; }
   .field-row { flex-direction: column; gap: var(--sp-3); }
-  .workspace-remove { padding: 6px var(--sp-2); }
+  /* The tree keeps its width and the transcript gives up the space: a narrow
+   * window scrolls the page never, it shrinks the column instead. */
+  .sidebar { flex-basis: 240px; width: 240px; }
+  .ws-remove { padding: 6px var(--sp-2); }
   /* The dialogs give their width back to the list on a narrow screen. */
   .overlay { padding: var(--sp-3); }
-  .overlay-head, .overlay-body, .overlay-note, .overlay-alert { padding-left: var(--sp-3); padding-right: var(--sp-3); }
+  .overlay-head, .overlay-body { padding-left: var(--sp-3); padding-right: var(--sp-3); }
   .session-actions { padding-right: 0; }
 }
 

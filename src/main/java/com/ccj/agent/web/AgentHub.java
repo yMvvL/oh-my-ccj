@@ -782,29 +782,71 @@ public final class AgentHub implements AutoCloseable {
    * always has somewhere to be after the list it is looking at loses a row.
    */
   public ObjectNode deleteSession(String id) {
+    return deleteSession(null, id);
+  }
+
+  /**
+   * Deletes one session. {@code workspace} names another workspace whose sessions should be removed;
+   * reading a folded folder and deleting inside it are the same kind of operation, so neither
+   * switches the active workspace. Deleting the session you are in starts a fresh one.
+   */
+  public ObjectNode deleteSession(String workspace, String id) {
     requireIdle();
+    String target = normaliseWorkspace(workspace);
+    Path directory = sessionsDirOf(target);
     FileSession current = session();
-    boolean active = current != null && current.id().equals(id);
-    if (!SessionStore.delete(sessionsDir(), id)) {
-      throw new IllegalArgumentException("no session '" + id + "' in this workspace");
+    boolean active =
+        target == null && current != null && current.id().equals(id);
+    if (!SessionStore.delete(directory, id)) {
+      throw new IllegalArgumentException(
+          "no session '" + id + "' in " + (target == null ? "this workspace" : "'" + target + "'"));
     }
     publish("notice", Json.object().put("text", "session deleted"));
     if (active) {
       useSession(SessionStore.create(sessionsDir()));
     }
-    return Json.object().set("sessions", sessionsJson());
+    return Json.object().set("sessions", sessionsJson(target));
   }
 
   /** Clears every session in the active workspace — the "my testing left a mess" button. */
   public ObjectNode deleteAllSessions() {
+    return deleteAllSessions(null);
+  }
+
+  public ObjectNode deleteAllSessions(String workspace) {
     requireIdle();
-    int deleted = SessionStore.deleteAll(sessionsDir());
+    String target = normaliseWorkspace(workspace);
+    int deleted = SessionStore.deleteAll(sessionsDirOf(target));
     publish(
         "notice",
         Json.object()
             .put("text", deleted == 0 ? "no sessions to delete" : "deleted " + deleted + " sessions"));
-    useSession(SessionStore.create(sessionsDir()));
-    return Json.object().set("sessions", sessionsJson());
+    if (target == null) {
+      useSession(SessionStore.create(sessionsDir()));
+    }
+    return Json.object().set("sessions", sessionsJson(target));
+  }
+
+  /** Null means the active workspace; a name must exist. */
+  private String normaliseWorkspace(String workspace) {
+    if (workspace == null || workspace.isBlank()) {
+      return null;
+    }
+    String clean = workspace.strip();
+    if (clean.equalsIgnoreCase(settings.workspaces().activeName())) {
+      return null;
+    }
+    settings
+        .workspaces()
+        .find(clean)
+        .orElseThrow(() -> new IllegalArgumentException("no workspace named '" + clean + "'"));
+    return clean;
+  }
+
+  private Path sessionsDirOf(String workspace) {
+    return workspace == null
+        ? sessionsDir()
+        : settings.workspaces().find(workspace).orElseThrow().sessionsDir();
   }
 
   /** Asks the desktop for a directory. Blocks until the user answers, cancels or times out. */

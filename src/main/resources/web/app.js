@@ -48,6 +48,22 @@
     return isNaN(d.getTime()) ? str(v) : d.toLocaleString();
   }
 
+  /* A session's age is the question the list answers ("which one was I just
+   * in?"), and an absolute timestamp makes the reader do the subtraction. The
+   * exact time is still one hover away, in the row's tooltip. */
+  function relativeTime(v) {
+    const d = new Date(str(v));
+    if (isNaN(d.getTime())) { return str(v); }
+    const seconds = Math.round((Date.now() - d.getTime()) / 1000);
+    if (seconds < 90) { return 'just now'; }
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 90) { return minutes + 'm ago'; }
+    const hours = Math.round(minutes / 60);
+    if (hours < 36) { return hours + 'h ago'; }
+    const days = Math.round(hours / 24);
+    return days < 8 ? days + 'd ago' : d.toLocaleDateString();
+  }
+
   function hasContent(node) { return !!(node && node.firstChild); }
 
   /* cwd is the workspace path (the contract says so), so its last segment is
@@ -98,16 +114,14 @@
     chipProvider: $('chip-provider'),
     chipModel: $('chip-model'),
     chipSession: $('chip-session'),
-    btnWorkspace: $('btn-workspace'),
-    wsName: $('ws-name'),
     live: $('live'),
     liveText: $('live-text'),
     btnNew: $('btn-new'),
-    btnSessions: $('btn-sessions'),
     btnAuto: $('btn-auto'),
     autoState: $('auto-state'),
     btnSettings: $('btn-settings'),
     btnAbort: $('btn-abort'),
+    btnSidebar: $('btn-sidebar'),
     btnSide: $('btn-side'),
     btnTheme: $('btn-theme'),
     themeIcon: $('theme-icon'),
@@ -135,18 +149,12 @@
     uErrors: $('u-errors'),
     uTools: $('u-tools'),
     uElapsed: $('u-elapsed'),
-    sessionInfo: $('session-info'),
-    workspaceInfo: $('workspace-info'),
-    overlay: $('sessions-overlay'),
-    sessionsBody: $('sessions-body'),
-    sessionsClose: $('sessions-close'),
-    sessionsNote: $('sessions-note'),
-    sessionsError: $('sessions-error'),
-    sessionsDeleteAllHost: $('sessions-delete-all-host'),
-    workspaceOverlay: $('workspace-overlay'),
-    workspaceList: $('workspace-list'),
-    workspaceClose: $('workspace-close'),
-    workspaceError: $('workspace-error'),
+    sidebar: $('sidebar'),
+    sidebarCollapse: $('sidebar-collapse'),
+    sidebarAlert: $('sidebar-alert'),
+    sidebarNote: $('sidebar-note'),
+    wsTree: $('ws-tree'),
+    wsDeleteAllHost: $('ws-delete-all-host'),
     workspaceAddToggle: $('workspace-add-toggle'),
     workspaceAddForm: $('workspace-add-form'),
     workspaceSave: $('workspace-save'),
@@ -445,48 +453,15 @@
     }
   }
 
-  /* A long path must be allowed to wrap at its separators, not inside a
-   * directory name: each `/` becomes a real break opportunity, so the panel
-   * reads "…/Desktop/" + "Workspace/oh-my-ccj" instead of cutting a name in
-   * half. The text itself is unchanged — <wbr> carries no character. */
-  function appendPathValue(node, text) {
-    const value = str(text);
-    value.split('/').forEach(function (part, i) {
-      if (i) {
-        node.appendChild(document.createTextNode('/'));
-        node.appendChild(document.createElement('wbr'));
-      }
-      if (part) { node.appendChild(document.createTextNode(part)); }
-    });
-    if (!value) { node.textContent = '—'; }
-  }
-
-  function fillKV(node, rows) {
-    node.textContent = '';
-    rows.forEach(function (row) {
-      node.appendChild(el('span', 'k', row[0]));
-      const value = el('span', 'v');
-      appendPathValue(value, row[1]);
-      node.appendChild(value);
-    });
-  }
-
-  /* The header control and the WORKSPACE panel block read from one place, so
-   * the same name is never spelled two ways on screen. */
+  /* The active workspace is one fact told in two places: the transcript's
+   * placeholder and the tree's `active` mark. Both follow status.workspace —
+   * the header used to hold the third copy, and it is gone. */
   function renderWorkspace(ws) {
     if (ws && typeof ws === 'object' && ('name' in ws || 'path' in ws)) {
       state.workspace = { name: str(ws.name), path: str(ws.path) };
     }
-    const w = state.workspace || { name: '', path: '' };
-    dom.wsName.textContent = w.name || 'workspace';
-    dom.btnWorkspace.title = w.path
-      ? w.name + ' — ' + w.path + '\nClick to switch workspace'
-      : 'Switch workspace';
-    fillKV(dom.workspaceInfo, [
-      ['name', w.name || '—'],
-      ['path', w.path || '—']
-    ]);
     refreshPlaceholder();
+    noteActiveWorkspace();
   }
 
   /* status.workspace is authoritative; cwd is the same directory and only
@@ -497,18 +472,6 @@
     } else if (!state.workspace && status.cwd) {
       renderWorkspace({ name: baseName(status.cwd), path: str(status.cwd) });
     }
-  }
-
-  function renderSessionInfo(status) {
-    const ws = state.workspace && state.workspace.path
-      ? state.workspace.path
-      : (str(status.cwd) || '—');
-    fillKV(dom.sessionInfo, [
-      ['version', str(status.version) || '—'],
-      ['workspace', ws],
-      ['session', str(status.sessionId) || '—'],
-      ['messages', isFinite(Number(status.messageCount)) ? String(status.messageCount) : '—']
-    ]);
   }
 
   /* One line per tool: the panel is a legend, not the documentation. The full
@@ -635,7 +598,6 @@
     applyWorkspace(status);
     if ('sessionId' in status) { noteSession(str(status.sessionId)); }
     setChips(status);
-    renderSessionInfo(status);
     if (Array.isArray(status.tools)) { renderTools(status.tools); }
     if (status.usage && typeof status.usage === 'object') { renderUsage(status.usage); }
     if (typeof status.autoApprove === 'boolean') {
@@ -716,6 +678,10 @@
   function noteSession(id) {
     if (id === state.sessionId) { return; }
     state.sessionId = id;
+    // A workspace switch hands out a brand-new, empty session; its history is
+    // an empty screen, so the id is recorded and the pane left alone. The
+    // resume that follows the switch is what fetches a conversation.
+    if (tree.throwaway) { return; }
     clearTranscript();
     state.historyPromise = loadHistory(id);
   }
@@ -1105,7 +1071,12 @@
       hideConnPill();
       const placeholder = dom.transcript.querySelector('.placeholder');
       if (placeholder) { placeholder.textContent = placeholderText(); }
-      if (state.everOpen) { refreshStatus(); }
+      if (state.everOpen) {
+        refreshStatus();
+        // A restart can have added or forgotten workspaces, and the counts in
+        // the tree follow the sessions that were written while we were away.
+        loadWorkspaces();
+      }
       state.everOpen = true;
     };
 
@@ -1188,34 +1159,95 @@
     });
   }
 
-  // ------------------------------------------------------------ sessions
+  // -------------------------------------------------------------- sidebar
+
+  /* The sidebar is the workspace tree: one node per workspace, its sessions
+   * folded open underneath. Two rules make it safe to browse:
+   *
+   *   - folding a node only *reads* — `GET /api/sessions?workspace=<name>`,
+   *     which the server answers without switching anything — so looking at
+   *     another workspace can never move the conversation;
+   *   - switching is its own explicit gesture: `Use` on a row, or clicking a
+   *     session, which means "go there and open that".
+   *
+   * The collapsed state and the open nodes are both remembered, so a reload
+   * comes back to the same view. The right panel collapses by `display: none`
+   * on a flex item; this one uses the same rule from the other side, so the
+   * two toggles read as a pair.
+   *
+   * Deleting is the one thing the server scopes to the *active* workspace
+   * (`DELETE /api/session`, `DELETE /api/sessions` take no workspace), so the
+   * sidebar refuses a row elsewhere and says why, instead of clearing a
+   * workspace the user was not looking at. */
+  const SIDEBAR_KEY = 'ccj.sidebar.collapsed';
+  const EXPANDED_KEY = 'ccj.tree.expanded';
 
   /* Why the transcript is empty when we emptied it: the server publishes a
    * notice for a delete, but it is published *before* the new session's status
    * clears the pane, so the user is left looking at a blank transcript with no
    * reason for it. */
-  const FRESH_SESSION = ' ccj started a fresh session, so the transcript behind this dialog is empty.';
+  const FRESH_SESSION = ' ccj started a fresh session, so the transcript is empty.';
 
-  let sessionsPayload = null;   // the answer the list on screen was built from
-  let sessionsBusy = false;     // a delete request is in flight
-
-  function closeSessions() {
-    dom.overlay.hidden = true;
-    deleteAllControl.reset();   // never leave a question hanging in a closed dialog
+  function readStored(key) {
+    try { return str(localStorage.getItem(key)); } catch (err) { return ''; }
   }
 
-  function sessionNote(text) {
-    dom.sessionsNote.textContent = str(text);
-    dom.sessionsNote.hidden = !text;
+  function writeStored(key, value) {
+    try { localStorage.setItem(key, value); } catch (err) { /* still true for this visit */ }
   }
 
-  function sessionError(text) {
-    dom.sessionsError.textContent = str(text);
-    dom.sessionsError.hidden = !text;
+  function storedExpanded() {
+    const set = new Set();
+    let parsed = null;
+    try { parsed = JSON.parse(readStored(EXPANDED_KEY)); } catch (err) { parsed = null; }
+    if (Array.isArray(parsed)) {
+      parsed.forEach(function (name) {
+        const clean = str(name);
+        if (clean) { set.add(clean); }
+      });
+    }
+    return set;
+  }
+
+  const tree = {
+    payload: null,        // the last GET /api/workspaces answer
+    expanded: storedExpanded(),
+    sessions: new Map(),  // workspace name -> {status, items, error}
+    selected: '',         // the row the sidebar's own actions point at
+    activeName: '',       // the workspace the page is actually working in
+    error: '',            // why the workspace list could not be read
+    busy: false,          // a delete is in flight
+    throwaway: false,     // a switch's empty session: record its id, skip its history
+    deletes: []           // the armed two-step controls of the current render
+  };
+
+  function saveExpanded() {
+    const names = [];
+    tree.expanded.forEach(function (name) { names.push(name); });
+    writeStored(EXPANDED_KEY, JSON.stringify(names));
+  }
+
+  function workspaceItems() {
+    const list = tree.payload && Array.isArray(tree.payload.workspaces) ? tree.payload.workspaces : [];
+    return list.filter(function (item) { return !!item && typeof item === 'object'; });
+  }
+
+  function workspaceItem(name) {
+    const wanted = str(name);
+    let found = null;
+    workspaceItems().forEach(function (item) {
+      if (!found && str(item.name) === wanted) { found = item; }
+    });
+    return found;
   }
 
   function sessionsIn(payload) {
     return payload && Array.isArray(payload.sessions) ? payload.sessions : [];
+  }
+
+  function isStatusPayload(res) {
+    return !!res && typeof res === 'object'
+      && ('sessionId' in res || 'busy' in res || 'workspace' in res);
   }
 
   function activeSessionId() { return str(state.status && state.status.sessionId); }
@@ -1224,6 +1256,511 @@
    * the user can already read. */
   function transcriptEmpty() {
     return !dom.transcript.querySelector(':not(.placeholder)');
+  }
+
+  // ------------------------------------------------------ sidebar: messages
+
+  /* A refusal and its outcome are shown inside the sidebar, next to the control
+   * that produced them — the dialogs that used to own these lines are gone. */
+  function sidebarMessages(note, error) {
+    dom.sidebarNote.textContent = str(note);
+    dom.sidebarNote.hidden = !note;
+    dom.sidebarAlert.textContent = str(error);
+    dom.sidebarAlert.hidden = !error;
+  }
+
+  function sidebarNote(text) { sidebarMessages(text, ''); }
+  function sidebarError(text) { sidebarMessages('', text); }
+  function clearSidebarMessages() { sidebarMessages('', ''); }
+
+  // ----------------------------------------------------- sidebar: collapse
+
+  /* Below 900px the transcript needs the width more than the tree does, so a
+   * narrow window starts collapsed; a stored choice still wins on a wide one. */
+  function initialSidebarCollapsed() {
+    if (window.matchMedia('(max-width: 900px)').matches) { return true; }
+    return readStored(SIDEBAR_KEY) === '1';
+  }
+
+  function setSidebarCollapsed(collapsed) {
+    dom.sidebar.classList.toggle('collapsed', collapsed);
+    const expanded = collapsed ? 'false' : 'true';
+    dom.btnSidebar.setAttribute('aria-expanded', expanded);
+    dom.sidebarCollapse.setAttribute('aria-expanded', expanded);
+    writeStored(SIDEBAR_KEY, collapsed ? '1' : '0');
+  }
+
+  function toggleSidebar() {
+    setSidebarCollapsed(!dom.sidebar.classList.contains('collapsed'));
+  }
+
+  function initSidebar() {
+    setSidebarCollapsed(initialSidebarCollapsed());
+    dom.btnSidebar.addEventListener('click', toggleSidebar);
+    dom.sidebarCollapse.addEventListener('click', toggleSidebar);
+  }
+
+  // --------------------------------------------------------- sidebar: tree
+
+  /* Focus is inside the tree whenever a user acts on it, and every render
+   * rebuilds these nodes from the server's answer. Each control therefore
+   * carries the key it can be found by again, so folding a node or deleting a
+   * row never drops the keyboard onto <body> mid-task. */
+  function focusKey() {
+    const node = document.activeElement;
+    return node && node.dataset ? str(node.dataset.focusKey) : '';
+  }
+
+  function focusByKey(key) {
+    const wanted = str(key);
+    if (!wanted) { return false; }
+    const nodes = dom.wsTree.querySelectorAll('[data-focus-key]');
+    for (let i = 0; i < nodes.length; i += 1) {
+      if (str(nodes[i].dataset.focusKey) === wanted) { nodes[i].focus(); return true; }
+    }
+    return false;
+  }
+
+  function cachedSessions(name) { return tree.sessions.get(str(name)); }
+
+  /* The selection is what `Delete all` acts on, so changing it also disarms
+   * that question: an armed control must never be retargeted at a workspace
+   * the user picked after asking. */
+  function selectWorkspace(name) {
+    if (tree.selected === name) { return; }
+    tree.selected = name;
+    deleteAllControl.reset();
+  }
+
+  /* One session: a preview line and its age, and the same two-step delete the
+   * dialogs used, so the gesture did not change when the list moved. */
+  function sessionRow(name, item, index, activeId) {
+    const id = str(item.id);
+    const current = id !== '' && id === activeId;
+    const li = el('li', 'session-row' + (current ? ' current' : ''));
+    if (current) { li.setAttribute('aria-current', 'true'); }
+
+    const btn = el('button', 'session-item');
+    btn.type = 'button';
+    btn.dataset.focusKey = 's:' + name + ':' + id;
+    btn.title = id + (current ? ' — the session on screen' : '')
+      + '\n' + str(name) + ' · ' + timeLabel(item.lastModified);
+    btn.appendChild(el('span', 'session-id', clip(id, 30)));
+    const preview = firstLine(str(item.preview));
+    if (preview) { btn.appendChild(el('span', 'session-preview', clip(preview, 200))); }
+    const meta = el('span', 'session-meta');
+    const count = Number(item.messageCount);
+    const messages = isFinite(count) ? count : 0;
+    meta.appendChild(el('span', null, relativeTime(item.lastModified)));
+    meta.appendChild(el('span', null, messages === 1 ? '1 message' : messages + ' messages'));
+    btn.appendChild(meta);
+    btn.addEventListener('click', function () { openWorkspaceSession(name, id, btn); });
+
+    const actions = el('span', 'session-actions');
+    const remove = deleteControl(actions, 'Delete', function (control) {
+      deleteTreeSession(name, id, index, control, btn);
+    });
+    remove.idle.dataset.focusKey = 'del:' + name + ':' + id;
+    remove.yes.dataset.focusKey = 'del2:' + name + ':' + id;
+    remove.idle.title = 'Delete ' + id + ' from disk';
+    tree.deletes.push(remove);
+
+    li.appendChild(btn);
+    li.appendChild(actions);
+    return li;
+  }
+
+  /* The sessions of one node, or the reason there are none to show yet. A
+   * node that is not the active workspace says what it is: the rows can be
+   * read, and deleting there is refused by the endpoint itself. */
+  function sessionsList(name, listId, active) {
+    const list = el('ul', 'ws-sessions');
+    list.id = listId;
+    list.setAttribute('aria-label', 'Sessions in ' + name);
+    const cached = cachedSessions(name);
+    if (!cached || cached.status === 'loading') {
+      list.appendChild(el('li', 'ws-note muted', 'Loading…'));
+    } else if (cached.status === 'error') {
+      list.appendChild(el('li', 'ws-note err', 'Could not load sessions: ' + cached.error));
+    } else if (!cached.items.length) {
+      list.appendChild(el('li', 'ws-note muted',
+        'No saved sessions — a session gets a file once it has messages.'));
+    } else {
+      const activeId = activeSessionId();
+      cached.items.forEach(function (item, index) {
+        list.appendChild(sessionRow(name, item, index, activeId));
+      });
+    }
+    if (!active) {
+      list.appendChild(el('li', 'ws-note muted',
+        'Deleting applies to the active workspace only — press Use to switch here.'));
+    }
+    return list;
+  }
+
+  /* A workspace is a folder: its one control selects the node and folds its
+   * sessions, which is a read. `Use` is the separate, explicit switch. */
+  function nodeElement(item, index) {
+    const name = str(item.name);
+    const active = item.active === true || (name !== '' && name === workspaceName());
+    const open = tree.expanded.has(name);
+    const listId = 'ws-sessions-' + index;
+    const li = el('li', 'ws-node' + (active ? ' active' : '')
+      + (name !== '' && name === tree.selected ? ' selected' : ''));
+    li.dataset.workspace = name;
+
+    const row = el('div', 'ws-row');
+    const nameBtn = el('button', 'ws-name');
+    nameBtn.type = 'button';
+    nameBtn.dataset.focusKey = 'ws:' + name;
+    nameBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    nameBtn.setAttribute('aria-controls', listId);
+    if (active) { nameBtn.setAttribute('aria-current', 'true'); }
+    nameBtn.title = (str(item.path) || name) + (active
+      ? '\nThe workspace this page is working in — click to fold its sessions'
+      : '\nClick to fold its sessions open — this does not switch workspace');
+    nameBtn.appendChild(el('span', 'ws-chevron', open ? '▾' : '▸'));
+    nameBtn.appendChild(el('span', 'ws-folder', '▣'));
+    nameBtn.appendChild(el('span', 'ws-label', name));
+    const count = Number(item.sessions);
+    if (isFinite(count)) {
+      const badge = el('span', 'ws-count', count.toLocaleString());
+      badge.title = count === 1 ? '1 session' : count.toLocaleString() + ' sessions';
+      nameBtn.appendChild(badge);
+    }
+    nameBtn.addEventListener('click', function () { toggleNode(name); });
+    row.appendChild(nameBtn);
+    li.appendChild(row);
+
+    // State on the left, the row's own actions on the right: one line of the
+    // card, so the name above it never has to be squeezed to make room.
+    const foot = el('div', 'ws-foot');
+    if (active) {
+      const badge = el('span', 'ws-badge', 'active');
+      badge.title = 'The active workspace — nothing to switch to';
+      foot.appendChild(badge);
+    } else {
+      const use = el('button', 'btn ghost sm ws-use', 'Use');
+      use.type = 'button';
+      use.dataset.focusKey = 'use:' + name;
+      use.title = 'Switch to ' + name + ' — starts a new session there';
+      use.addEventListener('click', function () { activateWorkspace(name, use); });
+      foot.appendChild(use);
+    }
+    li.appendChild(foot);
+
+    const remove = deleteControl(foot, 'Remove', function (control) {
+      removeWorkspace(name, control);
+    }, { confirm: 'Remove?', busy: 'Removing…' });
+    remove.idle.dataset.focusKey = 'rm:' + name;
+    remove.idle.classList.add('ws-remove');
+    remove.idle.title = active
+      ? 'The active workspace cannot be removed — switch to another one first'
+      : 'Forget ' + name + ' — its session files stay on disk';
+    remove.idle.disabled = active;
+    tree.deletes.push(remove);
+
+    if (open) { li.appendChild(sessionsList(name, listId, active)); }
+    return li;
+  }
+
+  function renderTree(key) {
+    const keep = key === undefined ? focusKey() : str(key);
+    tree.deletes = [deleteAllControl];
+    dom.wsTree.textContent = '';
+    if (!tree.payload) {
+      dom.wsTree.appendChild(el('li', 'ws-note ' + (tree.error ? 'err' : 'muted'),
+        tree.error || 'Loading…'));
+      return;
+    }
+    const items = workspaceItems();
+    if (!items.length) {
+      dom.wsTree.appendChild(el('li', 'ws-note muted', 'No workspaces reported.'));
+      return;
+    }
+    items.forEach(function (item, index) { dom.wsTree.appendChild(nodeElement(item, index)); });
+    // The control the keyboard was on may be gone (a deleted row, a forgotten
+    // workspace); the selected node is where it lands instead.
+    if (keep && !focusByKey(keep)) { focusByKey('ws:' + tree.selected); }
+  }
+
+  /* The server owns the list, so every render starts from its answer. `keep`
+   * reuses the cached session lists when the caller already holds newer data
+   * (a delete's answer *is* the list it belongs to). */
+  function acceptWorkspaces(payload, opts) {
+    const options = opts || {};
+    tree.payload = payload && typeof payload === 'object' ? payload : { active: '', workspaces: [] };
+    tree.error = '';
+    if (options.keep !== true) { invalidateSessions(); }
+    pruneExpanded();
+    if (options.selected) { selectWorkspace(str(options.selected)); }
+    if (!tree.selected || !workspaceItem(tree.selected)) { selectWorkspace(workspaceName()); }
+    renderTree(options.focusKey);
+    return loadExpanded();
+  }
+
+  async function loadWorkspaces(opts) {
+    try {
+      return await acceptWorkspaces(await request('/api/workspaces'), opts);
+    } catch (err) {
+      // Stale beats nothing: the tree keeps its last answer and the alert says
+      // why the refresh failed. With no answer at all it says that instead of
+      // "Loading…" forever.
+      tree.error = 'Could not load workspaces: ' + str(err && err.message);
+      sidebarError(tree.error);
+      renderTree();
+      return undefined;
+    }
+  }
+
+  function pruneExpanded() {
+    const live = new Set();
+    workspaceItems().forEach(function (item) { live.add(str(item.name)); });
+    let changed = false;
+    tree.expanded.forEach(function (name) {
+      if (!live.has(name)) { tree.expanded.delete(name); changed = true; }
+    });
+    if (changed) { saveExpanded(); }
+  }
+
+  /* Folding a node is the read that keeps this list honest: the sessions of an
+   * open node are fetched once and cached until something invalidates them. */
+  function loadExpanded() {
+    const pending = [];
+    workspaceItems().forEach(function (item) {
+      const name = str(item.name);
+      if (tree.expanded.has(name) && !tree.sessions.has(name)) { pending.push(name); }
+    });
+    if (!pending.length) { return Promise.resolve(); }
+    pending.forEach(function (name) {
+      tree.sessions.set(name, { status: 'loading', items: [], error: '' });
+    });
+    renderTree();
+    return Promise.all(pending.map(fetchSessions)).then(function () { renderTree(); });
+  }
+
+  async function fetchSessions(name) {
+    try {
+      const res = await request('/api/sessions?workspace=' + encodeURIComponent(name));
+      tree.sessions.set(name, { status: 'ready', items: sessionsIn(res), error: '' });
+    } catch (err) {
+      tree.sessions.set(name, {
+        status: 'error', items: [], error: str(err && err.message) || 'request failed'
+      });
+    }
+  }
+
+  /* Deleting a session, starting one, switching workspaces and re-reading the
+   * workspace list all invalidate the cached lists. */
+  function invalidateSessions(name) {
+    if (name === undefined || name === null || name === '') { tree.sessions.clear(); }
+    else { tree.sessions.delete(str(name)); }
+  }
+
+  function toggleNode(name) {
+    clearSidebarMessages();
+    selectWorkspace(name);
+    if (tree.expanded.has(name)) { tree.expanded.delete(name); }
+    else { tree.expanded.add(name); }
+    saveExpanded();
+    renderTree();
+    loadExpanded();
+  }
+
+  /* The page's own workspace and the tree's `active` mark are the same fact.
+   * When the server says the active one changed, the tree follows it. */
+  function noteActiveWorkspace() {
+    const name = workspaceName();
+    if (name === tree.activeName) { return; }
+    tree.activeName = name;
+    if (name) { selectWorkspace(name); }
+    renderTree();
+    loadExpanded();
+  }
+
+  // ------------------------------------------------------- sidebar: actions
+
+  /* Switching is a two-step move: the request changes the server, and the
+   * status that answers it says which session the new workspace is on. The
+   * transcript is emptied *here*, before the answer lands, so the old
+   * workspace's messages are never on screen next to the new workspace's name
+   * — and never under a session id that belongs to neither. */
+  async function switchWorkspaceTo(name) {
+    const res = await postJSON('/api/workspace', { name: name });
+    selectWorkspace(name);
+    state.sessionId = '';          // the next status must clear and re-fetch
+    clearTranscript();
+    // The status that answers a switch describes a brand-new, empty session.
+    // Fetching *its* history is a round trip for an empty screen, so the id is
+    // recorded and the transcript left alone; the resume that follows (when the
+    // user picked a session) is what fetches.
+    tree.throwaway = true;
+    try {
+      if (isStatusPayload(res)) { applyStatus(res); } else { await refreshStatus(); }
+    } finally {
+      tree.throwaway = false;
+    }
+  }
+
+  /* `Use` is the only control that moves the page, and what it costs is on its
+   * tooltip: a switch starts a new session in the target workspace. */
+  async function activateWorkspace(name, button) {
+    if (!name || name === workspaceName()) { return; }
+    clearSidebarMessages();
+    if (button) { button.disabled = true; }
+    try {
+      await switchWorkspaceTo(name);
+      // A switch invalidates every cached list, and the counts move with the
+      // active mark, so the list is re-read rather than patched.
+      await loadWorkspaces({ focusKey: 'ws:' + name });
+    } catch (err) {
+      sidebarError('Could not switch to ' + name + ': ' + str(err && err.message));
+      renderTree('use:' + name);
+    }
+  }
+
+  /* A session in another workspace means two things at once: go there, then
+   * open it — in that order. Between them the transcript holds the switch's
+   * placeholder, so the wrong workspace's history never flashes up. */
+  async function openWorkspaceSession(name, id, button) {
+    clearSidebarMessages();
+    if (button) { button.disabled = true; }
+    try {
+      if (name !== workspaceName()) {
+        await switchWorkspaceTo(name);
+        await loadWorkspaces({ keep: true, focusKey: 's:' + name + ':' + id });
+      }
+      await switchSession({ action: 'resume', id: id }, button);
+    } catch (err) {
+      if (button) { button.disabled = false; }
+      sidebarError('Could not open ' + clip(id, 44) + ': ' + str(err && err.message));
+      renderTree('s:' + name + ':' + id);
+    }
+  }
+
+  /* Resuming or starting a session is the server's decision; the answer says
+   * which session the page is on, and that — never the button that was pressed
+   * — decides whether the transcript is cleared and its history fetched. */
+  async function switchSession(body, button) {
+    if (button) { button.disabled = true; }
+    try {
+      const res = await postJSON('/api/session', body);
+      if (isStatusPayload(res)) { applyStatus(res); } else { await refreshStatus(); }
+      if (body.action === 'new') {
+        // A new session is what invalidates the active workspace's list; a
+        // resume only changes which row carries the mark.
+        invalidateSessions(workspaceName());
+        renderTree();
+        loadExpanded();
+      } else {
+        renderTree();
+      }
+    } catch (err) {
+      if (button) { button.disabled = false; }
+      const message = 'session ' + body.action + ' failed: ' + str(err && err.message);
+      appendError(message);
+      sidebarError('Session ' + body.action + ' failed: ' + str(err && err.message));
+      renderTree();
+    }
+  }
+
+  /* Deleting one session. Both delete endpoints are scoped by the server to
+   * the *active* workspace, so a row elsewhere refuses here — next to the row,
+   * with the reason — instead of deleting the wrong file. */
+  async function deleteTreeSession(name, id, index, control, rowButton) {
+    if (tree.busy) { return; }
+    if (name !== workspaceName()) {
+      control.reset();
+      renderTree('del:' + name + ':' + id);
+      sidebarError('Sessions can only be deleted from the active workspace — press Use on '
+        + name + ' first.');
+      return;
+    }
+    tree.busy = true;
+    control.busy();
+    rowButton.disabled = true;
+    clearSidebarMessages();
+    const active = id !== '' && id === activeSessionId();
+    try {
+      const res = await request('/api/session?id=' + encodeURIComponent(id), { method: 'DELETE' });
+      // The answer *is* the refreshed list for this workspace, so it is stored
+      // and kept: re-asking would be a round trip for information in hand.
+      tree.sessions.set(name, { status: 'ready', items: sessionsIn(res), error: '' });
+      const items = cachedSessions(name).items;
+      const next = items.length ? items[Math.min(index, items.length - 1)] : null;
+      const focus = next ? 's:' + name + ':' + str(next.id) : 'ws:' + name;
+      renderTree(focus);
+      sidebarNote('Deleted ' + clip(id, 44) + '.' + (active ? FRESH_SESSION : ''));
+      await loadWorkspaces({ keep: true, focusKey: focus });
+      await afterSessionDelete(active);
+    } catch (err) {
+      sidebarError('Could not delete ' + clip(id, 44) + ': ' + str(err && err.message));
+      invalidateSessions(name);   // the list on screen is not trusted any more
+      renderTree('ws:' + name);
+      loadExpanded();
+    } finally {
+      tree.busy = false;
+    }
+  }
+
+  /* `Delete all` clears the selected workspace, and the server only clears the
+   * active one. When the two differ this refuses and says so, rather than
+   * emptying a workspace the user was not looking at. */
+  async function deleteAllSelectedWorkspace(control) {
+    if (tree.busy) { return; }
+    const name = tree.selected || workspaceName();
+    if (!name || name !== workspaceName()) {
+      control.reset();
+      sidebarError('Delete all only clears the active workspace — press Use on '
+        + (name || 'a workspace') + ' first.');
+      return;
+    }
+    tree.busy = true;
+    control.busy();
+    clearSidebarMessages();
+    const before = cachedCount(name);
+    try {
+      const res = await request('/api/sessions', { method: 'DELETE' });
+      control.reset();
+      const items = sessionsIn(res);
+      tree.sessions.set(name, { status: 'ready', items: items, error: '' });
+      const gone = Math.max(0, before - items.length);
+      renderTree('delall');
+      sidebarNote((gone === 1 ? 'Deleted 1 session.' : 'Deleted ' + gone + ' sessions.')
+        + FRESH_SESSION);
+      await loadWorkspaces({ keep: true, focusKey: 'delall' });
+      await afterSessionDelete(true);
+    } catch (err) {
+      control.reset();
+      sidebarError('Could not delete the sessions: ' + str(err && err.message));
+      renderTree('delall');
+    } finally {
+      tree.busy = false;
+    }
+  }
+
+  /* How many rows the delete cleared: the count in hand when the list has been
+   * read, otherwise the workspace's own count. */
+  function cachedCount(name) {
+    const cached = cachedSessions(name);
+    if (cached && cached.status === 'ready') { return cached.items.length; }
+    const item = workspaceItem(name);
+    const count = Number(item && item.sessions);
+    return isFinite(count) ? count : 0;
+  }
+
+  /* Deleting the active session makes the server hand out a new id, and the
+   * page follows it by clearing the transcript — which is right, but looks like
+   * something broke unless the pane says why. Reconcile from the server first
+   * (so the tree is not waiting on the stream), then explain the empty pane,
+   * but only if nobody else has. */
+  async function afterSessionDelete(active) {
+    if (!active) { return; }
+    await refreshStatus();
+    if (state.historyPromise) { await state.historyPromise; }
+    if (transcriptEmpty()) {
+      appendNotice('The session you were in was deleted — ccj started a fresh one, so this transcript is empty.');
+    }
   }
 
   /* Deleting is destructive and there is no undo, so one click only *arms* it:
@@ -1274,170 +1811,10 @@
     return control;
   }
 
-  /* The list is always rebuilt from the server's answer — the server owns the
-   * state, including the fresh session it starts when the active one goes.
-   * `focus` is a row index or 'first': the rebuilt list would otherwise drop
-   * the keyboard onto <body> mid-task. */
-  function renderSessions(payload, focus) {
-    const list = sessionsIn(payload);
-    const active = activeSessionId();
-    sessionsPayload = payload;
-    deleteAllControl.reset();
-    deleteAllControl.idle.disabled = !list.length;
-
-    dom.sessionsBody.textContent = '';
-    if (!list.length) {
-      dom.sessionsBody.appendChild(el('p', 'muted', 'No saved sessions in this workspace.'));
-      dom.sessionsBody.appendChild(el('p', 'muted',
-        'A session only gets a file once it has messages, so an empty chat leaves nothing here.'));
-      // Nothing to land on: the way out is the only control left.
-      dom.sessionsClose.focus();
-      return;
-    }
-
-    const ul = el('ul', 'session-list');
-    list.forEach(function (item, index) {
-      const id = str(item.id);
-      const current = id !== '' && id === active;
-      const li = el('li', 'session-row' + (current ? ' current' : ''));
-      if (current) { li.setAttribute('aria-current', 'true'); }
-
-      const btn = el('button', 'session-item');
-      btn.type = 'button';
-      btn.appendChild(el('span', 'session-id', id));
-      if (item.preview) { btn.appendChild(el('span', 'session-preview', clip(firstLine(item.preview), 200))); }
-      const meta = el('span', 'session-meta');
-      const count = Number(item.messageCount);
-      const messages = isFinite(count) ? count : 0;
-      meta.appendChild(el('span', null, messages === 1 ? '1 message' : messages + ' messages'));
-      meta.appendChild(el('span', null, timeLabel(item.lastModified)));
-      btn.appendChild(meta);
-      btn.addEventListener('click', function () { switchSession({ action: 'resume', id: id }, btn); });
-
-      const actions = el('span', 'session-actions');
-      const remove = deleteControl(actions, 'Delete', function (control) {
-        deleteSession(id, index, control, btn);
-      });
-      remove.idle.title = 'Delete ' + id + ' from disk';
-
-      li.appendChild(btn);
-      li.appendChild(actions);
-      ul.appendChild(li);
-    });
-    dom.sessionsBody.appendChild(ul);
-
-    const rows = dom.sessionsBody.querySelectorAll('.session-item');
-    const target = typeof focus === 'number'
-      ? rows[Math.min(Math.max(0, focus), rows.length - 1)]
-      : rows[0];
-    (target || dom.sessionsClose).focus();
-  }
-
-  async function openSessions() {
-    dom.overlay.hidden = false;
-    sessionError('');
-    sessionNote('');
-    deleteAllControl.reset();
-    dom.sessionsBody.textContent = '';
-    dom.sessionsBody.appendChild(el('p', 'muted', 'Loading…'));
-    try {
-      renderSessions(await request('/api/sessions'), 'first');
-    } catch (err) {
-      dom.sessionsBody.textContent = '';
-      dom.sessionsBody.appendChild(el('p', 'err', 'Could not load sessions: ' + err.message));
-      deleteAllControl.idle.disabled = true;
-      dom.sessionsClose.focus();
-    }
-  }
-
-  /* A row delete: the answer is the new list, and the row's index is where the
-   * keyboard goes back to. A failure leaves the list exactly as it was, with
-   * the server's message above it — nothing is left half-armed. */
-  async function deleteSession(id, index, control, rowButton) {
-    if (sessionsBusy) { return; }
-    sessionsBusy = true;
-    control.busy();
-    rowButton.disabled = true;
-    sessionError('');
-    sessionNote('');
-    const active = id !== '' && id === activeSessionId();
-    try {
-      const res = await request('/api/session?id=' + encodeURIComponent(id), { method: 'DELETE' });
-      renderSessions(res, index);
-      sessionNote('Deleted ' + clip(id, 44) + '.' + (active ? FRESH_SESSION : ''));
-      await afterSessionDelete(active);
-    } catch (err) {
-      sessionError('Could not delete ' + clip(id, 44) + ': ' + str(err && err.message));
-      renderSessions(sessionsPayload, index);
-    } finally {
-      sessionsBusy = false;
-    }
-  }
-
-  async function deleteAllSessions(control) {
-    if (sessionsBusy) { return; }
-    sessionsBusy = true;
-    control.busy();
-    sessionError('');
-    sessionNote('');
-    const before = sessionsIn(sessionsPayload).length;
-    try {
-      const res = await request('/api/sessions', { method: 'DELETE' });
-      const left = sessionsIn(res).length;
-      const gone = Math.max(0, before - left);
-      renderSessions(res, 'first');
-      sessionNote((gone === 1 ? 'Deleted 1 session.' : 'Deleted ' + gone + ' sessions.') + FRESH_SESSION);
-      await afterSessionDelete(true);
-    } catch (err) {
-      sessionError('Could not delete the sessions: ' + str(err && err.message));
-      renderSessions(sessionsPayload, 'first');
-    } finally {
-      sessionsBusy = false;
-    }
-  }
-
-  /* Deleting the active session makes the server hand out a new id, and the
-   * page follows it by clearing the transcript — which is right, but looks like
-   * something broke unless the pane says why. Reconcile from the server first
-   * (so the header is not waiting on the stream), then explain the empty pane,
-   * but only if nobody else has. */
-  async function afterSessionDelete(active) {
-    if (!active) { return; }
-    await refreshStatus();
-    if (state.historyPromise) { await state.historyPromise; }
-    if (transcriptEmpty()) {
-      appendNotice('The session you were in was deleted — ccj started a fresh one, so this transcript is empty.');
-    }
-  }
-
-  async function switchSession(body, button) {
-    if (button) { button.disabled = true; }
-    try {
-      const res = await postJSON('/api/session', body);
-      closeSessions();
-      // Whether the transcript is cleared (and history fetched) is decided by
-      // the session id in the answer, never by which button was pressed: a
-      // refused `new` on an empty session answers with the same id, and the
-      // transcript must stay exactly as it is.
-      if (res && typeof res === 'object' && ('sessionId' in res || 'busy' in res)) {
-        applyStatus(res);   // /api/session answers with the full status payload
-      } else {
-        await refreshStatus();
-      }
-      dom.input.focus();
-    } catch (err) {
-      if (button) { button.disabled = false; }
-      appendError('session ' + body.action + ' failed: ' + err.message);
-      if (!dom.overlay.hidden) {
-        dom.sessionsBody.appendChild(el('p', 'err', 'Session ' + body.action + ' failed: ' + err.message));
-      }
-    }
-  }
-
-  // ----------------------------------------------------------- workspaces
+  // ------------------------------------------- sidebar: adding a workspace
 
   function clearWorkspaceErrors() {
-    [dom.workspaceError, dom.wsNameError, dom.wsPathError].forEach(function (node) {
+    [dom.wsNameError, dom.wsPathError].forEach(function (node) {
       node.textContent = '';
       node.hidden = true;
     });
@@ -1447,7 +1824,7 @@
 
   /* One 400 message per refusal, and the field it belongs to is decided here:
    * a bad or duplicate name lands under Name (the registry is keyed by name),
-   * an unusable directory under Path, anything else above the list. */
+   * an unusable directory under Path, anything else above the tree. */
   function showWorkspaceError(message) {
     const text = str(message) || 'Workspace request failed.';
     if (/path|director|folder|\bdir\b|absolute|usable|permission|denied|creat/i.test(text)) {
@@ -1457,90 +1834,13 @@
       fieldError(dom.wsNameError, text);
       dom.wsNewName.focus();
     } else {
-      dom.workspaceError.textContent = text;
-      dom.workspaceError.hidden = false;
+      sidebarError(text);
     }
   }
 
   function setAddFormOpen(open) {
     dom.workspaceAddForm.hidden = !open;
     dom.workspaceAddToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  }
-
-  function closeWorkspaces() {
-    if (dom.workspaceOverlay.hidden) { return; }
-    dom.workspaceOverlay.hidden = true;
-    dom.btnWorkspace.focus();
-  }
-
-  function renderWorkspaces(payload, focusName) {
-    const list = payload && Array.isArray(payload.workspaces) ? payload.workspaces : [];
-    const active = str(payload && payload.active);
-    dom.workspaceList.textContent = '';
-    if (!list.length) {
-      dom.workspaceList.appendChild(el('li', 'muted', 'No workspaces reported.'));
-      return;
-    }
-    let focusTarget = null;
-    list.forEach(function (item) {
-      const name = str(item.name);
-      const isActive = item.active === true || (name !== '' && name === active);
-      const li = el('li', 'workspace-item' + (isActive ? ' current' : ''));
-      li.setAttribute('data-workspace', name);
-
-      const pick = el('button', 'workspace-pick');
-      pick.type = 'button';
-      if (isActive) { pick.setAttribute('aria-current', 'true'); }
-      const head = el('span', 'workspace-head');
-      head.appendChild(el('span', 'workspace-name', name));
-      if (isActive) { head.appendChild(el('span', 'workspace-badge', 'active')); }
-      pick.appendChild(head);
-      pick.appendChild(el('span', 'workspace-path', str(item.path) || '—'));
-      const sessions = Number(item.sessions);
-      if (isFinite(sessions)) {
-        pick.appendChild(el('span', 'workspace-meta',
-          sessions === 1 ? '1 session' : sessions.toLocaleString() + ' sessions'));
-      }
-      pick.addEventListener('click', function () { pickWorkspace(item, pick, isActive); });
-
-      const remove = el('button', 'btn ghost workspace-remove', 'Remove');
-      remove.type = 'button';
-      remove.title = 'Forget ' + name + ' — its session files stay on disk';
-      remove.addEventListener('click', function () { removeWorkspace(name, remove); });
-
-      li.appendChild(pick);
-      li.appendChild(remove);
-      dom.workspaceList.appendChild(li);
-
-      if (name === focusName || (!focusName && isActive)) { focusTarget = pick; }
-    });
-    // Focus is inside the dialog at all times while it is open: the active row
-    // when there is one, otherwise the first row a keyboard can reach.
-    if (!focusTarget) { focusTarget = dom.workspaceList.querySelector('.workspace-pick'); }
-    if (focusTarget) { focusTarget.focus(); }
-  }
-
-  async function loadWorkspaces(focusName) {
-    dom.workspaceList.textContent = '';
-    dom.workspaceList.appendChild(el('li', 'muted', 'Loading…'));
-    try {
-      const data = await request('/api/workspaces');
-      renderWorkspaces(data, focusName);
-    } catch (err) {
-      dom.workspaceList.textContent = '';
-      dom.workspaceList.appendChild(el('li', 'err', 'Could not load workspaces: ' + str(err && err.message)));
-    }
-  }
-
-  async function openWorkspaces() {
-    if (!dom.settingsOverlay.hidden) { closeSettings(); }
-    if (!dom.overlay.hidden) { closeSessions(); }
-    clearWorkspaceErrors();
-    dom.wsNewName.value = '';
-    dom.wsNewPath.value = '';
-    setAddFormOpen(false);
-    dom.workspaceOverlay.hidden = false;
-    await loadWorkspaces();
   }
 
   /* The chooser runs on the machine that serves the page, so this request *is*
@@ -1577,59 +1877,48 @@
     clearWorkspaceErrors();
     const name = dom.wsNewName.value.trim();
     const path = dom.wsNewPath.value.trim();
-    if (!name) { fieldError(dom.wsNameError, 'Enter a workspace name.'); dom.wsNewName.focus(); return; }
-    if (!path) { fieldError(dom.wsPathError, 'Enter a directory.'); dom.wsNewPath.focus(); return; }
+    if (!name) {
+      fieldError(dom.wsNameError, 'Enter a workspace name.');
+      dom.wsNewName.focus();
+      return;
+    }
+    if (!path) {
+      fieldError(dom.wsPathError, 'Enter a directory.');
+      dom.wsNewPath.focus();
+      return;
+    }
     dom.workspaceSave.disabled = true;
     try {
       const res = await postJSON('/api/workspaces', { name: name, path: path });
       dom.wsNewName.value = '';
       dom.wsNewPath.value = '';
       setAddFormOpen(false);
-      renderWorkspaces(res, name);   // the list is rebuilt from the answer
+      // Adding is not switching: the new node is opened so its (empty) list is
+      // visible, and the page stays in the workspace it was working in.
+      tree.expanded.add(name);
+      saveExpanded();
+      sidebarNote('Workspace ' + name + ' added — press Use to work there.');
+      acceptWorkspaces(res, { selected: name, focusKey: 'ws:' + name });
     } catch (err) {
       showWorkspaceError(err.message);
     }
     dom.workspaceSave.disabled = false;
   }
 
-  async function removeWorkspace(name, button) {
-    clearWorkspaceErrors();
-    button.disabled = true;
+  /* Forgetting is not deleting: the registry entry goes, the session files
+   * stay where they are. The active workspace is refused, and the button says
+   * so before the server has to. */
+  async function removeWorkspace(name, control) {
+    clearSidebarMessages();
+    control.busy();
     try {
       const res = await request('/api/workspace?name=' + encodeURIComponent(name), { method: 'DELETE' });
-      renderWorkspaces(res);
+      sidebarNote('Workspace ' + name + ' forgotten — its session files stay on disk.');
+      await acceptWorkspaces(res, { focusKey: 'ws:' + name });
     } catch (err) {
-      button.disabled = false;
-      showWorkspaceError(err.message);
-    }
-  }
-
-  /* Switching is a two-step move: the request changes the server, and the
-   * status event that follows is what tells the page which session the new
-   * workspace is on. The transcript is emptied *here* so the old workspace's
-   * messages are never on screen next to the new workspace's name. */
-  async function pickWorkspace(item, button, isActive) {
-    const name = str(item.name);
-    if (isActive || (state.workspace && state.workspace.name === name)) {
-      closeWorkspaces();   // already here — do not clear a transcript for nothing
-      return;
-    }
-    clearWorkspaceErrors();
-    button.disabled = true;
-    try {
-      const res = await postJSON('/api/workspace', { name: name });
-      closeWorkspaces();
-      state.sessionId = '';   // the next status must clear and re-fetch
-      clearTranscript();
-      if (res && typeof res === 'object' && ('sessionId' in res || 'busy' in res || 'workspace' in res)) {
-        applyStatus(res);
-      } else {
-        await refreshStatus();
-      }
-      dom.input.focus();
-    } catch (err) {
-      button.disabled = false;
-      showWorkspaceError(err.message);
+      control.reset();
+      sidebarError('Could not remove ' + name + ': ' + str(err && err.message));
+      renderTree();
     }
   }
 
@@ -2161,8 +2450,6 @@
 
   /* `preloaded` skips the round trip when the caller already has GET /api/config. */
   async function openSettings(preloaded) {
-    if (!dom.overlay.hidden) { closeSessions(); }
-    if (!dom.workspaceOverlay.hidden) { closeWorkspaces(); }
     dom.settingsOverlay.hidden = false;
 
     // The catalogue is fetched on every open, in parallel with the config: the
@@ -2249,27 +2536,21 @@
     }
   });
 
+  /* Starting a new session is the one session action that stays in the header;
+   * it happens in the workspace the page is already in, so the tree has nothing
+   * to switch. Focus goes to the composer, because that is what a new session
+   * is for. */
   dom.btnNew.addEventListener('click', function () {
-    switchSession({ action: 'new' });
+    switchSession({ action: 'new' }, null).then(function () { dom.input.focus(); });
   });
 
-  dom.btnSessions.addEventListener('click', openSessions);
-  dom.sessionsClose.addEventListener('click', closeSessions);
-  dom.overlay.addEventListener('click', function (event) {
-    if (event.target === dom.overlay) { closeSessions(); }
-  });
+  /* The sidebar carries the same two-step control the rows do, so "delete
+   * everything" is never a single click either. */
+  const deleteAllControl = deleteControl(dom.wsDeleteAllHost, 'Delete all',
+    deleteAllSelectedWorkspace);
+  deleteAllControl.idle.dataset.focusKey = 'delall';
+  deleteAllControl.idle.title = 'Delete every session in the selected workspace';
 
-  /* The dialog header carries the same two-step control the rows do, so
-   * "delete everything" is never a single click either. */
-  const deleteAllControl = deleteControl(dom.sessionsDeleteAllHost, 'Delete all', deleteAllSessions);
-  deleteAllControl.idle.disabled = true;   // nothing is listed until the list loads
-  deleteAllControl.idle.title = 'Delete every session in this workspace';
-
-  dom.btnWorkspace.addEventListener('click', function () { openWorkspaces(); });
-  dom.workspaceClose.addEventListener('click', closeWorkspaces);
-  dom.workspaceOverlay.addEventListener('click', function (event) {
-    if (event.target === dom.workspaceOverlay) { closeWorkspaces(); }
-  });
   dom.workspaceAddToggle.addEventListener('click', function () {
     const open = dom.workspaceAddForm.hidden;
     setAddFormOpen(open);
@@ -2309,11 +2590,28 @@
     if (clearing) { dom.cfgApiKey.value = ''; }
   });
 
+  /* Escape closes what is open, innermost first: the settings dialog, then the
+   * Add-workspace form, then an armed delete. The sidebar itself is a region,
+   * not a popup — it is closed with its own toggle, on purpose. */
+  function cancelArmedDeletes() {
+    let armed = false;
+    tree.deletes.forEach(function (control) {
+      if (control.armed && control.idle.isConnected) {
+        armed = true;
+        control.reset();
+        control.idle.focus();
+      }
+    });
+    return armed;
+  }
+
   document.addEventListener('keydown', function (event) {
     if (event.key !== 'Escape') { return; }
     if (!dom.settingsOverlay.hidden) { closeSettings(); }
-    else if (!dom.workspaceOverlay.hidden) { closeWorkspaces(); }
-    else if (!dom.overlay.hidden) { closeSessions(); }
+    else if (!dom.workspaceAddForm.hidden) {
+      setAddFormOpen(false);
+      dom.workspaceAddToggle.focus();
+    } else { cancelArmedDeletes(); }
   });
 
   dom.btnAuto.addEventListener('click', async function () {
@@ -2356,12 +2654,15 @@
 
   async function init() {
     initTheme();
+    initSidebar();
     paintAuto();
     setBusy(false);
     // The first status tells us which session the page is showing; its history
     // is rendered before the stream opens, so the initial replay has no live
-    // events to race with.
+    // events to race with. The tree loads alongside, from whatever the stored
+    // expanded state says to open.
     await refreshStatus();
+    loadWorkspaces();
     if (state.historyPromise) { await state.historyPromise; }
     connect();
     const settingsOpen = await maybeOpenSettingsOnFirstLoad();

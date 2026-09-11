@@ -217,7 +217,7 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     if ("DELETE".equals(method)) {
-      respond(exchange, 200, hub.deleteAllSessions());
+      respond(exchange, 200, hub.deleteAllSessions(queryParam(exchange, "workspace")));
       return;
     }
     error(exchange, 405, "GET or DELETE required");
@@ -306,7 +306,7 @@ public final class HttpApi implements AutoCloseable {
         error(exchange, 400, "query parameter 'id' is required");
         return;
       }
-      respond(exchange, 200, hub.deleteSession(id));
+      respond(exchange, 200, hub.deleteSession(queryParam(exchange, "workspace"), id));
       return;
     }
     if (!"POST".equals(exchange.getRequestMethod())) {
