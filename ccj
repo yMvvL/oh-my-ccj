@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Launcher for the packaged CLI. Builds the fat jar on first use.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+jar="$here/target/ccj.jar"
+
+if [[ ! -f "$jar" ]]; then
+  echo "oh-my-ccj: no jar yet, running 'mvn -DskipTests package' first" >&2
+  (cd "$here" && mvn -q -DskipTests package) >&2
+fi
+
+exec java -jar "$jar" "$@"

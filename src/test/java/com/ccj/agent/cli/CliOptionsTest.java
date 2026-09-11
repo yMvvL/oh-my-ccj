@@ -1,0 +1,112 @@
+package com.ccj.agent.cli;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.ccj.agent.core.Config;
+import org.junit.jupiter.api.Test;
+
+class CliOptionsTest {
+
+  @Test
+  void inlineAndSeparateValueFormsAreEquivalent() {
+    CliOptions inline = CliOptions.parse(new String[] {"--model=gpt-4o", "--max-steps=7"});
+    CliOptions separate = CliOptions.parse(new String[] {"--model", "gpt-4o", "--max-steps", "7"});
+
+    assertEquals("gpt-4o", inline.model());
+    assertEquals(7, inline.maxSteps());
+    assertEquals("gpt-4o", separate.model());
+    assertEquals(7, separate.maxSteps());
+  }
+
+  @Test
+  void shortFlagsAndAliasesAreParsed() {
+    CliOptions options =
+        CliOptions.parse(
+            new String[] {
+              "-p", "do the thing", "-C", "/tmp", "--auto-approve", "-v", "--max-tokens", "512"
+            });
+
+    assertEquals("do the thing", options.print());
+    assertEquals("/tmp", options.cwd());
+    assertTrue(options.yolo());
+    assertTrue(options.version());
+    assertEquals(512, options.maxTokens());
+  }
+
+  @Test
+  void homeOverridesTheApplicationDirectory() {
+    CliOptions options = CliOptions.parse(new String[] {"--home", "/tmp/ccj-home"});
+
+    assertEquals("/tmp/ccj-home", options.home());
+    assertNull(CliOptions.parse(new String[0]).home());
+  }
+
+  @Test
+  void unknownFlagIsAUsageError() {
+    CliOptions.UsageException error =
+        assertThrows(
+            CliOptions.UsageException.class, () -> CliOptions.parse(new String[] {"--nope"}));
+
+    assertTrue(error.getMessage().contains("--nope"), error.getMessage());
+  }
+
+  @Test
+  void missingValueIsAUsageError() {
+    assertThrows(CliOptions.UsageException.class, () -> CliOptions.parse(new String[] {"--model"}));
+    assertThrows(CliOptions.UsageException.class, () -> CliOptions.parse(new String[] {"-p"}));
+    assertThrows(
+        CliOptions.UsageException.class,
+        () -> CliOptions.parse(new String[] {"--model", "--yolo"}));
+  }
+
+  @Test
+  void nonNumericValuesAreAUsageError() {
+    assertThrows(
+        CliOptions.UsageException.class,
+        () -> CliOptions.parse(new String[] {"--max-steps", "many"}));
+    assertThrows(
+        CliOptions.UsageException.class,
+        () -> CliOptions.parse(new String[] {"--temperature", "hot"}));
+  }
+
+  @Test
+  void yoloMapsToAutoApproveAndUnsetStaysNull() {
+    Config yolo = CliOptions.parse(new String[] {"--yolo"}).overrides();
+    Config alias = CliOptions.parse(new String[] {"--auto-approve"}).overrides();
+    Config plain = CliOptions.parse(new String[] {"-p", "hi"}).overrides();
+
+    assertEquals(Boolean.TRUE, yolo.autoApprove());
+    assertEquals(Boolean.TRUE, alias.autoApprove());
+    assertNull(plain.autoApprove());
+  }
+
+  @Test
+  void overridesCarryOnlyTheGivenFlags() {
+    Config overrides =
+        CliOptions.parse(
+                new String[] {
+                  "--provider",
+                  "anthropic",
+                  "--model=claude-x",
+                  "--temperature",
+                  "0.2",
+                  "--system",
+                  "be brief"
+                })
+            .overrides();
+
+    assertEquals("anthropic", overrides.provider());
+    assertEquals("claude-x", overrides.model());
+    assertEquals(0.2, overrides.temperature());
+    assertEquals("be brief", overrides.systemPrompt());
+    assertNull(overrides.baseUrl());
+    assertNull(overrides.apiKey());
+    assertNull(overrides.apiKeyEnv());
+    assertNull(overrides.maxSteps());
+    assertNull(overrides.maxTokens());
+    assertNull(overrides.outputLimitBytes());
+  }
+}
