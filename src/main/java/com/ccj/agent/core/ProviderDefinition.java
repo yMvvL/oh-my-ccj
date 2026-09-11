@@ -19,12 +19,42 @@ public record ProviderDefinition(
   public static final String OPENAI = "openai";
   public static final String ANTHROPIC = "anthropic";
 
+  /** Endpoint paths the providers append themselves, which a base URL must not repeat. */
+  private static final List<String> ENDPOINT_SUFFIXES =
+      List.of("/chat/completions", "/v1/messages", "/messages");
+
   public ProviderDefinition {
     name = name == null ? "" : name.strip();
     kind = kind == null || kind.isBlank() ? OPENAI : kind.strip().toLowerCase();
-    baseUrl = baseUrl == null ? "" : baseUrl.strip();
+    baseUrl = normaliseBaseUrl(baseUrl == null ? "" : baseUrl.strip());
     apiKeyEnv = apiKeyEnv == null || apiKeyEnv.isBlank() ? null : apiKeyEnv.strip();
     models = models == null ? List.of() : List.copyOf(models);
+  }
+
+  /**
+   * Removes a path the providers add themselves — the one rule for every base URL that enters the
+   * system, whether typed into a provider definition or into the settings form. A base URL of
+   * {@code https://host/v1} plus
+   * {@code /chat/completions} is the request; a base URL that already ends in
+   * {@code /v1/chat/completions} would send the path twice and 404, which is a confusing way to
+   * learn the rule — so the prefix is what is kept.
+   */
+  public static String normaliseBaseUrl(String baseUrl) {
+    String value = baseUrl;
+    boolean changed = true;
+    while (changed) {
+      changed = false;
+      for (String suffix : ENDPOINT_SUFFIXES) {
+        if (value.toLowerCase().endsWith(suffix)) {
+          value = value.substring(0, value.length() - suffix.length());
+          changed = true;
+        }
+      }
+    }
+    while (value.endsWith("/")) {
+      value = value.substring(0, value.length() - 1);
+    }
+    return value;
   }
 
   /** Only two protocols exist, so anything else is a typo worth reporting early. */

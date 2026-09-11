@@ -1,6 +1,7 @@
 package com.ccj.agent.provider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -173,5 +174,46 @@ class ProvidersTest {
             () -> Providers.create(config("myrelay", null, "sk"), Map.of(), store));
 
     assertTrue(failure.getMessage().contains("model-a"), failure.getMessage());
+  }
+
+  @Test
+  void aBaseUrlThatRepeatsTheEndpointIsNormalised() throws Exception {
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      Config config =
+          new Config("openai", "gpt-test", server.url() + "/v1/chat/completions", "sk-k", null, null,
+                  null, null, null, null, null, null)
+              .resolved();
+
+      Provider provider = Providers.create(config, Map.of());
+      provider.complete(ping("gpt-test"), event -> {});
+
+      assertEquals(
+          "/v1/chat/completions",
+          server.path(0),
+          "the endpoint must appear once, not twice: " + server.path(0));
+      provider.close();
+    }
+  }
+
+  @Test
+  void anApiKeyEnvThatHoldsAKeyExplainsTheMistake() {
+    ProviderStore store = ProviderStore.open(tmp);
+    store.save(
+        new ProviderDefinition(
+            "myrelay",
+            ProviderDefinition.OPENAI,
+            "https://relay.example.com/v1",
+            "sk-abcdefghijklmnopqrstuvwxyz012345",
+            List.of("m")));
+    Config config =
+        new Config("myrelay", "m", null, null, null, null, null, null, null, null, null, null)
+            .resolved();
+
+    IllegalArgumentException failure =
+        assertThrows(IllegalArgumentException.class, () -> Providers.create(config, Map.of(), store));
+
+    assertTrue(failure.getMessage().contains("looks like an API key"), failure.getMessage());
+    assertTrue(failure.getMessage().contains("API key field"), failure.getMessage());
+    assertFalse(failure.getMessage().contains("abcdefghij"), "the key itself must not be echoed");
   }
 }

@@ -78,7 +78,9 @@ public record Config(
   public Config resolved() {
     String resolvedProvider = provider == null || provider.isBlank() ? DEFAULT_PROVIDER : provider.strip().toLowerCase();
     String resolvedBaseUrl =
-        baseUrl != null && !baseUrl.isBlank() ? stripTrailingSlash(baseUrl) : defaultBaseUrl(resolvedProvider);
+        baseUrl != null && !baseUrl.isBlank()
+            ? ProviderDefinition.normaliseBaseUrl(stripTrailingSlash(baseUrl))
+            : defaultBaseUrl(resolvedProvider);
     String resolvedKeyEnv =
         apiKeyEnv != null && !apiKeyEnv.isBlank() ? apiKeyEnv : defaultKeyEnv(resolvedProvider);
     String resolvedModel = model != null && !model.isBlank() ? model : defaultModelFor(resolvedProvider, resolvedBaseUrl);

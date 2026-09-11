@@ -121,6 +121,14 @@ The built-in names are code; anything else is a definition the user owns, kept i
 - Definitions are validated before they are stored, and a definition that could not work is never
   selectable. Removing the provider currently in use is refused — the next turn would have nowhere to
   go — and switching away makes it removable.
+- **A definition is intent**: saving one also puts it in the list when the list has been narrowed,
+  and a definition found on disk but missing from the list is folded back in on load. Without that,
+  a provider the user just saved is invisible — the bug that made Save look broken.
+- **A base URL is a prefix**: an endpoint path in it (`/chat/completions`, `/v1/messages`) is
+  stripped wherever a base URL enters — a provider definition or the settings form — because ccj
+  appends that path itself, and sending it twice is a 404 that teaches nothing.
+- **An `apiKeyEnv` that holds a key** rather than the *name* of one is reported as exactly that
+  mistake, with the key redacted, instead of the bare "no API key" message.
 - **Removing a provider**: a definition the user made is deleted from `providers.json`. A built-in
   is an alias compiled into the agent, so there is nothing to delete — it simply leaves the list,
   and the list becomes **explicit**: `providers.json` records `"shown": [...]`, the providers that

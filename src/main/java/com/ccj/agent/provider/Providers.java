@@ -122,6 +122,16 @@ public final class Providers {
     if (fromEnv != null && !fromEnv.isBlank()) {
       return fromEnv.strip();
     }
+    if (looksLikeAKey(variable)) {
+      // A very easy mistake to make, and the raw "no API key" message would not explain it.
+      throw new IllegalArgumentException(
+          "no API key for provider '"
+              + name
+              + "': the apiKeyEnv setting holds what looks like an API key itself ("
+              + redact(variable)
+              + ") — put the key in the API key field and the *name* of an environment variable here,"
+              + " for example MY_RELAY_KEY");
+    }
     throw new IllegalArgumentException(
         "no API key for provider '"
             + name
@@ -154,6 +164,19 @@ public final class Providers {
         "no model configured: pass --model <name>, set CCJ_MODEL, or add \"model\" to the config file"
             + " — "
             + why);
+  }
+
+  private static boolean looksLikeAKey(String value) {
+    if (value == null) {
+      return false;
+    }
+    String trimmed = value.strip();
+    return trimmed.startsWith("sk-") || (!trimmed.equals(trimmed.toUpperCase()) && trimmed.length() > 32);
+  }
+
+  private static String redact(String value) {
+    String trimmed = value == null ? "" : value.strip();
+    return trimmed.length() <= 6 ? "***" : trimmed.substring(0, 3) + "***" + trimmed.substring(trimmed.length() - 3);
   }
 
   private static String requireApiKey(Config resolved, Map<String, String> env, String provider) {

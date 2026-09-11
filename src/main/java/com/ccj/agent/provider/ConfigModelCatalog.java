@@ -37,6 +37,12 @@ public final class ConfigModelCatalog implements ModelCatalog {
           continue;
         }
         ProviderDefinition definition = store == null ? null : store.find(name).orElse(null);
+        boolean builtIn = Providers.supported().stream().anyMatch(known -> known.equalsIgnoreCase(name));
+        if (definition == null && !builtIn) {
+          // A name that is neither defined nor built in: a leftover from a deleted definition.
+          // Skipping it is the honest answer — inventing an OpenAI provider for it would not be.
+          continue;
+        }
         String kind = definition != null ? definition.kind() : kindOf(name);
         String baseUrl = definition != null ? definition.baseUrl() : Config.defaultBaseUrl(kind);
         List<String> models =

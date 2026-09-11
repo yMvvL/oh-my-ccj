@@ -61,6 +61,9 @@ public final class ProviderStore {
     ProviderStore store = new ProviderStore(home);
     if (Files.isRegularFile(store.file)) {
       store.load();
+      if (store.healList()) {
+        store.write();
+      }
     }
     return store;
   }
@@ -192,6 +195,7 @@ public final class ProviderStore {
     if (!entries.isObject()) {
       return;
     }
+    boolean healed = false;
     entries
         .fields()
         .forEachRemaining(
@@ -214,6 +218,27 @@ public final class ProviderStore {
                 // An entry we cannot use is skipped: one broken definition must not hide the rest.
               }
             });
+  }
+
+  /**
+   * A definition the list does not mention is invisible, which no user wants: definitions written
+   * by an older build (or by a bug) are folded back into the explicit list instead of being lost.
+   */
+  private boolean healList() {
+    if (shown == null) {
+      return false;
+    }
+    boolean changed = false;
+    // The definition's own spelling, not the lower-cased key it is stored under: the list is shown
+    // to the user, and silently renaming their provider would be a surprise.
+    for (ProviderDefinition definition : definitions.values()) {
+      String name = definition.name();
+      if (shown.stream().noneMatch(known -> known.equalsIgnoreCase(name))) {
+        shown.add(name);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   private void write() {

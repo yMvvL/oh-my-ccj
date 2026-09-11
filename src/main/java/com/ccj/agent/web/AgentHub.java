@@ -436,6 +436,9 @@ public final class AgentHub implements AutoCloseable {
                 models)
             .requireValid();
     store.save(definition);
+    // Saving a definition is also saying "I want this provider": if the list is explicit, the new
+    // name has to join it, otherwise the catalogue never shows what was just saved.
+    ensureListed(definition.name());
     publish(
         "notice",
         Json.object().put("text", "provider '" + definition.name() + "' defined"));
@@ -467,6 +470,10 @@ public final class AgentHub implements AutoCloseable {
       store.setShown(remaining);
     } else {
       store.remove(clean);
+      List<String> stillShown = new ArrayList<>(store.shown());
+      if (stillShown.removeIf(known -> known.equalsIgnoreCase(clean))) {
+        store.setShown(stillShown);
+      }
     }
     publish("notice", Json.object().put("text", "provider '" + clean + "' deleted" + tail));
     publishStatus();
@@ -581,6 +588,17 @@ public final class AgentHub implements AutoCloseable {
                       catalog.providers().stream().map(ModelCatalog.ProviderInfo::name).toList())));
     }
     return name;
+  }
+
+  /** Adds a name to the explicit list, doing nothing while the list is still implicit. */
+  private void ensureListed(String name) {
+    ProviderStore store = requireProviderStore();
+    List<String> shown = new ArrayList<>(store.shown());
+    if (shown.isEmpty() || shown.stream().anyMatch(known -> known.equalsIgnoreCase(name))) {
+      return;
+    }
+    shown.add(name);
+    store.setShown(shown);
   }
 
   private ProviderStore requireProviderStore() {

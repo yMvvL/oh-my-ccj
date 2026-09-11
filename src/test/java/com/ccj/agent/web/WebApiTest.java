@@ -1249,6 +1249,46 @@ class WebApiTest {
     assertTrue(notBuiltIn.body().contains("not a built-in"), notBuiltIn.body());
   }
 
+  @Test
+  void aNewDefinitionJoinsAnExplicitListInsteadOfBeingInvisible() throws Exception {
+    // The reported bug: the user had narrowed the list, then defined a provider, and it never
+    // appeared — the definition was saved but the list did not mention it.
+    client.send(
+        HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=groq")).DELETE().build(),
+        HttpResponse.BodyHandlers.ofString());
+    assertFalse(providerNames(json("/api/models")).contains("groq"), "narrowed to begin with");
+
+    JsonNode added =
+        postJson(
+            "/api/providers",
+            "{\"name\":\"myrelay\",\"kind\":\"openai\",\"baseUrl\":\"http://127.0.0.1:9/v1\",\"models\":\"m1\"}");
+
+    assertTrue(providerNames(added).contains("myrelay"), "saved and listed: " + added);
+    assertTrue(providerStore.shown().contains("myrelay"), "and in the explicit list");
+    assertTrue(providerNames(json("/api/models")).contains("myrelay"), "still there on the next read");
+  }
+
+  @Test
+  void deletingADefinitionAlsoLeavesTheExplicitList() throws Exception {
+    // Narrow the list first, so "the list" is a real thing rather than the implicit everything.
+    client.send(
+        HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=groq")).DELETE().build(),
+        HttpResponse.BodyHandlers.ofString());
+    postJson(
+        "/api/providers",
+        "{\"name\":\"mine\",\"kind\":\"openai\",\"baseUrl\":\"http://127.0.0.1:9/v1\",\"models\":\"m\"}");
+    assertTrue(providerStore.shown().contains("mine"), "a definition joins the list: " + providerStore.shown());
+
+    client.send(
+        HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=mine")).DELETE().build(),
+        HttpResponse.BodyHandlers.ofString());
+
+    assertFalse(providerStore.shown().contains("mine"), "a deleted name must not linger");
+    assertFalse(
+        providerNames(json("/api/models")).contains("mine"),
+        "and must not come back as a phantom built-in");
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private static Message.Assistant call(String name, String field, String value) {

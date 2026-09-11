@@ -96,4 +96,22 @@ class ProviderStoreTest {
     assertFalse(store.find("other").isPresent());
     assertFalse(store.find(null).isPresent());
   }
+
+  @Test
+  void aDefinitionMissingFromAnExplicitListIsFoldedBackIn() throws IOException {
+    // What the buggy build left behind: a definition on disk that the list never mentions.
+    Files.writeString(
+        tmp.resolve("providers.json"),
+        """
+        {"shown": ["deepseek"],
+         "providers": {"OpenCode": {"kind": "openai", "baseUrl": "https://x/v1", "models": ["m"]}}}
+        """);
+
+    ProviderStore store = ProviderStore.open(tmp);
+
+    assertEquals(List.of("deepseek", "OpenCode"), store.shown(), "a definition is intent to have it");
+    assertTrue(
+        Files.readString(tmp.resolve("providers.json")).contains("OpenCode"),
+        "and the repaired list is written down");
+  }
 }
