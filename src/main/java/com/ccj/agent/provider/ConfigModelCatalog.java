@@ -30,7 +30,7 @@ public final class ConfigModelCatalog implements ModelCatalog {
     List<ProviderInfo> all = new ArrayList<>();
     Set<String> seen = new LinkedHashSet<>();
     for (String name : Providers.supported()) {
-      if (!seen.add(name)) {
+      if (!seen.add(name) || (store != null && store.isHidden(name))) {
         continue;
       }
       String kind =
@@ -47,7 +47,7 @@ public final class ConfigModelCatalog implements ModelCatalog {
     }
     if (store != null) {
       for (ProviderDefinition definition : store.list()) {
-        if (seen.add(definition.name())) {
+        if (seen.add(definition.name()) && !store.isHidden(definition.name())) {
           all.add(
               new ProviderInfo(
                   definition.name(),

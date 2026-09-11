@@ -393,6 +393,10 @@ public final class AgentHub implements AutoCloseable {
       entry.put("model", model.model());
       entry.put("source", model.source());
     }
+    ArrayNode hiddenNames = root.putArray("hidden");
+    if (settings.providerStore() != null) {
+      settings.providerStore().hidden().forEach(hiddenNames::add);
+    }
     return root;
   }
 
@@ -432,16 +436,54 @@ public final class AgentHub implements AutoCloseable {
     return modelsJson();
   }
 
-  /** Removes a definition. The active provider is protected: removing it would break the next turn. */
+  /**
+   * Removes a provider from the picker.
+   *
+   * <p>Two kinds exist and only one of them can be deleted: a provider the user defined is deleted,
+   * a built-in one — an alias compiled into the agent — has nothing to delete, so it is hidden. The
+   * gesture is the same in both cases; the notice says which happened, and a hidden name can be
+   * restored.
+   */
   public ObjectNode removeProvider(String name) {
     ProviderStore store = requireProviderStore();
-    String clean = name == null ? "" : name.strip();
-    if (config.provider() != null && config.provider().equalsIgnoreCase(clean)) {
-      throw new IllegalArgumentException(
-          "cannot remove the provider in use ('" + clean + "'); switch to another one first");
+    String clean = knownProvider(name);
+    boolean defined = store.find(clean).isPresent();
+    boolean inUse = config.provider() != null && config.provider().equalsIgnoreCase(clean);
+    if (defined) {
+      store.remove(clean);
+      publish(
+          "notice",
+          Json.object()
+              .put(
+                  "text",
+                  "provider '"
+                      + clean
+                      + "' deleted"
+                      + (inUse
+                          ? " — it was the one in use; this session keeps running, but choose another"
+                              + " provider before the next restart"
+                          : "")));
+    } else {
+      store.hide(clean);
+      publish(
+          "notice",
+          Json.object()
+              .put(
+                  "text",
+                  "provider '"
+                      + clean
+                      + "' hidden (it is built in, so it cannot be deleted; restore it from Settings)"));
     }
-    store.remove(clean);
-    publish("notice", Json.object().put("text", "provider '" + clean + "' removed"));
+    publishStatus();
+    return modelsJson();
+  }
+
+  /** Brings a hidden built-in back to the picker. */
+  public ObjectNode restoreProvider(String name) {
+    ProviderStore store = requireProviderStore();
+    String clean = name == null ? "" : name.strip();
+    store.show(clean);
+    publish("notice", Json.object().put("text", "provider '" + clean + "' restored"));
     publishStatus();
     return modelsJson();
   }

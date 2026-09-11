@@ -1357,3 +1357,18 @@ body {
   .switch, .switch::after, .hit-bar-fill { transition: none; }
   .btn:active:not(:disabled) { transform: none; }
 }
+
+/* Providers the user removed from the picker: still valid, so the way back has
+ * to be visible rather than implied. */
+.picker-hidden {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.picker-hidden-names { color: var(--fg); overflow-wrap: anywhere; }
+
+.hidden-item .provider-badge.hidden { color: var(--warn); border-color: var(--warn); }

@@ -963,31 +963,24 @@ class WebApiTest {
   }
 
   @Test
-  void removingAProviderIsRefusedWhileItIsInUse() throws Exception {
+  void removingTheProviderInUseWorksAndSaysWhatItMeans() throws Exception {
     postJson(
         "/api/providers",
         "{\"name\":\"myrelay\",\"kind\":\"openai\",\"baseUrl\":\"http://127.0.0.1:1/v1\",\"models\":\"m\"}");
     postJson("/api/config", "{\"provider\":\"myrelay\",\"model\":\"m\",\"baseUrl\":\"http://127.0.0.1:1/v1\"}");
 
-    HttpResponse<String> refusal =
-        client.send(
-            HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=myrelay"))
-                .DELETE()
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(400, refusal.statusCode(), refusal.body());
-    assertTrue(refusal.body().contains("in use"), refusal.body());
-
-    // switching away makes it removable
-    postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"gpt-4o-mini\"}");
     HttpResponse<String> removed =
         client.send(
             HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=myrelay"))
                 .DELETE()
                 .build(),
             HttpResponse.BodyHandlers.ofString());
+
     assertEquals(200, removed.statusCode(), removed.body());
-    assertTrue(providerStore.list().isEmpty());
+    assertTrue(providerStore.list().isEmpty(), "the definition is gone");
+    assertTrue(
+        json("/api/status").path("configured").asBoolean(),
+        "the running session keeps its provider: it was built when it was chosen");
   }
 
   @Test
@@ -1153,6 +1146,74 @@ class WebApiTest {
     assertEquals(List.of(), modelsOf(providerOf(json("/api/models"), "openai")));
   }
 
+  @Test
+  void aBuiltInProviderCanBeRemovedFromThePickerAndBroughtBack() throws Exception {
+    assertTrue(providerNames(json("/api/models")).contains("groq"), "there to begin with");
+
+    HttpResponse<String> hidden =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=groq")).DELETE().build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, hidden.statusCode(), hidden.body());
+    assertFalse(providerNames(Json.parse(hidden.body())).contains("groq"), "gone from the picker");
+    assertEquals(List.of("groq"), hiddenNames(Json.parse(hidden.body())), "and listed as hidden");
+    assertFalse(providerNames(json("/api/models")).contains("groq"), "still gone on the next read");
+
+    // it is an alias compiled into the agent, so it is hidden rather than deleted, and can come back
+    HttpResponse<String> restored =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/providers"))
+                .header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString("{\"name\":\"groq\"}"))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, restored.statusCode(), restored.body());
+    assertTrue(providerNames(Json.parse(restored.body())).contains("groq"));
+    assertEquals(List.of(), hiddenNames(Json.parse(restored.body())));
+  }
+
+  @Test
+  void aUserDefinedProviderIsDeletedRatherThanHidden() throws Exception {
+    postJson(
+        "/api/providers",
+        "{\"name\":\"mine\",\"kind\":\"openai\",\"baseUrl\":\"http://127.0.0.1:9/v1\",\"models\":\"m\"}");
+    assertTrue(providerNames(json("/api/models")).contains("mine"));
+
+    HttpResponse<String> removed =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=mine")).DELETE().build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, removed.statusCode(), removed.body());
+    assertFalse(providerNames(Json.parse(removed.body())).contains("mine"));
+    assertEquals(List.of(), hiddenNames(Json.parse(removed.body())), "deleted, not hidden");
+    assertTrue(providerStore.list().isEmpty(), "the definition is gone");
+    assertFalse(providerStore.isHidden("mine"));
+  }
+
+  @Test
+  void aHiddenProviderStillWorksWhenItIsTheOneConfigured() throws Exception {
+    client.send(
+        HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=openai")).DELETE().build(),
+        HttpResponse.BodyHandlers.ofString());
+
+    // Hiding is a picker decision, not a capability removal: the configured provider keeps working.
+    assertEquals("openai", json("/api/status").path("provider").asText());
+    assertTrue(json("/api/status").path("configured").asBoolean());
+  }
+
+  @Test
+  void removingAnUnknownProviderIsRejected() throws Exception {
+    HttpResponse<String> response =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=nope")).DELETE().build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(400, response.statusCode(), response.body());
+    assertTrue(response.body().contains("no provider named"), response.body());
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private static Message.Assistant call(String name, String field, String value) {
@@ -1243,6 +1304,18 @@ class WebApiTest {
     List<String> levels = new ArrayList<>();
     config.path("reasoningLevels").forEach(level -> levels.add(level.asText()));
     return levels;
+  }
+
+  private static List<String> providerNames(JsonNode catalog) {
+    List<String> names = new ArrayList<>();
+    catalog.path("providers").forEach(entry -> names.add(entry.path("name").asText()));
+    return names;
+  }
+
+  private static List<String> hiddenNames(JsonNode catalog) {
+    List<String> names = new ArrayList<>();
+    catalog.path("hidden").forEach(entry -> names.add(entry.asText()));
+    return names;
   }
 
   private static JsonNode providerOf(JsonNode catalog, String name) {

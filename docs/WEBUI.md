@@ -36,7 +36,8 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `GET`/`POST` | `/api/providers` | list or define a provider (`{name, kind, baseUrl, apiKeyEnv, models}`) |
 | `POST` | `/api/models` | remember a model for a provider (`{provider, model}`), built-ins included |
 | `DELETE` | `/api/models?provider=&model=` | forget a model (the one in use included — see below) |
-| `DELETE` | `/api/providers?name=...` | remove a definition; the one in use is protected |
+| `DELETE` | `/api/providers?name=...` | remove a provider: a definition is deleted, a built-in is hidden |
+| `PUT` | `/api/providers` | `{"name": "..."}` — restore a hidden built-in |
 | `GET` | `/api/config` | what the settings form needs: current values, whether a key exists, where it is stored |
 | `POST` | `/api/config` | save provider/model/key settings and switch to them immediately |
 | `POST` | `/api/config/test` | send one tiny request with the posted settings **without saving** |
@@ -120,6 +121,14 @@ The built-in names are code; anything else is a definition the user owns, kept i
 - Definitions are validated before they are stored, and a definition that could not work is never
   selectable. Removing the provider currently in use is refused — the next turn would have nowhere to
   go — and switching away makes it removable.
+- **Removing a provider**: a provider the user defined is deleted from `providers.json`; a built-in
+  one is an alias compiled into the agent, so there is nothing to delete and it is **hidden**
+  instead. Both are the same gesture in the UI, the notice says which happened, and hidden names are
+  reported in `GET /api/models` as `"hidden": [...]` so they can be restored (`PUT /api/providers`).
+  Hiding is a picker decision, never a capability removal: a config naming a hidden provider keeps
+  working, which is why hiding the provider in use is allowed. Deleting a definition that is in use
+  is also allowed — the running session keeps the provider it built — but the notice warns to choose
+  another before the next restart.
 - Model lists are editable **per provider, built-ins included**: a hand-typed model is not a
   one-off, and the list a picker offers must survive the next render. The first edit records the
   whole list, after which it is authoritative — that is what makes a removal stick, and what makes

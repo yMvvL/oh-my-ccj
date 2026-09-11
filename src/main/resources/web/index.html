@@ -140,6 +140,7 @@
                   <button type="button" class="btn sm" id="picker-provider-add" data-role="addProvider">Add provider…</button>
                   <p class="picker-foot-hint">Providers are defined on the server; this opens the same
                     form as Settings, on Your providers.</p>
+                  <p class="picker-hidden" id="picker-hidden-note" data-role="hiddenNote" hidden></p>
                 </div>
               </div>
               <div class="picker-col">
@@ -247,6 +248,7 @@
                             data-role="addProvider">Add provider…</button>
                     <p class="picker-foot-hint">Providers are defined on the server; this opens the same
                       form as Settings, on Your providers.</p>
+                    <p class="picker-hidden" id="cfg-picker-hidden-note" data-role="hiddenNote" hidden></p>
                   </div>
                 </div>
                 <div class="picker-col">
@@ -329,6 +331,13 @@
         <ul class="provider-list" id="cfg-provider-list">
           <li class="muted">Loading…</li>
         </ul>
+
+        <section class="provider-section" id="cfg-hidden-section" hidden>
+          <h3 class="settings-subhead">Hidden providers</h3>
+          <p class="field-hint">Built-in providers you removed from the picker. They still work if a
+            config names them; restore one to offer it again.</p>
+          <ul class="provider-list" id="cfg-hidden-list"></ul>
+        </section>
 
         <div class="provider-add">
           <button type="button" class="btn" id="cfg-provider-add-toggle" aria-expanded="false"

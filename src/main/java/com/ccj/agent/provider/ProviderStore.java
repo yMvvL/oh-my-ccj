@@ -42,6 +42,13 @@ public final class ProviderStore {
    */
   private final Map<String, List<String>> modelLists = new LinkedHashMap<>();
 
+  /**
+   * Built-in providers the user removed from the picker. Hiding is the only thing that can be done
+   * to them — they are code, not configuration — and it is recorded rather than applied, so a
+   * hidden alias can be brought back instead of being gone for good.
+   */
+  private final java.util.Set<String> hidden = new java.util.LinkedHashSet<>();
+
   private ProviderStore(Path home) {
     this.home = home.toAbsolutePath().normalize();
     this.file = this.home.resolve(FILE_NAME);
@@ -66,6 +73,32 @@ public final class ProviderStore {
    * "recorded as empty" — the difference is what lets a user remove the last model and have it stay
    * removed instead of the provider's default list reappearing.
    */
+  /** Built-in names the user hid, lower-cased. */
+  public synchronized List<String> hidden() {
+    return List.copyOf(hidden);
+  }
+
+  public synchronized boolean isHidden(String provider) {
+    return provider != null && hidden.contains(provider.strip().toLowerCase());
+  }
+
+  public synchronized void hide(String provider) {
+    String key = provider == null ? "" : provider.strip().toLowerCase();
+    if (key.isEmpty()) {
+      throw new IllegalArgumentException("a provider name is required");
+    }
+    hidden.add(key);
+    write();
+  }
+
+  public synchronized void show(String provider) {
+    String key = provider == null ? "" : provider.strip().toLowerCase();
+    if (!hidden.remove(key)) {
+      throw new IllegalArgumentException("'" + key + "' is not hidden");
+    }
+    write();
+  }
+
   public synchronized java.util.Optional<List<String>> modelsFor(String provider) {
     if (provider == null) {
       return java.util.Optional.empty();
@@ -130,6 +163,10 @@ public final class ProviderStore {
     } catch (IOException e) {
       throw new UncheckedIOException("cannot read " + file, e);
     }
+    JsonNode hiddenNames = root.path("hidden");
+    if (hiddenNames.isArray()) {
+      hiddenNames.forEach(name -> hidden.add(name.asText().toLowerCase()));
+    }
     JsonNode models = root.path("models");
     if (models.isObject()) {
       models
@@ -174,6 +211,10 @@ public final class ProviderStore {
 
   private void write() {
     ObjectNode root = Json.object();
+    if (!hidden.isEmpty()) {
+      ArrayNode hiddenNames = root.putArray("hidden");
+      hidden.forEach(hiddenNames::add);
+    }
     ObjectNode models = root.putObject("models");
     modelLists.forEach(
         (provider, list) -> {

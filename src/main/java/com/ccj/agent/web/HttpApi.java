@@ -280,11 +280,15 @@ public final class HttpApi implements AutoCloseable {
       respond(exchange, 200, hub.removeProvider(queryParam(exchange, "name")));
       return;
     }
+    if ("PUT".equals(method)) {
+      respond(exchange, 200, hub.restoreProvider(Json.parse(readBody(exchange)).path("name").asText("")));
+      return;
+    }
     if ("GET".equals(method)) {
       respond(exchange, 200, hub.modelsJson());
       return;
     }
-    error(exchange, 405, "GET, POST or DELETE required");
+    error(exchange, 405, "GET, POST, PUT or DELETE required");
   }
 
   private void config(HttpExchange exchange) throws IOException {
