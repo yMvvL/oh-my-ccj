@@ -70,7 +70,7 @@ needs no key, no network and no second process. It is the fastest way to watch t
 ## Web UI
 
 ```bash
-ccj                       # the default: serve http://127.0.0.1:8787 and open it
+ccj                       # the default: serve http://127.0.0.1:6767 and open it
 ccj --no-open             # for scripts: serve it without launching a browser
 ccj --repl                # the terminal front end instead
 ```
@@ -140,7 +140,7 @@ Sessions:
           --list-sessions      print sessions and exit
 
 Web:
-          --port <n>           web UI port (default 8787)
+          --port <n>           web UI port (default 6767)
           --host <addr>        bind address (default 127.0.0.1; anything else needs --web-token)
           --web-token <token>  require this token from every web request
 
@@ -226,7 +226,7 @@ exceptions all come back as error results the model can read and correct.
 Built-in names are compiled in; everything else is yours:
 
 ```bash
-curl -X POST localhost:8787/api/providers -H 'content-type: application/json' -d '{
+curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d '{
   "name": "myrelay", "kind": "openai",
   "baseUrl": "https://relay.example.com/v1",
   "apiKeyEnv": "MY_KEY", "models": ["deepseek-v4-flash"]}'

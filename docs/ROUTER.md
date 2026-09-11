@@ -10,7 +10,7 @@ Anything that speaks the OpenAI chat-completions API is already usable, today, w
 
 ```bash
 # from the settings panel, or:
-curl -X POST localhost:8787/api/providers -H 'content-type: application/json' -d '{
+curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d '{
   "name": "router",
   "kind": "openai",
   "baseUrl": "http://localhost:9090/v1",

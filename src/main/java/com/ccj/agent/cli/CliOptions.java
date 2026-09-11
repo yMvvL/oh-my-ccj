@@ -293,7 +293,7 @@ public record CliOptions(
               --workspace <name>   use a workspace: its directory and its own sessions
 
         Web:
-              --port <n>           web UI port (default 8787)
+              --port <n>           web UI port (default 6767)
               --host <addr>        bind address (default 127.0.0.1; anything else needs --web-token)
               --web-token <token>  require this token from every web request
 

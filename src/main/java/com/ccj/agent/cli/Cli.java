@@ -28,6 +28,7 @@ import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -56,7 +57,7 @@ public final class Cli {
 
   public static final String VERSION = "0.1.0";
   public static final String PROMPT = "ccj> ";
-  public static final int DEFAULT_WEB_PORT = 8787;
+  public static final int DEFAULT_WEB_PORT = 6767;
 
   private static final DateTimeFormatter TIMESTAMP =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -364,6 +365,23 @@ public final class Cli {
     return SessionStore.create(sessionsDir);
   }
 
+  /**
+   * The first port at or after {@code start} that nothing is listening on, or -1 when the search
+   * finds nothing useful — a suggestion is only worth printing if it is actually free.
+   */
+  static int freePortFrom(int start) {
+    for (int candidate = Math.max(1, start); candidate < start + 50 && candidate < 65536; candidate++) {
+      try (ServerSocket probe = new ServerSocket()) {
+        probe.setReuseAddress(true);
+        probe.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), candidate), 1);
+        return candidate;
+      } catch (IOException taken) {
+        // Occupied; try the next one.
+      }
+    }
+    return -1;
+  }
+
   private static Config demoConfig() {
     return new Config(
         "demo", "demo", null, null, null, null, null, null, null, null, null, null);
@@ -452,6 +470,11 @@ public final class Cli {
       return 0;
     } catch (IOException e) {
       err.println("error: cannot serve " + host + ":" + port + " — " + message(e));
+      int free = freePortFrom(port + 1);
+      err.println(
+          "  something else is already on that port;"
+              + (free > 0 ? " try --port " + free : " pass --port <n>")
+              + " to serve this UI somewhere else");
       err.flush();
       return 1;
     } catch (InterruptedException e) {
