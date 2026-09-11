@@ -109,6 +109,8 @@ public final class HttpApi implements AutoCloseable {
         case "/api/approval" -> approval(exchange);
         case "/api/auto-approve" -> autoApprove(exchange);
         case "/api/session" -> session(exchange);
+        case "/api/workspaces" -> workspaces(exchange);
+        case "/api/workspace" -> workspace(exchange);
         case "/api/config" -> config(exchange);
         case "/api/config/test" -> configTest(exchange);
         default -> error(exchange, 404, "no such endpoint: " + path);
@@ -168,6 +170,37 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     respond(exchange, 200, Json.object().put("resolved", true).put("allow", allow));
+  }
+
+  private void workspaces(HttpExchange exchange) throws IOException {
+    String method = exchange.getRequestMethod();
+    if ("GET".equals(method)) {
+      respond(exchange, 200, hub.workspacesJson());
+      return;
+    }
+    if (!"POST".equals(method)) {
+      error(exchange, 405, "GET or POST required");
+      return;
+    }
+    JsonNode body = Json.parse(readBody(exchange));
+    respond(
+        exchange,
+        200,
+        hub.addWorkspace(body.path("name").asText(""), body.path("path").asText("")));
+  }
+
+  private void workspace(HttpExchange exchange) throws IOException {
+    String method = exchange.getRequestMethod();
+    if ("POST".equals(method)) {
+      JsonNode body = Json.parse(readBody(exchange));
+      respond(exchange, 200, hub.switchWorkspace(body.path("name").asText("")));
+      return;
+    }
+    if ("DELETE".equals(method)) {
+      respond(exchange, 200, hub.removeWorkspace(queryParam(exchange, "name")));
+      return;
+    }
+    error(exchange, 405, "POST or DELETE required");
   }
 
   private void config(HttpExchange exchange) throws IOException {

@@ -50,6 +50,14 @@
 
   function hasContent(node) { return !!(node && node.firstChild); }
 
+  /* cwd is the workspace path (the contract says so), so its last segment is
+   * the workspace name — a fallback for a server that has not sent
+   * status.workspace yet, never a replacement for it. */
+  function baseName(path) {
+    const parts = str(path).replace(/[\\/]+$/, '').split(/[\\/]/);
+    return parts[parts.length - 1] || str(path);
+  }
+
   // ------------------------------------------------------------- transport
 
   async function request(url, options) {
@@ -89,8 +97,9 @@
     connPill: $('conn-pill'),
     chipProvider: $('chip-provider'),
     chipModel: $('chip-model'),
-    chipBaseUrl: $('chip-baseurl'),
     chipSession: $('chip-session'),
+    btnWorkspace: $('btn-workspace'),
+    wsName: $('ws-name'),
     live: $('live'),
     liveText: $('live-text'),
     btnNew: $('btn-new'),
@@ -110,6 +119,8 @@
     toolList: $('tool-list'),
     usage: $('usage'),
     uHit: $('u-hit'),
+    uHitBar: $('u-hit-bar'),
+    uHitFill: $('u-hit-fill'),
     uHint: $('u-hint'),
     uAlert: $('u-alert'),
     uTurns: $('u-turns'),
@@ -122,9 +133,21 @@
     uTools: $('u-tools'),
     uElapsed: $('u-elapsed'),
     sessionInfo: $('session-info'),
+    workspaceInfo: $('workspace-info'),
     overlay: $('sessions-overlay'),
     sessionsBody: $('sessions-body'),
     sessionsClose: $('sessions-close'),
+    workspaceOverlay: $('workspace-overlay'),
+    workspaceList: $('workspace-list'),
+    workspaceClose: $('workspace-close'),
+    workspaceError: $('workspace-error'),
+    workspaceAddToggle: $('workspace-add-toggle'),
+    workspaceAddForm: $('workspace-add-form'),
+    workspaceSave: $('workspace-save'),
+    wsNewName: $('ws-new-name'),
+    wsNewPath: $('ws-new-path'),
+    wsNameError: $('ws-name-error'),
+    wsPathError: $('ws-path-error'),
     settingsOverlay: $('settings-overlay'),
     settingsForm: $('settings-form'),
     settingsClose: $('settings-close'),
@@ -163,6 +186,7 @@
     approvals: new Map(),  // approval id -> record
     stick: true,           // transcript pinned to the bottom
     status: null,
+    workspace: null,       // {name, path} of the active workspace
     configured: null,      // status.configured: null until known, then boolean
     sessionId: '',         // id of the session the transcript currently shows
     historyPromise: null,  // in-flight history load for the initial page
@@ -225,12 +249,26 @@
     if (node && node.parentNode) { node.parentNode.removeChild(node); }
   }
 
+  function workspaceName() {
+    return state.workspace && state.workspace.name ? state.workspace.name : '';
+  }
+
   /* The empty transcript needs a line that is true in both states: before the
-   * stream opens it is connecting, afterwards it is simply waiting for input. */
+   * stream opens it is connecting, afterwards it is simply waiting for input.
+   * The workspace name in front says *where* that input will land — switching
+   * workspaces must be visible before the first message. */
   function placeholderText() {
-    return state.source && state.source.readyState === EventSource.OPEN
-      ? 'Connected — send a message to start.'
-      : 'Connecting to ccj…';
+    const ws = workspaceName();
+    const connected = state.source && state.source.readyState === EventSource.OPEN;
+    if (!ws) { return connected ? 'Connected — send a message to start.' : 'Connecting to ccj…'; }
+    return connected ? ws + ' · send a message to start' : 'Connecting to ' + ws + '…';
+  }
+
+  /* The placeholder is a plain text node the live stream also rewrites on
+   * open; this keeps it in step when only the workspace changed. */
+  function refreshPlaceholder() {
+    const node = dom.transcript.querySelector('.placeholder');
+    if (node) { node.textContent = placeholderText(); }
   }
 
   function showPlaceholder() {
@@ -352,22 +390,19 @@
       dom.chipProvider.title = 'No model configured — open Settings.';
       dom.chipProvider.classList.add('chip-warn');
       dom.chipModel.hidden = true;
-      dom.chipBaseUrl.hidden = true;
     } else {
       dom.chipProvider.classList.remove('chip-warn');
       dom.chipModel.hidden = false;
-      dom.chipBaseUrl.hidden = false;
       if ('provider' in status) {
         dom.chipProvider.textContent = str(status.provider) || 'provider';
         dom.chipProvider.title = 'provider: ' + str(status.provider);
       }
-      if ('model' in status) {
+      if ('model' in status || 'baseUrl' in status) {
         dom.chipModel.textContent = str(status.model) || 'model';
-        dom.chipModel.title = 'model: ' + str(status.model);
-      }
-      if ('baseUrl' in status) {
-        dom.chipBaseUrl.textContent = clip(status.baseUrl, 40) || 'base URL';
-        dom.chipBaseUrl.title = 'base URL: ' + str(status.baseUrl);
+        // The base URL lives in this tooltip instead of a fourth chip: it is
+        // long, rarely changes, and the settings panel shows it in full.
+        dom.chipModel.title = 'model: ' + (str(status.model) || '—')
+          + (status.baseUrl ? '\nbase URL: ' + str(status.baseUrl) : '');
       }
     }
 
@@ -380,20 +415,74 @@
     }
   }
 
-  function renderSessionInfo(status) {
-    const rows = [
-      ['version', str(status.version) || '—'],
-      ['cwd', str(status.cwd) || '—'],
-      ['session', str(status.sessionId) || '—'],
-      ['messages', isFinite(Number(status.messageCount)) ? String(status.messageCount) : '—']
-    ];
-    dom.sessionInfo.textContent = '';
+  /* A long path must be allowed to wrap at its separators, not inside a
+   * directory name: each `/` becomes a real break opportunity, so the panel
+   * reads "…/Desktop/" + "Workspace/oh-my-ccj" instead of cutting a name in
+   * half. The text itself is unchanged — <wbr> carries no character. */
+  function appendPathValue(node, text) {
+    const value = str(text);
+    value.split('/').forEach(function (part, i) {
+      if (i) {
+        node.appendChild(document.createTextNode('/'));
+        node.appendChild(document.createElement('wbr'));
+      }
+      if (part) { node.appendChild(document.createTextNode(part)); }
+    });
+    if (!value) { node.textContent = '—'; }
+  }
+
+  function fillKV(node, rows) {
+    node.textContent = '';
     rows.forEach(function (row) {
-      dom.sessionInfo.appendChild(el('span', 'k', row[0]));
-      dom.sessionInfo.appendChild(el('span', 'v', row[1]));
+      node.appendChild(el('span', 'k', row[0]));
+      const value = el('span', 'v');
+      appendPathValue(value, row[1]);
+      node.appendChild(value);
     });
   }
 
+  /* The header control and the WORKSPACE panel block read from one place, so
+   * the same name is never spelled two ways on screen. */
+  function renderWorkspace(ws) {
+    if (ws && typeof ws === 'object' && ('name' in ws || 'path' in ws)) {
+      state.workspace = { name: str(ws.name), path: str(ws.path) };
+    }
+    const w = state.workspace || { name: '', path: '' };
+    dom.wsName.textContent = w.name || 'workspace';
+    dom.btnWorkspace.title = w.path
+      ? w.name + ' — ' + w.path + '\nClick to switch workspace'
+      : 'Switch workspace';
+    fillKV(dom.workspaceInfo, [
+      ['name', w.name || '—'],
+      ['path', w.path || '—']
+    ]);
+    refreshPlaceholder();
+  }
+
+  /* status.workspace is authoritative; cwd is the same directory and only
+   * stands in until that field arrives (or if an older server omits it). */
+  function applyWorkspace(status) {
+    if (status.workspace && typeof status.workspace === 'object') {
+      renderWorkspace(status.workspace);
+    } else if (!state.workspace && status.cwd) {
+      renderWorkspace({ name: baseName(status.cwd), path: str(status.cwd) });
+    }
+  }
+
+  function renderSessionInfo(status) {
+    const ws = state.workspace && state.workspace.path
+      ? state.workspace.path
+      : (str(status.cwd) || '—');
+    fillKV(dom.sessionInfo, [
+      ['version', str(status.version) || '—'],
+      ['workspace', ws],
+      ['session', str(status.sessionId) || '—'],
+      ['messages', isFinite(Number(status.messageCount)) ? String(status.messageCount) : '—']
+    ]);
+  }
+
+  /* One line per tool: the panel is a legend, not the documentation. The full
+   * first line of the description lives in the row's tooltip. */
   function renderTools(tools) {
     dom.toolList.textContent = '';
     if (!Array.isArray(tools) || !tools.length) {
@@ -401,10 +490,14 @@
       return;
     }
     tools.forEach(function (tool) {
-      const li = el('li');
-      li.appendChild(el('span', 'name', str(tool && tool.name)));
+      const name = str(tool && tool.name);
       const desc = firstLine(str(tool && tool.description));
-      if (desc) { li.appendChild(el('span', 'desc', desc)); }
+      const li = el('li');
+      li.appendChild(el('span', 'name', name));
+      if (desc) {
+        li.appendChild(el('span', 'desc', desc));
+        li.title = (name ? name + ' — ' : '') + desc;
+      }
       dom.toolList.appendChild(li);
     });
   }
@@ -446,12 +539,27 @@
     node.classList.toggle('bad', !!bad);
   }
 
+  /* The bar is a second reading of the same number, never a different one:
+   * a reported 0% fills nothing (and still prints "0.0%"), an unreported rate
+   * is an empty *unfilled* bar plus the hint below it — not a zero. */
+  function setHitBar(rate) {
+    const known = rate !== null && rate !== undefined && isFinite(Number(rate));
+    const pct = known ? Math.min(100, Math.max(0, Number(rate) * 100)) : 0;
+    dom.uHitFill.style.width = pct.toFixed(1) + '%';
+    dom.uHitFill.classList.toggle('na', !known);
+    dom.uHitBar.classList.toggle('na', !known);
+    dom.uHitBar.setAttribute('aria-label', known
+      ? 'cache hit rate ' + fmtHitRate(rate)
+      : 'cache hit rate not reported');
+  }
+
   function resetUsage() {
     state.usage = null;
     [dom.uTurns, dom.uSteps, dom.uIn, dom.uOut, dom.uCached, dom.uTools, dom.uErrors, dom.uElapsed]
       .forEach(function (node) { setUsageCell(node, '—', false); });
     dom.uHit.textContent = '—';
     dom.uHit.classList.add('na');
+    setHitBar(null);
     dom.uHint.hidden = true;
     dom.uAlert.hidden = true;
     dom.uAlert.textContent = '';
@@ -468,6 +576,7 @@
     const hit = fmtHitRate(u.cacheHitRate);
     dom.uHit.textContent = hit;
     dom.uHit.classList.toggle('na', hit === 'n/a');
+    setHitBar(u.cacheHitRate);
     dom.uHint.hidden = !noCache;
 
     setUsageCell(dom.uTurns, fmtCount(u.turns), false);
@@ -493,6 +602,7 @@
   function applyStatus(status) {
     if (!status || typeof status !== 'object') { return; }
     state.status = status;
+    applyWorkspace(status);
     if ('sessionId' in status) { noteSession(str(status.sessionId)); }
     setChips(status);
     renderSessionInfo(status);
@@ -730,7 +840,7 @@
       // running right now.
       if (!state.replaying && !card.counted) { card.counted = true; state.runningTools += 1; }
       card.running = true;
-      card.root.classList.remove('failed');
+      card.root.classList.remove('failed', 'ok');
       card.spinner.hidden = false;
       card.mark.hidden = true;
       card.meta.textContent = 'running…';
@@ -745,6 +855,7 @@
       card.mark.className = 'tool-mark ' + (ok ? 'ok' : 'fail');
       card.root.classList.remove('running');
       card.root.classList.toggle('failed', !ok);
+      card.root.classList.toggle('ok', ok);
       const elapsed = msLabel(ev.elapsedMs);
       card.meta.textContent = (ok ? 'done' : 'failed') + (elapsed ? ' · ' + elapsed : '');
       if (!card.output) { renderToolOutput(card, ev.output); }
@@ -1047,6 +1158,173 @@
     }
   }
 
+  // ----------------------------------------------------------- workspaces
+
+  function clearWorkspaceErrors() {
+    [dom.workspaceError, dom.wsNameError, dom.wsPathError].forEach(function (node) {
+      node.textContent = '';
+      node.hidden = true;
+    });
+  }
+
+  /* One 400 message per refusal, and the field it belongs to is decided here:
+   * a bad or duplicate name lands under Name (the registry is keyed by name),
+   * an unusable directory under Path, anything else above the list. */
+  function showWorkspaceError(message) {
+    const text = str(message) || 'Workspace request failed.';
+    if (/path|director|folder|\bdir\b|absolute|usable|permission|denied|creat/i.test(text)) {
+      fieldError(dom.wsPathError, text);
+      dom.wsNewPath.focus();
+    } else if (/name|duplicate|already|exist|taken|invalid|reserved|blank/i.test(text)) {
+      fieldError(dom.wsNameError, text);
+      dom.wsNewName.focus();
+    } else {
+      dom.workspaceError.textContent = text;
+      dom.workspaceError.hidden = false;
+    }
+  }
+
+  function setAddFormOpen(open) {
+    dom.workspaceAddForm.hidden = !open;
+    dom.workspaceAddToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  function closeWorkspaces() {
+    if (dom.workspaceOverlay.hidden) { return; }
+    dom.workspaceOverlay.hidden = true;
+    dom.btnWorkspace.focus();
+  }
+
+  function renderWorkspaces(payload, focusName) {
+    const list = payload && Array.isArray(payload.workspaces) ? payload.workspaces : [];
+    const active = str(payload && payload.active);
+    dom.workspaceList.textContent = '';
+    if (!list.length) {
+      dom.workspaceList.appendChild(el('li', 'muted', 'No workspaces reported.'));
+      return;
+    }
+    let focusTarget = null;
+    list.forEach(function (item) {
+      const name = str(item.name);
+      const isActive = item.active === true || (name !== '' && name === active);
+      const li = el('li', 'workspace-item' + (isActive ? ' current' : ''));
+      li.setAttribute('data-workspace', name);
+
+      const pick = el('button', 'workspace-pick');
+      pick.type = 'button';
+      if (isActive) { pick.setAttribute('aria-current', 'true'); }
+      const head = el('span', 'workspace-head');
+      head.appendChild(el('span', 'workspace-name', name));
+      if (isActive) { head.appendChild(el('span', 'workspace-badge', 'active')); }
+      pick.appendChild(head);
+      pick.appendChild(el('span', 'workspace-path', str(item.path) || '—'));
+      const sessions = Number(item.sessions);
+      if (isFinite(sessions)) {
+        pick.appendChild(el('span', 'workspace-meta',
+          sessions === 1 ? '1 session' : sessions.toLocaleString() + ' sessions'));
+      }
+      pick.addEventListener('click', function () { pickWorkspace(item, pick, isActive); });
+
+      const remove = el('button', 'btn ghost workspace-remove', 'Remove');
+      remove.type = 'button';
+      remove.title = 'Forget ' + name + ' — its session files stay on disk';
+      remove.addEventListener('click', function () { removeWorkspace(name, remove); });
+
+      li.appendChild(pick);
+      li.appendChild(remove);
+      dom.workspaceList.appendChild(li);
+
+      if (name === focusName || (!focusName && isActive)) { focusTarget = pick; }
+    });
+    // Focus is inside the dialog at all times while it is open: the active row
+    // when there is one, otherwise the first row a keyboard can reach.
+    if (!focusTarget) { focusTarget = dom.workspaceList.querySelector('.workspace-pick'); }
+    if (focusTarget) { focusTarget.focus(); }
+  }
+
+  async function loadWorkspaces(focusName) {
+    dom.workspaceList.textContent = '';
+    dom.workspaceList.appendChild(el('li', 'muted', 'Loading…'));
+    try {
+      const data = await request('/api/workspaces');
+      renderWorkspaces(data, focusName);
+    } catch (err) {
+      dom.workspaceList.textContent = '';
+      dom.workspaceList.appendChild(el('li', 'err', 'Could not load workspaces: ' + str(err && err.message)));
+    }
+  }
+
+  async function openWorkspaces() {
+    if (!dom.settingsOverlay.hidden) { closeSettings(); }
+    if (!dom.overlay.hidden) { closeSessions(); }
+    clearWorkspaceErrors();
+    dom.wsNewName.value = '';
+    dom.wsNewPath.value = '';
+    setAddFormOpen(false);
+    dom.workspaceOverlay.hidden = false;
+    await loadWorkspaces();
+  }
+
+  async function addWorkspace() {
+    clearWorkspaceErrors();
+    const name = dom.wsNewName.value.trim();
+    const path = dom.wsNewPath.value.trim();
+    if (!name) { fieldError(dom.wsNameError, 'Enter a workspace name.'); dom.wsNewName.focus(); return; }
+    if (!path) { fieldError(dom.wsPathError, 'Enter a directory.'); dom.wsNewPath.focus(); return; }
+    dom.workspaceSave.disabled = true;
+    try {
+      const res = await postJSON('/api/workspaces', { name: name, path: path });
+      dom.wsNewName.value = '';
+      dom.wsNewPath.value = '';
+      setAddFormOpen(false);
+      renderWorkspaces(res, name);   // the list is rebuilt from the answer
+    } catch (err) {
+      showWorkspaceError(err.message);
+    }
+    dom.workspaceSave.disabled = false;
+  }
+
+  async function removeWorkspace(name, button) {
+    clearWorkspaceErrors();
+    button.disabled = true;
+    try {
+      const res = await request('/api/workspace?name=' + encodeURIComponent(name), { method: 'DELETE' });
+      renderWorkspaces(res);
+    } catch (err) {
+      button.disabled = false;
+      showWorkspaceError(err.message);
+    }
+  }
+
+  /* Switching is a two-step move: the request changes the server, and the
+   * status event that follows is what tells the page which session the new
+   * workspace is on. The transcript is emptied *here* so the old workspace's
+   * messages are never on screen next to the new workspace's name. */
+  async function pickWorkspace(item, button, isActive) {
+    const name = str(item.name);
+    if (isActive || (state.workspace && state.workspace.name === name)) {
+      closeWorkspaces();   // already here — do not clear a transcript for nothing
+      return;
+    }
+    clearWorkspaceErrors();
+    button.disabled = true;
+    try {
+      const res = await postJSON('/api/workspace', { name: name });
+      closeWorkspaces();
+      state.sessionId = '';   // the next status must clear and re-fetch
+      clearTranscript();
+      if (res && typeof res === 'object' && ('sessionId' in res || 'busy' in res || 'workspace' in res)) {
+        applyStatus(res);
+      } else {
+        await refreshStatus();
+      }
+      dom.input.focus();
+    } catch (err) {
+      button.disabled = false;
+      showWorkspaceError(err.message);
+    }
+  }
+
   // ------------------------------------------------------------ settings
 
   /* The stored key never reaches the DOM: renderSettings() empties the field
@@ -1223,6 +1501,7 @@
   /* `preloaded` skips the round trip when the caller already has GET /api/config. */
   async function openSettings(preloaded) {
     if (!dom.overlay.hidden) { closeSessions(); }
+    if (!dom.workspaceOverlay.hidden) { closeWorkspaces(); }
     dom.settingsOverlay.hidden = false;
 
     let cfg = preloaded && typeof preloaded === 'object' ? preloaded : null;
@@ -1314,6 +1593,21 @@
     if (event.target === dom.overlay) { closeSessions(); }
   });
 
+  dom.btnWorkspace.addEventListener('click', function () { openWorkspaces(); });
+  dom.workspaceClose.addEventListener('click', closeWorkspaces);
+  dom.workspaceOverlay.addEventListener('click', function (event) {
+    if (event.target === dom.workspaceOverlay) { closeWorkspaces(); }
+  });
+  dom.workspaceAddToggle.addEventListener('click', function () {
+    const open = dom.workspaceAddForm.hidden;
+    setAddFormOpen(open);
+    if (open) { dom.wsNewName.focus(); }
+  });
+  dom.workspaceAddForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    addWorkspace();
+  });
+
   dom.btnSettings.addEventListener('click', function () { openSettings(); });
   dom.settingsClose.addEventListener('click', closeSettings);
   dom.settingsOverlay.addEventListener('click', function (event) {
@@ -1333,6 +1627,7 @@
   document.addEventListener('keydown', function (event) {
     if (event.key !== 'Escape') { return; }
     if (!dom.settingsOverlay.hidden) { closeSettings(); }
+    else if (!dom.workspaceOverlay.hidden) { closeWorkspaces(); }
     else if (!dom.overlay.hidden) { closeSessions(); }
   });
 

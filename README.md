@@ -2,7 +2,7 @@
 
 A coding agent runtime written from scratch in plain Java 21. No agent framework, no HTTP client
 library, no CLI library — `java.net.http` for transport, `com.sun.net.httpserver` for the web UI and
-the test doubles, 6.5k lines of hand-written Java plus a 2k-line vanilla page, 152 tests.
+the test doubles, 7.4k lines of hand-written Java plus a 2.7k-line vanilla page, 184 tests.
 
 `ccj` streams a conversation with a model, lets the model call tools that touch your filesystem,
 feeds the results back, and repeats until the model answers. It is a small, readable implementation
@@ -100,6 +100,7 @@ key is never sent back to the browser, only whether one exists and where it come
 | Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, created on the first message (an empty session leaves no file), resumable with `--resume` / `--continue`, and replayed into the transcript when the UI opens one. |
 | Approval | Anything that writes or executes asks first; without a terminal it is denied, not silently allowed. |
 | Rendering | Streaming prose, tool cards with argument summaries, per-call timing, dimmed reasoning, a spinner that yields the terminal to prompts. |
+| Workspaces | Named directories, each with its own session history. The workspace `ccj` starts in keeps the original sessions directory; added ones get their own under `<home>/workspaces/<name>/`. Switching changes the working directory *and* the history in one move. |
 | Web UI | `ccj` serves the same loop as a single page: streaming transcript, tool cards, blocking approval prompts, session switching, and a settings panel that configures the model at runtime. No framework, no build step. |
 
 ## Usage
@@ -216,12 +217,29 @@ exceptions all come back as error results the model can read and correct.
   `--yolo` was passed. Failing closed is the point.
 - Relative paths resolve against `--cwd`; paths outside it are labelled in the approval prompt.
 
+## Workspaces
+
+A workspace is a directory plus the sessions that belong to it, because a conversation only makes
+sense next to the files it was about:
+
+```bash
+ccj --workspace api            # this run works in api's directory, with api's sessions
+```
+
+In the browser the workspace switcher does the same thing, and adding one from there creates the
+directory if it does not exist. The registry is `~/.oh-my-ccj/workspaces.json`; the workspace you
+first started `ccj` in stays mapped to the top-level `~/.oh-my-ccj/sessions`, so sessions from before
+workspaces existed are still there. Model settings are deliberately **not** per workspace — a key and
+a model belong to the account, not to a folder. Forgetting a workspace never deletes conversation
+files.
+
 ## Architecture
 
 ```
 cli/       argument parsing, wiring, REPL, exit codes   (the only place that calls System.exit)
 ui/        AgentListener implementation: streaming text, tool cards, spinner, ANSI
 web/       the same loop behind HTTP: agent hub, SSE stream, approval handshake, single page
+workspace/ the workspace registry: named directories and where their sessions live
 demo/      a tool-routing stand-in for a model, so the CLI can be demonstrated with no key
 session/   JSONL message codec, FileSession, SessionStore
 tool/      read write edit bash glob grep + approval-aware helpers
@@ -238,7 +256,7 @@ mappings and the reasoning behind the design.
 ## Development
 
 ```bash
-mvn test                                  # 152 tests, no network, no API key
+mvn test                                  # 184 tests, no network, no API key
 mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
 mvn -Dtest=WebApiTest test                # HTTP + SSE + approval handshake only
 mvn -DskipTests package                   # fat jar
@@ -258,7 +276,8 @@ file on disk, session written.
 | session (codec round-trips, append/reopen, listing) | 19 |
 | CLI (argument parsing, mode selection) | 10 |
 | end-to-end (CLI → HTTP → tool → disk) | 9 |
-| web API (HTTP, SSE, approvals, token gate, settings) | 17 |
+| web API (HTTP, SSE, approvals, token gate, settings, workspaces) | 22 |
+| workspaces (registry rules, persistence, isolation) | 7 |
 | demo provider (routing, termination) | 8 |
 
 ## Limitations

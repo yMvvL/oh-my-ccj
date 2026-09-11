@@ -17,6 +17,7 @@ import com.ccj.agent.tool.Tools;
 import com.ccj.agent.ui.Ansi;
 import com.ccj.agent.ui.ConsoleRenderer;
 import com.ccj.agent.web.AgentHub;
+import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.web.HttpApi;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -100,7 +101,27 @@ public final class Cli {
 
     AppPaths paths =
         options.home() == null ? AppPaths.fromEnv(env) : new AppPaths(Path.of(options.home()));
-    Path sessionsDir = paths.sessionsDir();
+    Path startDir = startingDir(options);
+
+    // The workspace decides where sessions live; --workspace picks one, otherwise the directory we
+    // were started in is matched against the registry, otherwise the default stays active.
+    WorkspaceStore workspaces;
+    try {
+      workspaces = WorkspaceStore.open(paths.home(), startDir);
+      if (options.workspace() != null) {
+        workspaces.activate(options.workspace());
+      } else {
+        workspaces.list().stream()
+            .filter(workspace -> workspace.path().equals(startDir))
+            .findFirst()
+            .ifPresent(workspace -> workspaces.activate(workspace.name()));
+      }
+    } catch (RuntimeException e) {
+      return fail(err, e);
+    }
+    Path sessionsDir = workspaces.active().sessionsDir();
+    Path cwd = options.workspace() == null ? startDir : workspaces.active().path();
+    Path cwdOverride = cwd.equals(workspaces.active().path()) ? null : cwd;
 
     if (options.listSessions()) {
       printSessions(sessionsDir, out);
@@ -147,12 +168,14 @@ public final class Cli {
       }
     }
 
+    if (!Files.isDirectory(cwd)) {
+      err.println("error: not a directory: " + cwd);
+      err.flush();
+      return 1;
+    }
+
     FileSession session = null;
     try {
-      Path cwd = resolveCwd(options, err);
-      if (cwd == null) {
-        return 1;
-      }
       try {
         session = openSession(options, sessionsDir);
       } catch (RuntimeException e) {
@@ -183,10 +206,11 @@ public final class Cli {
             tools,
             agentOptions,
             cwd,
+            workspaces,
+            cwdOverride,
             config,
             configFile,
             session,
-            sessionsDir,
             env,
             out,
             err);
@@ -330,18 +354,13 @@ public final class Cli {
     return SessionStore.create(sessionsDir);
   }
 
-  private Path resolveCwd(CliOptions options, PrintStream err) {
-    Path cwd =
+  /** The directory this run starts in: {@code -C} wins, otherwise the process directory. */
+  private static Path startingDir(CliOptions options) {
+    Path dir =
         options.cwd() == null
             ? Path.of(System.getProperty("user.dir", "."))
             : Path.of(options.cwd());
-    cwd = cwd.toAbsolutePath().normalize();
-    if (!Files.isDirectory(cwd)) {
-      err.println("error: not a directory: " + cwd);
-      err.flush();
-      return null;
-    }
-    return cwd;
+    return dir.toAbsolutePath().normalize();
   }
 
   /**
@@ -359,10 +378,11 @@ public final class Cli {
       ToolRegistry tools,
       AgentOptions agentOptions,
       Path cwd,
+      WorkspaceStore workspaces,
+      Path cwdOverride,
       Config config,
       Path configFile,
       FileSession session,
-      Path sessionsDir,
       Map<String, String> env,
       PrintStream out,
       PrintStream err) {
@@ -384,8 +404,8 @@ public final class Cli {
     AgentHub.Settings settings =
         new AgentHub.Settings(
             VERSION,
-            cwd,
-            sessionsDir,
+            workspaces,
+            cwdOverride,
             configFile,
             env,
             Providers::create,
@@ -400,8 +420,11 @@ public final class Cli {
                   : "model " + agentOptions.model() + " (" + provider.name() + ")")
               + " — session "
               + session.id()
-              + " — cwd "
-              + cwd);
+              + " — workspace "
+              + workspaces.activeName()
+              + " ("
+              + cwd
+              + ")");
       out.println("Ctrl+C to stop");
       out.flush();
       if (!options.noOpen()) {

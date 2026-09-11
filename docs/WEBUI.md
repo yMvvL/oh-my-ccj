@@ -25,11 +25,42 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `POST` | `/api/session` | `{"action": "new"}` or `{"action": "resume", "id": "..."}` |
 | `GET` | `/api/sessions` | session summaries, newest first |
 | `GET` | `/api/history` | the current session replayed as render events (see below) |
+| `GET` | `/api/workspaces` | every workspace, with the active one, its path and its session count |
+| `POST` | `/api/workspaces` | `{"name": "...", "path": "..."}` — register a workspace (creates the directory) |
+| `POST` | `/api/workspace` | `{"name": "..."}` — switch to a workspace |
+| `DELETE` | `/api/workspace?name=...` | forget a workspace; its session files stay on disk |
 | `GET` | `/api/config` | what the settings form needs: current values, whether a key exists, where it is stored |
 | `POST` | `/api/config` | save provider/model/key settings and switch to them immediately |
 | `POST` | `/api/config/test` | send one tiny request with the posted settings **without saving** |
 
-### Settings
+### Workspaces
+
+A workspace is a working directory plus the sessions that belong to it. Switching one changes where
+tools resolve relative paths **and** which conversation history the page shows — the two are the same
+decision, because a session only makes sense next to the files it was talking about.
+
+```json
+{"active": "oh-my-ccj",
+ "workspaces": [
+   {"name": "oh-my-ccj", "path": "/home/you/oh-my-ccj", "sessions": 12, "active": true},
+   {"name": "api", "path": "/home/you/api", "sessions": 3, "active": false}
+ ]}
+```
+
+- The registry is `<home>/workspaces.json`. The workspace `ccj` started in is seeded from the starting
+  directory and is the active one; it keeps using the top-level `<home>/sessions` directory, so
+  sessions from before workspaces existed stay where they were.
+- Workspaces added later store their sessions under `<home>/workspaces/<name>/sessions/`, and the
+  directory is created if it does not exist.
+- Model settings (`config.json`) are **not** per workspace: a key and a model are a property of the
+  account, not of the folder. Everything else — working directory, sessions, usage totals — is.
+- Switching starts a **new** session in the target workspace (an empty one leaves no file); the
+  sessions list then shows that workspace's history to resume from.
+- `DELETE` only forgets the registry entry. Deleting conversation files because a folder was removed
+  from a list would be a surprising thing for a tool to do.
+- `ccj --workspace <name>` does the same thing for the terminal front end.
+
+## Settings
 
 `ccj` with no arguments serves the web UI, and the UI is where a model gets configured — no JSON
 editing, no restart. `GET /api/config` returns:

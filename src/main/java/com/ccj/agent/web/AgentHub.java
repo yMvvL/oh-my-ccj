@@ -13,6 +13,8 @@ import com.ccj.agent.core.ToolRegistry;
 import com.ccj.agent.core.ToolResult;
 import com.ccj.agent.core.ToolSpec;
 import com.ccj.agent.core.UsageTotals;
+import com.ccj.agent.core.Workspace;
+import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
 import com.ccj.agent.ui.ToolSummary;
@@ -72,13 +74,17 @@ public final class AgentHub implements AutoCloseable {
   /**
    * The parts of the environment that do not change while the server runs.
    *
+   * @param workspaces the registry whose active entry decides the working directory and where
+   *     sessions live; switching a workspace is how a front end changes both at once
+   * @param cwdOverride a working directory for this run that is not the workspace's, which is what
+   *     {@code -C} means; null in the normal case
    * @param configFile where settings are persisted, and read back from on save
    * @param providerNames names offered to the settings form
    */
   public record Settings(
       String version,
-      Path cwd,
-      Path sessionsDir,
+      WorkspaceStore workspaces,
+      Path cwdOverride,
       Path configFile,
       Map<String, String> env,
       ProviderFactory providerFactory,
@@ -146,6 +152,21 @@ public final class AgentHub implements AutoCloseable {
     }
   }
 
+  /** Where tools resolve relative paths, and where this run's sessions are kept. */
+  private Path cwd() {
+    Workspace active = settings.workspaces().active();
+    Path override = settings.cwdOverride();
+    if (override != null) {
+      return override;
+    }
+    return active == null ? Path.of("").toAbsolutePath() : active.path();
+  }
+
+  private Path sessionsDir() {
+    Workspace active = settings.workspaces().active();
+    return active == null ? settings.workspaces().home().resolve("sessions") : active.sessionsDir();
+  }
+
   // ------------------------------------------------------------------ status
 
   public ObjectNode status() {
@@ -166,7 +187,13 @@ public final class AgentHub implements AutoCloseable {
     node.put("provider", currentProvider == null || active.provider() == null ? "" : active.provider());
     node.put("model", active.model() == null ? "" : active.model());
     node.put("baseUrl", active.baseUrl() == null ? "" : active.baseUrl());
-    node.put("cwd", settings.cwd().toString());
+    node.put("cwd", cwd().toString());
+    ObjectNode workspaceNode = node.putObject("workspace");
+    Workspace activeWorkspace = settings.workspaces().active();
+    workspaceNode.put(
+        "name", activeWorkspace == null ? "" : activeWorkspace.name());
+    workspaceNode.put(
+        "path", activeWorkspace == null ? "" : activeWorkspace.path().toString());
     node.put("sessionId", current == null ? "" : current.id());
     node.put("messageCount", current == null ? 0 : current.messages().size());
     node.put("autoApprove", autoApprove.get());
@@ -183,7 +210,7 @@ public final class AgentHub implements AutoCloseable {
 
   public ArrayNode sessionsJson() {
     ArrayNode array = Json.mapper().createArrayNode();
-    for (SessionStore.Summary summary : SessionStore.list(settings.sessionsDir())) {
+    for (SessionStore.Summary summary : SessionStore.list(sessionsDir())) {
       ObjectNode node = array.addObject();
       node.put("id", summary.id());
       node.put("preview", summary.preview());
@@ -294,6 +321,56 @@ public final class AgentHub implements AutoCloseable {
 
   private static ObjectNode replay(String type) {
     return Json.object().put("type", type).put("replay", true);
+  }
+
+  // ------------------------------------------------------------------ workspaces
+
+  /** The registry as the switcher needs it: name, path, how much history is there, which is active. */
+  public ObjectNode workspacesJson() {
+    ObjectNode root = Json.object();
+    Workspace active = settings.workspaces().active();
+    root.put("active", active == null ? "" : active.name());
+    ArrayNode list = root.putArray("workspaces");
+    for (Workspace workspace : settings.workspaces().list()) {
+      ObjectNode entry = list.addObject();
+      entry.put("name", workspace.name());
+      entry.put("path", workspace.path().toString());
+      entry.put("sessions", SessionStore.list(workspace.sessionsDir()).size());
+      entry.put("active", active != null && active.name().equals(workspace.name()));
+    }
+    return root;
+  }
+
+  public ObjectNode addWorkspace(String name, String path) {
+    requireIdle();
+    if (path == null || path.isBlank()) {
+      throw new IllegalArgumentException("a workspace needs a directory");
+    }
+    settings.workspaces().add(name, Path.of(path.strip()));
+    publish("notice", Json.object().put("text", "workspace '" + name.strip() + "' added"));
+    return workspacesJson();
+  }
+
+  public ObjectNode removeWorkspace(String name) {
+    requireIdle();
+    settings.workspaces().remove(name);
+    publish("notice", Json.object().put("text", "workspace '" + name.strip() + "' forgotten"));
+    return workspacesJson();
+  }
+
+  /**
+   * Switches the working directory and the session store together, and starts a fresh session in
+   * the target workspace — resuming someone else's conversation across a directory change would be
+   * worse than an empty transcript.
+   */
+  public ObjectNode switchWorkspace(String name) {
+    requireIdle();
+    Workspace workspace = settings.workspaces().activate(name);
+    useSession(SessionStore.create(workspace.sessionsDir()));
+    publish(
+        "notice",
+        Json.object().put("text", "workspace '" + workspace.name() + "' → " + workspace.path()));
+    return status();
   }
 
   // ------------------------------------------------------------------ settings
@@ -520,8 +597,7 @@ public final class AgentHub implements AutoCloseable {
             active.temperature(),
             active.maxTokens(),
             active.maxSteps());
-    ToolContext context =
-        new ToolContext(settings.cwd(), this::askApproval, active.outputLimitBytes());
+    ToolContext context = new ToolContext(cwd(), this::askApproval, active.outputLimitBytes());
     return new AgentLoop(current, tools, session(), options, context, new WebListener());
   }
 
@@ -540,7 +616,7 @@ public final class AgentHub implements AutoCloseable {
           Json.object().put("text", "this session is already empty — say something first"));
       return;
     }
-    useSession(SessionStore.create(settings.sessionsDir()));
+    useSession(SessionStore.create(sessionsDir()));
   }
 
   public void resumeSession(String id) {
@@ -548,7 +624,7 @@ public final class AgentHub implements AutoCloseable {
     if (id == null || id.isBlank()) {
       throw new IllegalArgumentException("a session id is required");
     }
-    useSession(SessionStore.open(settings.sessionsDir(), id));
+    useSession(SessionStore.open(sessionsDir(), id));
   }
 
   private void useSession(FileSession next) {

@@ -13,13 +13,18 @@
   <header id="topbar">
     <div class="brand">
       <span class="brand-mark">ccj</span>
+      <button type="button" class="ws-btn" id="btn-workspace" aria-haspopup="dialog"
+              title="Switch workspace">
+        <span class="ws-icon" aria-hidden="true">▣</span>
+        <span class="ws-name" id="ws-name">workspace</span>
+        <span class="ws-caret" aria-hidden="true">▾</span>
+      </button>
       <span id="conn-pill" class="conn-pill" hidden>reconnecting…</span>
     </div>
 
     <div class="meta" id="meta">
       <span class="chip" id="chip-provider" title="provider">provider</span>
       <span class="chip" id="chip-model" title="model">model</span>
-      <span class="chip chip-url" id="chip-baseurl" title="base URL">base URL</span>
       <span class="chip chip-session" id="chip-session" title="session">no session</span>
     </div>
 
@@ -62,17 +67,14 @@
 
     <aside id="side" class="side" aria-label="Agent details">
       <section class="side-sec">
-        <h2>Tools</h2>
-        <ul class="tool-list" id="tool-list">
-          <li class="muted">No tools reported.</li>
-        </ul>
-      </section>
-      <section class="side-sec">
         <h2>Usage</h2>
         <div class="usage" id="usage">
           <div class="usage-hero">
             <span class="usage-hero-label">cache hit rate</span>
             <span class="usage-hero-value" id="u-hit">—</span>
+          </div>
+          <div class="hit-bar" id="u-hit-bar" role="img" aria-label="cache hit rate not reported">
+            <div class="hit-bar-fill na" id="u-hit-fill"></div>
           </div>
           <p class="usage-hint" id="u-hint" hidden>the provider did not report cache usage</p>
           <p class="usage-alert" id="u-alert" hidden></p>
@@ -91,8 +93,18 @@
         </div>
       </section>
       <section class="side-sec">
+        <h2>Workspace</h2>
+        <div class="kv" id="workspace-info">—</div>
+      </section>
+      <section class="side-sec">
         <h2>Session</h2>
         <div class="kv" id="session-info">—</div>
+      </section>
+      <section class="side-sec">
+        <h2>Tools</h2>
+        <ul class="tool-list" id="tool-list">
+          <li class="muted">No tools reported.</li>
+        </ul>
       </section>
     </aside>
   </div>
@@ -106,6 +118,46 @@
     </header>
     <div class="overlay-body" id="sessions-body">
       <p class="muted">Loading…</p>
+    </div>
+  </div>
+</div>
+
+<div id="workspace-overlay" class="overlay" hidden>
+  <div class="overlay-card workspace-card" role="dialog" aria-modal="true" aria-labelledby="workspace-title">
+    <header class="overlay-head">
+      <h2 id="workspace-title">Workspaces</h2>
+      <button type="button" class="btn ghost" id="workspace-close">Close</button>
+    </header>
+    <div class="overlay-body workspace-body">
+      <p class="err workspace-error" id="workspace-error" role="alert" hidden></p>
+
+      <ul class="workspace-list" id="workspace-list">
+        <li class="muted">Loading…</li>
+      </ul>
+
+      <div class="workspace-add">
+        <button type="button" class="btn" id="workspace-add-toggle" aria-expanded="false"
+                aria-controls="workspace-add-form">Add workspace…</button>
+
+        <form class="workspace-add-form" id="workspace-add-form" autocomplete="off" hidden>
+          <div class="field-row">
+            <div class="field">
+              <label for="ws-new-name">Name</label>
+              <input type="text" id="ws-new-name" spellcheck="false" placeholder="api">
+              <span class="field-error" id="ws-name-error" hidden></span>
+            </div>
+            <div class="field">
+              <label for="ws-new-path">Path</label>
+              <input type="text" id="ws-new-path" spellcheck="false" placeholder="/home/you/api">
+              <span class="field-error" id="ws-path-error" hidden></span>
+            </div>
+          </div>
+          <p class="field-hint">A workspace is a working directory plus its own sessions. The directory is created if it does not exist.</p>
+          <div class="workspace-add-actions">
+            <button type="submit" class="btn primary" id="workspace-save">Save</button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 </div>

@@ -12,6 +12,7 @@ import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
+import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.tool.Tools;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.BufferedReader;
@@ -90,6 +91,11 @@ class WebApiTest {
     origin = "http://127.0.0.1:" + api.port();
   }
 
+  /** A registry whose default workspace is the test's working directory. */
+  private WorkspaceStore store() {
+    return WorkspaceStore.open(tmp, cwd);
+  }
+
   private static Config testConfig() {
     return new Config(
             "openai", "mock-model", "http://mock.invalid/v1", "sk-test", null, null, null, 6, null,
@@ -102,18 +108,18 @@ class WebApiTest {
    * provider named after the model, so a runtime swap is observable from the outside.
    */
   private AgentHub hub(Provider initial, Config config) {
-    return hub(initial, config, SessionStore.create(sessions), sessions);
+    return hub(initial, config, SessionStore.create(sessions));
   }
 
-  private AgentHub hub(Provider initial, Config config, FileSession session, Path sessionsDir) {
+  private AgentHub hub(Provider initial, Config config, FileSession session) {
     return new AgentHub(
         initial,
         config,
         Tools.standard(),
         new AgentHub.Settings(
             "test",
-            cwd,
-            sessionsDir,
+            store(),
+            null,
             configFile,
             Map.of(),
             (candidate, env) -> {
@@ -623,14 +629,13 @@ class WebApiTest {
 
   @Test
   void aServerStartedOnAnExistingSessionContinuesItsBooks() throws Exception {
-    Path ownedDir = Files.createDirectories(tmp.resolve("owned"));
-    FileSession owned = SessionStore.create(ownedDir);
+    FileSession owned = SessionStore.create(sessions);
     owned.append(new Message.User("an earlier conversation"));
     owned.totals(new UsageTotals(200, 30, 150, 1, 2, 1, 0, 900, true));
 
     api.close();
     hub.close();
-    hub = hub(provider, testConfig(), owned, ownedDir);
+    hub = hub(provider, testConfig(), owned);
     api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), null);
     origin = "http://127.0.0.1:" + api.port();
 
@@ -640,6 +645,105 @@ class WebApiTest {
     assertEquals(150, usage.path("cachedInputTokens").asInt());
     assertEquals(0.75, usage.path("cacheHitRate").asDouble(), 0.001);
     assertEquals(1, json("/api/history").path("events").size());
+  }
+
+  // ------------------------------------------------------------------ workspaces
+
+  @Test
+  void listsTheStartingDirectoryAsTheActiveWorkspace() throws Exception {
+    JsonNode payload = json("/api/workspaces");
+
+    assertEquals("ws", payload.path("active").asText());
+    assertEquals(1, payload.path("workspaces").size());
+    JsonNode entry = payload.path("workspaces").get(0);
+    assertEquals(cwd.toString(), entry.path("path").asText());
+    assertTrue(entry.path("active").asBoolean());
+    assertEquals(0, entry.path("sessions").asInt());
+
+    JsonNode status = json("/api/status");
+    assertEquals("ws", status.path("workspace").path("name").asText());
+    assertEquals(cwd.toString(), status.path("cwd").asText());
+  }
+
+  @Test
+  void addingAndSwitchingAWorkspaceMovesBothTheDirectoryAndTheHistory() throws Exception {
+    Path other = tmp.resolve("other-project");
+    Files.writeString(Files.createDirectories(other).resolve("note.txt"), "in the other project");
+
+    JsonNode added = postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + other + "\"}");
+    assertEquals(2, added.path("workspaces").size(), added.toString());
+
+    JsonNode switched = postJson("/api/workspace", "{\"name\":\"other\"}");
+    assertEquals("other", switched.path("workspace").path("name").asText());
+    assertEquals(other.toString(), switched.path("cwd").asText(), "tools now work in that directory");
+
+    // A session written before the switch belongs to the old workspace and must not show up here.
+    assertEquals(0, json("/api/sessions").path("sessions").size());
+    assertEquals(0, json("/api/history").path("events").size());
+
+    // And a relative tool path really resolves there: this file exists only in the new workspace.
+    provider.reply(call("read", "path", "note.txt"));
+    provider.reply(Message.Assistant.text("read it"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"read note.txt\"}");
+      sse.await("done", 5000);
+      JsonNode ended = lastOf(sse, "tool");
+      assertTrue(ended.path("ok").asBoolean(), ended.toString());
+      assertTrue(ended.path("output").asText().contains("in the other project"), ended.toString());
+    }
+  }
+
+  @Test
+  void eachWorkspaceKeepsItsOwnSessions() throws Exception {
+    provider.reply(Message.Assistant.text("from the first workspace"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"remember this\"}");
+      sse.await("done", 5000);
+    }
+    assertEquals(1, json("/api/sessions").path("sessions").size());
+    String firstSession = json("/api/status").path("sessionId").asText();
+
+    postJson("/api/workspaces", "{\"name\":\"second\",\"path\":\"" + tmp.resolve("second") + "\"}");
+    postJson("/api/workspace", "{\"name\":\"second\"}");
+    assertEquals(
+        0, json("/api/sessions").path("sessions").size(), "another workspace is another history");
+
+    postJson("/api/workspace", "{\"name\":\"ws\"}");
+
+    JsonNode back = json("/api/sessions").path("sessions");
+    assertEquals(1, back.size());
+    assertEquals(firstSession, back.get(0).path("id").asText());
+  }
+
+  @Test
+  void forgettingAWorkspaceIsRefusedForTheActiveOne() throws Exception {
+    postJson("/api/workspaces", "{\"name\":\"temp\",\"path\":\"" + tmp.resolve("temp") + "\"}");
+
+    HttpResponse<String> refusal =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/workspace?name=ws"))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(400, refusal.statusCode(), refusal.body());
+    assertTrue(refusal.body().contains("active"), refusal.body());
+
+    HttpResponse<String> removed =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/workspace?name=temp"))
+                .DELETE()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, removed.statusCode(), removed.body());
+    assertEquals(1, json("/api/workspaces").path("workspaces").size());
+  }
+
+  @Test
+  void aBadWorkspaceIsRejectedWithAReason() throws Exception {
+    assertEquals(400, post("/api/workspaces", "{\"name\":\"has space\",\"path\":\"/tmp\"}").statusCode());
+    assertEquals(400, post("/api/workspaces", "{\"name\":\"ws\",\"path\":\"/tmp\"}").statusCode());
+    assertEquals(400, post("/api/workspaces", "{\"name\":\"ok\"}").statusCode());
+    assertEquals(400, post("/api/workspace", "{\"name\":\"nope\"}").statusCode());
   }
 
   // ------------------------------------------------------------------ helpers

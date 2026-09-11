@@ -29,6 +29,7 @@ public record CliOptions(
     String home,
     String system,
     String cwd,
+    String workspace,
     boolean demo,
     boolean web,
     boolean repl,
@@ -83,6 +84,7 @@ public record CliOptions(
     String home = null;
     String system = null;
     String cwd = null;
+    String workspace = null;
     boolean demo = false;
     boolean web = false;
     boolean repl = false;
@@ -211,6 +213,10 @@ public record CliOptions(
           system = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
+        case "--workspace" -> {
+          workspace = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
         case "-C", "--cwd" -> {
           cwd = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
@@ -242,6 +248,7 @@ public record CliOptions(
         home,
         system,
         cwd,
+        workspace,
         demo,
         web,
         repl,
@@ -283,6 +290,7 @@ public record CliOptions(
               --resume <id>        reopen a session by id
               --continue           reopen the most recent session
               --list-sessions      print sessions and exit
+              --workspace <name>   use a workspace: its directory and its own sessions
 
         Web:
               --port <n>           web UI port (default 8787)
