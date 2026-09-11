@@ -746,7 +746,8 @@ public final class AgentHub implements AutoCloseable {
             active.systemPrompt(),
             active.temperature(),
             active.maxTokens(),
-            active.maxSteps(), null);
+            active.maxSteps(),
+            active.reasoning());
     ToolContext context = new ToolContext(cwd(), this::askApproval, active.outputLimitBytes());
     return new AgentLoop(current, tools, session(), options, context, new WebListener());
   }

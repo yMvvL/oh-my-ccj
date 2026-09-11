@@ -172,12 +172,10 @@
     settingsTestResult: $('settings-test-result'),
     settingsSave: $('settings-save'),
     settingsFoot: $('settings-foot'),
-    cfgProvider: $('cfg-provider'),
-    cfgProviderOptions: $('cfg-provider-options'),
+    composerPicker: $('composer-picker'),
+    cfgPicker: $('cfg-picker'),
     cfgProviderHint: $('cfg-provider-hint'),
     cfgProviderError: $('cfg-provider-error'),
-    cfgModel: $('cfg-model'),
-    cfgModelOptions: $('cfg-model-options'),
     cfgModelHint: $('cfg-model-hint'),
     cfgModelError: $('cfg-model-error'),
     cfgBaseUrl: $('cfg-baseurl'),
@@ -231,6 +229,7 @@
     usage: null,           // last usage object seen (event or status)
     catalog: null,         // {providers, models} from GET /api/models, null until loaded
     catalogError: '',      // why the last catalogue refresh failed; '' when it worked
+    reasoningLevels: null, // status.reasoningLevels: the effort tiers the provider accepts
     configProviders: []    // provider names the server says are usable (GET /api/config)
   };
 
@@ -604,6 +603,9 @@
       state.autoApprove = status.autoApprove;
       paintAuto();
     }
+    // The picker above the composer is the same fact as the chips, told where
+    // the user is about to type; both follow the server's status.
+    if (composerPicker) { composerPicker.setStatus(status); }
     setBusy(!!status.busy || pendingApprovals() > 0);
   }
 
@@ -1175,10 +1177,10 @@
    * on a flex item; this one uses the same rule from the other side, so the
    * two toggles read as a pair.
    *
-   * Deleting is the one thing the server scopes to the *active* workspace
-   * (`DELETE /api/session`, `DELETE /api/sessions` take no workspace), so the
-   * sidebar refuses a row elsewhere and says why, instead of clearing a
-   * workspace the user was not looking at. */
+   * Deleting names the workspace it happens in — `DELETE /api/session` and
+   * `DELETE /api/sessions` take a `workspace` parameter — so a row under a
+   * folded node is cleared where it lives, and the page stays in whatever
+   * workspace it was working in. */
   const SIDEBAR_KEY = 'ccj.sidebar.collapsed';
   const EXPANDED_KEY = 'ccj.tree.expanded';
 
@@ -1370,10 +1372,9 @@
     return li;
   }
 
-  /* The sessions of one node, or the reason there are none to show yet. A
-   * node that is not the active workspace says what it is: the rows can be
-   * read, and deleting there is refused by the endpoint itself. */
-  function sessionsList(name, listId, active) {
+  /* The sessions of one node, or the reason there are none to show yet. The
+   * rows are read from the node's own workspace, whether or not it is active. */
+  function sessionsList(name, listId) {
     const list = el('ul', 'ws-sessions');
     list.id = listId;
     list.setAttribute('aria-label', 'Sessions in ' + name);
@@ -1390,10 +1391,6 @@
       cached.items.forEach(function (item, index) {
         list.appendChild(sessionRow(name, item, index, activeId));
       });
-    }
-    if (!active) {
-      list.appendChild(el('li', 'ws-note muted',
-        'Deleting applies to the active workspace only — press Use to switch here.'));
     }
     return list;
   }
@@ -1460,7 +1457,7 @@
     remove.idle.disabled = active;
     tree.deletes.push(remove);
 
-    if (open) { li.appendChild(sessionsList(name, listId, active)); }
+    if (open) { li.appendChild(sessionsList(name, listId)); }
     return li;
   }
 
@@ -1664,25 +1661,19 @@
     }
   }
 
-  /* Deleting one session. Both delete endpoints are scoped by the server to
-   * the *active* workspace, so a row elsewhere refuses here — next to the row,
-   * with the reason — instead of deleting the wrong file. */
+  /* Deleting one session. The endpoint names the workspace, so a row under a
+   * folded node is deleted where it lives — the page does not have to switch,
+   * and deleting elsewhere never touches the session on screen. */
   async function deleteTreeSession(name, id, index, control, rowButton) {
     if (tree.busy) { return; }
-    if (name !== workspaceName()) {
-      control.reset();
-      renderTree('del:' + name + ':' + id);
-      sidebarError('Sessions can only be deleted from the active workspace — press Use on '
-        + name + ' first.');
-      return;
-    }
     tree.busy = true;
     control.busy();
     rowButton.disabled = true;
     clearSidebarMessages();
-    const active = id !== '' && id === activeSessionId();
+    const active = name === workspaceName() && id !== '' && id === activeSessionId();
     try {
-      const res = await request('/api/session?id=' + encodeURIComponent(id), { method: 'DELETE' });
+      const res = await request('/api/session?workspace=' + encodeURIComponent(name)
+        + '&id=' + encodeURIComponent(id), { method: 'DELETE' });
       // The answer *is* the refreshed list for this workspace, so it is stored
       // and kept: re-asking would be a round trip for information in hand.
       tree.sessions.set(name, { status: 'ready', items: sessionsIn(res), error: '' });
@@ -1703,33 +1694,33 @@
     }
   }
 
-  /* `Delete all` clears the selected workspace, and the server only clears the
-   * active one. When the two differ this refuses and says so, rather than
-   * emptying a workspace the user was not looking at. */
+  /* `Delete all` clears the workspace the sidebar has selected, named in the
+   * request so it works in any node — not only the active one. */
   async function deleteAllSelectedWorkspace(control) {
     if (tree.busy) { return; }
     const name = tree.selected || workspaceName();
-    if (!name || name !== workspaceName()) {
+    if (!name) {
       control.reset();
-      sidebarError('Delete all only clears the active workspace — press Use on '
-        + (name || 'a workspace') + ' first.');
+      sidebarError('Select a workspace first.');
       return;
     }
     tree.busy = true;
     control.busy();
     clearSidebarMessages();
+    const inActive = name === workspaceName();
     const before = cachedCount(name);
     try {
-      const res = await request('/api/sessions', { method: 'DELETE' });
+      const res = await request('/api/sessions?workspace=' + encodeURIComponent(name),
+        { method: 'DELETE' });
       control.reset();
       const items = sessionsIn(res);
       tree.sessions.set(name, { status: 'ready', items: items, error: '' });
       const gone = Math.max(0, before - items.length);
       renderTree('delall');
       sidebarNote((gone === 1 ? 'Deleted 1 session.' : 'Deleted ' + gone + ' sessions.')
-        + FRESH_SESSION);
+        + (inActive ? FRESH_SESSION : ''));
       await loadWorkspaces({ keep: true, focusKey: 'delall' });
-      await afterSessionDelete(true);
+      await afterSessionDelete(inActive);
     } catch (err) {
       control.reset();
       sidebarError('Could not delete the sessions: ' + str(err && err.message));
@@ -1922,6 +1913,399 @@
     }
   }
 
+  // --------------------------------------- provider / model / effort picker
+
+  /* One control, two mount points: the composer (directly above the input) and
+   * the settings form. Both read the same catalogue — GET /api/models merged
+   * with the names GET /api/config reports — so they can never drift apart.
+   * What a choice *does* is what differs, and that is the caller's callback,
+   * not the picker: the composer commits through POST /api/config at once, the
+   * settings form only fills its fields in until Save.
+   *
+   * The panel is two columns (providers left, that provider's models right)
+   * over a row of effort tiers. Choosing a provider only swaps the right
+   * column; choosing a model or a tier is what commits. A refused request is
+   * shown inside the panel and the previous selection is kept, so the screen
+   * never claims a change the server rejected. */
+
+  const EFFORT_HINT = {
+    default: 'Default — the provider decides how much to think.',
+    low: 'Low — a little more thinking, a few more tokens.',
+    high: 'High — more thinking, more tokens.',
+    max: 'Max — the most thinking, the most tokens.'
+  };
+  const REASONING_FALLBACK = ['low', 'high', 'max'];
+
+  /* The tiers the server accepts (status.reasoningLevels), with the implicit
+   * "default" first. A server that predates the field still gets all three. */
+  function reasoningLevels() {
+    const levels = Array.isArray(state.reasoningLevels) && state.reasoningLevels.length
+      ? state.reasoningLevels : REASONING_FALLBACK;
+    const all = ['default'];
+    levels.forEach(function (level) {
+      const clean = str(level).trim().toLowerCase();
+      if (clean && clean !== 'default' && all.indexOf(clean) < 0) { all.push(clean); }
+    });
+    return all;
+  }
+
+  function tierLabel(tier) { return str(tier) || 'default'; }
+
+  /* The provider list is the catalogue first, then any name GET /api/config
+   * knows that the catalogue does not: the server accepts a provider this
+   * build has never heard of, and the picker must offer it too. */
+  function pickerProviders() {
+    const out = [];
+    const seen = new Set();
+    function add(record) {
+      const name = str(record && record.name).trim();
+      if (!name || seen.has(name.toLowerCase())) { return; }
+      seen.add(name.toLowerCase());
+      out.push({
+        name: name,
+        kind: str(record.kind),
+        baseUrl: str(record.baseUrl),
+        builtIn: record.builtIn === true,
+        known: record.known !== false,
+        models: Array.isArray(record.models) ? record.models : []
+      });
+    }
+    if (state.catalog) { state.catalog.providers.forEach(function (p) { add(p); }); }
+    state.configProviders.forEach(function (name) { add({ name: name, known: false }); });
+    return out;
+  }
+
+  function pickerProviderKnown(name) {
+    const wanted = str(name).trim().toLowerCase();
+    return pickerProviders().some(function (p) { return p.name.toLowerCase() === wanted; });
+  }
+
+  function createPicker(config) {
+    const root = config.root;
+    const apply = config.apply || null;            // async (kind, next); throws on refusal
+    const onSelect = config.onSelect || null;      // local side effects; never a request
+    const providerSelects = config.providerSelects === true;
+
+    const nodes = {
+      trigger: root.querySelector('[data-role="trigger"]'),
+      value: root.querySelector('[data-role="value"]'),
+      panel: root.querySelector('[data-role="panel"]'),
+      providers: root.querySelector('[data-role="providers"]'),
+      models: root.querySelector('[data-role="models"]'),
+      modelInput: root.querySelector('[data-role="modelInput"]'),
+      modelUse: root.querySelector('[data-role="modelUse"]'),
+      effort: root.querySelector('[data-role="effort"]'),
+      effortHint: root.querySelector('[data-role="effortHint"]'),
+      error: root.querySelector('[data-role="error"]')
+    };
+
+    const picker = {
+      selection: { provider: '', model: '', reasoning: 'default' },
+      browsed: '',
+      open: false
+    };
+
+    function showError(message) {
+      nodes.error.textContent = str(message);
+      nodes.error.hidden = !message;
+    }
+
+    function clearError() {
+      nodes.error.textContent = '';
+      nodes.error.hidden = true;
+    }
+
+    function renderTrigger() {
+      const sel = picker.selection;
+      const empty = !sel.provider && !sel.model;
+      nodes.value.textContent = empty
+        ? 'not configured'
+        : [sel.provider, sel.model, tierLabel(sel.reasoning)].filter(Boolean).join(' · ');
+      nodes.value.classList.toggle('picker-value-warn', !sel.provider || !sel.model);
+      nodes.trigger.title = empty
+        ? 'No model configured — choose a provider and model'
+        : 'Provider ' + (sel.provider || '—') + ', model ' + (sel.model || '—')
+          + ', effort ' + tierLabel(sel.reasoning);
+    }
+
+    function optionMeta(parts) {
+      const meta = el('span', 'picker-option-meta');
+      parts.forEach(function (part) {
+        if (part) { meta.appendChild(el('span', 'picker-badge', part)); }
+      });
+      return meta;
+    }
+
+    function renderProviders() {
+      nodes.providers.textContent = '';
+      const list = pickerProviders();
+      const selected = picker.selection.provider;
+      const browsed = picker.browsed || selected;
+      if (selected && !pickerProviderKnown(selected)) {
+        list.unshift({ name: selected, kind: '', baseUrl: '', builtIn: false, known: false, models: [] });
+      }
+      if (!list.length) {
+        nodes.providers.appendChild(el('li', 'picker-empty',
+          state.catalogError ? 'Providers unavailable: ' + state.catalogError : 'No providers reported.'));
+        return;
+      }
+      list.forEach(function (p) {
+        const li = el('li');
+        const btn = el('button', 'picker-option');
+        btn.type = 'button';
+        btn.dataset.provider = p.name;
+        const isSelected = selected !== '' && p.name.toLowerCase() === selected.toLowerCase();
+        const isBrowsed = browsed !== '' && p.name.toLowerCase() === browsed.toLowerCase();
+        btn.classList.toggle('active', isSelected);
+        btn.classList.toggle('browsed', isBrowsed && !isSelected);
+        btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        btn.appendChild(el('span', 'picker-option-name', p.name));
+        const meta = [];
+        if (p.kind) { meta.push(p.kind); }
+        // Without the catalogue (a build that does not serve it) the kind and
+        // the built-in/own split are simply unknown; the name alone is honest.
+        if (p.known) {
+          meta.push(p.builtIn ? 'built-in' : 'your provider');
+          meta.push(p.models.length === 1 ? '1 model' : p.models.length + ' models');
+        }
+        btn.appendChild(optionMeta(meta));
+        btn.addEventListener('click', function () { chooseProvider(p.name); });
+        li.appendChild(btn);
+        nodes.providers.appendChild(li);
+      });
+    }
+
+    function renderModels() {
+      nodes.models.textContent = '';
+      const provider = picker.browsed || picker.selection.provider;
+      if (!provider) {
+        nodes.models.appendChild(el('li', 'picker-empty', 'Choose a provider first.'));
+        return;
+      }
+      const entries = catalogModelsFor(provider).slice();
+      const current = picker.selection.provider.toLowerCase() === provider.toLowerCase()
+        ? picker.selection.model : '';
+      const names = entries.map(function (entry) { return str(entry.model).toLowerCase(); });
+      if (current && names.indexOf(current.toLowerCase()) < 0) {
+        entries.unshift({ provider: provider, model: current, source: '' });
+      }
+      if (!entries.length) {
+        // "lists no models" is only true when the catalogue answered; without
+        // one, the honest thing is that the list is simply not available.
+        nodes.models.appendChild(el('li', 'picker-empty', state.catalog
+          ? 'No models listed for ' + provider + ' — type one below, or define it under'
+            + ' Your providers in Settings.'
+          : 'Model list unavailable' + (state.catalogError ? ' — ' + state.catalogError : '')
+            + '; type a model name below.'));
+        return;
+      }
+      entries.forEach(function (entry) {
+        const model = str(entry.model);
+        const li = el('li');
+        const btn = el('button', 'picker-option');
+        btn.type = 'button';
+        btn.dataset.model = model;
+        const isCurrent = current !== '' && model.toLowerCase() === current.toLowerCase();
+        btn.classList.toggle('active', isCurrent);
+        btn.setAttribute('aria-pressed', isCurrent ? 'true' : 'false');
+        btn.appendChild(el('span', 'picker-option-name', model));
+        btn.appendChild(optionMeta([str(entry.source)]));
+        btn.addEventListener('click', function () {
+          choose('model', { provider: provider, model: model });
+        });
+        li.appendChild(btn);
+        nodes.models.appendChild(li);
+      });
+    }
+
+    function renderEffort() {
+      nodes.effort.textContent = '';
+      nodes.effort.appendChild(el('span', 'picker-effort-label', 'Effort'));
+      const current = picker.selection.reasoning || 'default';
+      reasoningLevels().forEach(function (level) {
+        const btn = el('button', 'picker-tier', tierLabel(level));
+        btn.type = 'button';
+        btn.dataset.tier = level;
+        const on = level === current;
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        btn.addEventListener('click', function () { choose('reasoning', { reasoning: level }); });
+        nodes.effort.appendChild(btn);
+      });
+      nodes.effortHint.textContent = EFFORT_HINT[current] || EFFORT_HINT.default;
+    }
+
+    /* A provider pick is a browse: the right column swaps and nothing is sent.
+     * In the settings form the pick is also a draft change of the form's
+     * provider (there is no "apply" there until Save), so it moves the
+     * selection; in the composer it deliberately does not. */
+    function chooseProvider(name) {
+      const clean = str(name).trim();
+      if (!clean) { return; }
+      clearError();
+      picker.browsed = clean;
+      if (providerSelects) { picker.selection.provider = clean; }
+      picker.render();
+      if (onSelect) { onSelect('provider', picker.selection); }
+    }
+
+    /* The one commit path: a model pick changes provider + model, a tier pick
+     * changes only the tier. `apply` may reject (a provider without a key, a
+     * turn in flight); then the error is shown and the selection untouched. */
+    function choose(kind, patch) {
+      const next = {
+        provider: kind === 'model' ? str(patch.provider) : picker.selection.provider,
+        model: kind === 'model' ? str(patch.model) : picker.selection.model,
+        reasoning: kind === 'reasoning' ? str(patch.reasoning) : picker.selection.reasoning
+      };
+      clearError();
+      const commit = function () {
+        picker.selection = next;
+        picker.browsed = next.provider;
+        nodes.modelInput.value = '';
+        picker.render();
+        if (onSelect) { onSelect(kind, next); }
+      };
+      if (!apply) { commit(); return; }
+      Promise.resolve().then(function () { return apply(kind, next); }).then(commit, function (err) {
+        showError(str(err && err.message) || 'The change was refused.');
+      });
+    }
+
+    /* The model column keeps a text field next to the list so a provider with
+     * no listed models — or a model the catalogue does not know — is still
+     * selectable by hand, the way the settings panel used to allow. */
+    function useManualModel() {
+      const model = nodes.modelInput.value.trim();
+      const provider = picker.browsed || picker.selection.provider;
+      if (!provider) { showError('Choose a provider first.'); return; }
+      if (!model) { showError('Type a model name first.'); return; }
+      choose('model', { provider: provider, model: model });
+    }
+
+    picker.render = function () {
+      renderTrigger();
+      if (!picker.open) { return; }
+      renderProviders();
+      renderModels();
+      renderEffort();
+    };
+
+    picker.setSelection = function (sel) {
+      picker.selection = {
+        provider: str(sel && sel.provider),
+        model: str(sel && sel.model),
+        reasoning: str(sel && sel.reasoning) || 'default'
+      };
+      picker.browsed = picker.selection.provider;
+      nodes.modelInput.value = '';
+      picker.render();
+    };
+
+    /* Follows the server's status. Re-renders only on a real change, so the
+     * repeated status frames of an idle page never steal focus inside the
+     * open panel. */
+    picker.setStatus = function (status) {
+      const before = picker.selection.provider + '\u0000' + picker.selection.model
+        + '\u0000' + picker.selection.reasoning;
+      if ('provider' in status) { picker.selection.provider = str(status.provider); }
+      if ('model' in status) { picker.selection.model = str(status.model); }
+      if ('reasoning' in status) { picker.selection.reasoning = str(status.reasoning) || 'default'; }
+      if (Array.isArray(status.reasoningLevels) && status.reasoningLevels.length) {
+        state.reasoningLevels = status.reasoningLevels.map(str);
+      }
+      if (!picker.browsed) { picker.browsed = picker.selection.provider; }
+      const after = picker.selection.provider + '\u0000' + picker.selection.model
+        + '\u0000' + picker.selection.reasoning;
+      if (before !== after) { picker.render(); }
+    };
+
+    picker.openPanel = function () {
+      if (picker.open) { return; }
+      picker.open = true;
+      if (!picker.browsed) { picker.browsed = picker.selection.provider; }
+      nodes.modelInput.value = '';
+      nodes.panel.hidden = false;
+      nodes.trigger.setAttribute('aria-expanded', 'true');
+      clearError();
+      picker.render();
+    };
+
+    picker.closePanel = function (focusTrigger) {
+      if (!picker.open) { return; }
+      picker.open = false;
+      nodes.panel.hidden = true;
+      nodes.trigger.setAttribute('aria-expanded', 'false');
+      clearError();
+      if (focusTrigger) { nodes.trigger.focus(); }
+    };
+
+    picker.isOpen = function () { return picker.open; };
+    picker.contains = function (node) { return !!node && root.contains(node); };
+    picker.focus = function () { nodes.trigger.focus(); };
+
+    nodes.trigger.addEventListener('click', function (event) {
+      event.preventDefault();
+      if (picker.open) { picker.closePanel(true); } else { picker.openPanel(); }
+    });
+    nodes.modelUse.addEventListener('click', useManualModel);
+    /* Enter in the model field applies it — and must not reach the composer,
+     * where the same key sends the message. */
+    nodes.modelInput.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') { return; }
+      event.preventDefault();
+      event.stopPropagation();
+      useManualModel();
+    });
+
+    return picker;
+  }
+
+  let composerPicker = null;
+  let settingsPicker = null;
+  const pickers = [];
+
+  function initPickers() {
+    composerPicker = createPicker({ root: dom.composerPicker, apply: applyComposerChoice });
+    settingsPicker = createPicker({
+      root: dom.cfgPicker,
+      providerSelects: true,
+      onSelect: settingsPicked
+    });
+    pickers.push(composerPicker, settingsPicker);
+    composerPicker.setSelection({ provider: '', model: '', reasoning: 'default' });
+    settingsPicker.setSelection({ provider: '', model: '', reasoning: 'default' });
+  }
+
+  /* The composer commits every choice; the settings form keeps its picks as a
+   * draft until Save, so its callback only settles the credential fields. */
+  async function applyComposerChoice(kind, next) {
+    const payload = kind === 'reasoning'
+      ? { reasoning: next.reasoning }
+      : { provider: next.provider, model: next.model };
+    const res = await postJSON('/api/config', payload);
+    if (res && typeof res === 'object') { applyStatus(res); }   // chips now, status event later
+  }
+
+  function settingsPicked(kind, next) {
+    if (kind === 'provider') { settingsProviderChanged(next.provider); }
+    else { renderProviderHint(); renderModelHint(); }
+  }
+
+  function refreshPickers() {
+    pickers.forEach(function (p) { p.render(); });
+    if (settingsPicker) {
+      renderProviderHint();
+      renderModelHint();
+    }
+  }
+
+  function openPicker() {
+    let found = null;
+    pickers.forEach(function (p) { if (p.isOpen()) { found = p; } });
+    return found;
+  }
+
   // ------------------------------------------------------------ settings
 
   /* The stored key never reaches the DOM: renderSettings() empties the field
@@ -1971,9 +2355,7 @@
         ? 'this server build does not serve a provider catalogue (GET /api/models answered 404)'
         : (str(err && err.message) || 'the catalogue could not be loaded');
     }
-    renderProviderOptions();
-    renderModelOptions(dom.cfgProvider.value.trim());
-    renderProviderHint();
+    refreshPickers();
     renderProviderSection();
   }
 
@@ -2016,50 +2398,13 @@
     return state.catalog.providers.filter(function (entry) { return entry.builtIn !== true; });
   }
 
-  /* The Provider field is an input, not a <select>: the server accepts any name
-   * defined in providers.json, including one this build has never heard of, so
-   * the field must be able to hold a name the list does not have — and must
-   * never snap a typed name back to a listed one. The <datalist> is still a
-   * dropdown of everything the server knows, labelled with where it came from. */
-  function renderProviderOptions() {
-    const names = [];
-    const add = function (name) {
-      const clean = str(name).trim();
-      if (clean && names.indexOf(clean) < 0) { names.push(clean); }
-    };
-    state.configProviders.forEach(add);                       // the server's own usable list
-    if (state.catalog) { state.catalog.providers.forEach(function (p) { add(p.name); }); }
-    dom.cfgProviderOptions.textContent = '';
-    names.forEach(function (name) {
-      const option = document.createElement('option');
-      option.value = name;
-      const info = providerInfo(name);
-      if (info) {
-        option.label = name + (info.builtIn === true ? ' · built-in' : ' · your provider');
-      }
-      dom.cfgProviderOptions.appendChild(option);
-    });
-  }
-
-  /* The model dropdown is the catalogue filtered to one provider, so picking a
-   * provider narrows the list instead of mixing every model together. */
-  function renderModelOptions(provider) {
-    const entries = catalogModelsFor(provider);
-    dom.cfgModelOptions.textContent = '';
-    entries.forEach(function (entry) {
-      const option = document.createElement('option');
-      option.value = str(entry.model);
-      // The source rides on the label: a model that came from a router must be
-      // tellable apart from one that came out of the config file.
-      const source = str(entry.source);
-      if (source) { option.label = str(entry.model) + ' · ' + source; }
-      dom.cfgModelOptions.appendChild(option);
-    });
-    renderModelHint(provider, entries);
-  }
-
-  function renderModelHint(provider, entries) {
-    const name = str(provider).trim();
+  /* The summary under the settings picker: how many models the chosen provider
+   * lists and where they came from. The panel itself says the same thing per
+   * row, on demand. */
+  function renderModelHint() {
+    if (!settingsPicker) { return; }
+    const name = settingsPicker.selection.provider.trim();
+    const entries = catalogModelsFor(name);
     let text = '';
     if (name && state.catalog) {
       if (entries.length) {
@@ -2071,17 +2416,19 @@
         text = (entries.length === 1 ? '1 model' : entries.length + ' models') + ' for ' + name
           + (sources.length ? ' · source: ' + sources.join(', ') : '');
       } else if (providerInfo(name)) {
-        text = name + ' lists no models — type the model name.';
+        text = name + ' lists no models — type the model name in the picker.';
       }
     }
     dom.cfgModelHint.textContent = text;
     dom.cfgModelHint.hidden = !text;
   }
 
-  /* Says what the typed name is: compiled in, the user's own, or not defined
-   * yet — the last one is a real state now, not a typo to hide. */
+  /* Says what the selected provider is: compiled in, the user's own, or not
+   * defined yet — the last one is a real state, not a typo to hide. The
+   * settings form still accepts any name, because the server does. */
   function renderProviderHint() {
-    const name = dom.cfgProvider.value.trim();
+    if (!settingsPicker) { return; }
+    const name = settingsPicker.selection.provider.trim();
     const info = providerInfo(name);
     let text = '';
     if (info) {
@@ -2103,17 +2450,21 @@
    * treats a base URL that differs from the provider's default as an explicit
    * override, so a previous provider's URL left in the field would silently win
    * over the definition just selected. */
-  function providerChanged() {
-    const name = dom.cfgProvider.value.trim();
-    renderModelOptions(name);
+  function settingsProviderChanged(name) {
     renderProviderHint();
+    renderModelHint();
     const info = providerInfo(name);
     if (!info) { return; }
     if (str(info.baseUrl)) { dom.cfgBaseUrl.value = str(info.baseUrl); }
     dom.cfgApiKeyEnv.value = str(info.kind) === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
     const models = Array.isArray(info.models) ? info.models.map(str) : [];
-    if (models.length && models.indexOf(dom.cfgModel.value.trim()) < 0) {
-      dom.cfgModel.value = models[0];
+    if (models.length && models.indexOf(settingsPicker.selection.model) < 0) {
+      // The provider's first model is the sane default; nothing is sent until Save.
+      settingsPicker.setSelection({
+        provider: settingsPicker.selection.provider,
+        model: models[0],
+        reasoning: settingsPicker.selection.reasoning
+      });
     }
   }
 
@@ -2193,16 +2544,14 @@
     dom.cfgProviderAddToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
-  /* Both provider endpoints answer with the whole catalogue, so the list, the
-   * dropdowns and the model counts all come from the server's answer — never
+  /* Both provider endpoints answer with the whole catalogue, so the tree, the
+   * pickers and the model counts all come from the server's answer — never
    * from the form's own idea of what it just sent. */
   function acceptCatalogue(payload, note) {
     if (payload && typeof payload === 'object' && Array.isArray(payload.providers)) {
       setCatalog(payload);
     }
-    renderProviderOptions();
-    renderModelOptions(dom.cfgProvider.value.trim());
-    renderProviderHint();
+    refreshPickers();
     renderProviderSection();
     providerNote(note);
   }
@@ -2270,8 +2619,10 @@
       dom.cfgNewApiKeyEnv.value = '';
       dom.cfgNewModels.value = '';
       acceptCatalogue(res, 'Provider ' + name + ' saved — select it above and press Save to use it.');
-      // Defining the name that is already typed above settles that row's fields.
-      if (dom.cfgProvider.value.trim().toLowerCase() === name.toLowerCase()) { providerChanged(); }
+      // Defining the provider the picker already has selected settles its credential fields.
+      if (settingsPicker.selection.provider.toLowerCase() === name.toLowerCase()) {
+        settingsProviderChanged(settingsPicker.selection.provider);
+      }
     } catch (err) {
       showProviderFormError(err);
     }
@@ -2308,12 +2659,17 @@
     if (current && providers.indexOf(current) < 0) { providers.push(current); }
     state.configProviders = providers;
 
-    renderProviderOptions();
-    dom.cfgProvider.value = current;
-    renderModelOptions(current);
+    if (Array.isArray(cfg.reasoningLevels) && cfg.reasoningLevels.length) {
+      state.reasoningLevels = cfg.reasoningLevels.map(str);
+    }
+    settingsPicker.setSelection({
+      provider: current,
+      model: str(cfg.model),
+      reasoning: 'reasoning' in cfg ? str(cfg.reasoning) || 'default' : settingsPicker.selection.reasoning
+    });
     renderProviderHint();
+    renderModelHint();
 
-    dom.cfgModel.value = str(cfg.model);
     dom.cfgBaseUrl.value = str(cfg.baseUrl);
     dom.cfgApiKeyEnv.value = str(cfg.apiKeyEnv) || 'OPENAI_API_KEY';
     dom.cfgMaxSteps.value = cfg.maxSteps === null || cfg.maxSteps === undefined || !isFinite(Number(cfg.maxSteps))
@@ -2356,11 +2712,13 @@
   /* Only the fields this form manages are sent; apiKey is omitted when the
    * field is empty so the stored key survives an unrelated change. */
   function settingsPayload() {
+    const chosen = settingsPicker.selection;
     const payload = {
-      provider: dom.cfgProvider.value.trim(),
-      model: dom.cfgModel.value.trim(),
+      provider: chosen.provider,
+      model: chosen.model,
       baseUrl: dom.cfgBaseUrl.value.trim(),
-      apiKeyEnv: dom.cfgApiKeyEnv.value.trim() || 'OPENAI_API_KEY'
+      apiKeyEnv: dom.cfgApiKeyEnv.value.trim() || 'OPENAI_API_KEY',
+      reasoning: chosen.reasoning || 'default'
     };
     const clearing = dom.cfgClearKey.checked;
     if (clearing) {
@@ -2393,7 +2751,7 @@
       fieldError(dom.cfgModelError, message);
     } else if (/provider/i.test(message)) {
       fieldError(dom.cfgProviderError, message);
-      dom.cfgProvider.focus();
+      settingsPicker.focus();
     } else {
       dom.settingsError.textContent = message;
       dom.settingsError.hidden = false;
@@ -2438,10 +2796,11 @@
     dom.settingsTest.disabled = false;
   }
 
-  function focusSettingsForm() { dom.cfgProvider.focus(); }
+  function focusSettingsForm() { settingsPicker.focus(); }
 
   function closeSettings() {
     if (dom.settingsOverlay.hidden) { return; }
+    if (settingsPicker) { settingsPicker.closePanel(false); }
     dom.settingsOverlay.hidden = true;
     // The panel is opened from the button (or automatically on a first run);
     // either way the button is where focus belongs when it closes.
@@ -2474,17 +2833,34 @@
   }
 
   /* A first run has no model, and the page cannot do anything useful until one
-   * is picked, so the panel opens itself. */
-  async function maybeOpenSettingsOnFirstLoad() {
-    let cfg = null;
-    try {
-      cfg = await request('/api/config');
-    } catch (err) {
-      return false;
+   * is picked, so the panel opens itself. `preloaded` spares the round trip
+   * when init() has already read GET /api/config. */
+  async function maybeOpenSettingsOnFirstLoad(preloaded) {
+    let cfg = preloaded && typeof preloaded === 'object' ? preloaded : null;
+    if (!cfg) {
+      try {
+        cfg = await request('/api/config');
+      } catch (err) {
+        return false;
+      }
     }
     if (!cfg || typeof cfg !== 'object' || cfg.configured !== false) { return false; }
     await openSettings(cfg);
     return true;
+  }
+
+  /* The provider names the server says are usable, read once at start so the
+   * composer's picker offers providers before Settings is ever opened. */
+  async function readSettingsConfig() {
+    try {
+      const cfg = await request('/api/config');
+      if (cfg && typeof cfg === 'object' && Array.isArray(cfg.providers)) {
+        state.configProviders = cfg.providers.map(str).filter(Boolean);
+      }
+      return cfg && typeof cfg === 'object' ? cfg : null;
+    } catch (err) {
+      return null;
+    }
   }
 
   // ------------------------------------------------------------ composer
@@ -2572,9 +2948,6 @@
     saveSettings();
   });
   dom.settingsTest.addEventListener('click', testSettings);
-  /* `input` rather than `change`: it fires for typing *and* for picking an
-   * entry out of the datalist, so the model list tracks the provider live. */
-  dom.cfgProvider.addEventListener('input', providerChanged);
   dom.cfgProviderAddToggle.addEventListener('click', function () {
     const open = dom.cfgProviderForm.hidden;
     setProviderFormOpen(open);
@@ -2590,9 +2963,10 @@
     if (clearing) { dom.cfgApiKey.value = ''; }
   });
 
-  /* Escape closes what is open, innermost first: the settings dialog, then the
-   * Add-workspace form, then an armed delete. The sidebar itself is a region,
-   * not a popup — it is closed with its own toggle, on purpose. */
+  /* Escape closes what is open, innermost first: an open picker, then the
+   * settings dialog, then the Add-workspace form, then an armed delete. The
+   * sidebar itself is a region, not a popup — it is closed with its own
+   * toggle, on purpose. */
   function cancelArmedDeletes() {
     let armed = false;
     tree.deletes.forEach(function (control) {
@@ -2607,12 +2981,25 @@
 
   document.addEventListener('keydown', function (event) {
     if (event.key !== 'Escape') { return; }
-    if (!dom.settingsOverlay.hidden) { closeSettings(); }
+    const open = openPicker();
+    if (open) { open.closePanel(true); }
+    else if (!dom.settingsOverlay.hidden) { closeSettings(); }
     else if (!dom.workspaceAddForm.hidden) {
       setAddFormOpen(false);
       dom.workspaceAddToggle.focus();
     } else { cancelArmedDeletes(); }
   });
+
+  /* A picker closes when the click lands outside it. The trigger toggles
+   * itself, so a click on it is inside the root and never double-toggles. The
+   * check runs in the capture phase because choosing an option re-renders the
+   * list, and by the time the event bubbles the clicked node is detached —
+   * which would look exactly like a click outside. */
+  document.addEventListener('click', function (event) {
+    pickers.forEach(function (picker) {
+      if (picker.isOpen() && !picker.contains(event.target)) { picker.closePanel(false); }
+    });
+  }, true);
 
   dom.btnAuto.addEventListener('click', async function () {
     const next = !autoApproveOn();
@@ -2655,6 +3042,7 @@
   async function init() {
     initTheme();
     initSidebar();
+    initPickers();
     paintAuto();
     setBusy(false);
     // The first status tells us which session the page is showing; its history
@@ -2665,7 +3053,11 @@
     loadWorkspaces();
     if (state.historyPromise) { await state.historyPromise; }
     connect();
-    const settingsOpen = await maybeOpenSettingsOnFirstLoad();
+    // The picker above the composer must offer the catalogue before Settings is
+    // ever opened, so both are read (once) at start.
+    const cfg = await readSettingsConfig();
+    await refreshCatalog();
+    const settingsOpen = await maybeOpenSettingsOnFirstLoad(cfg);
     if (!settingsOpen) { dom.input.focus(); }
   }
 

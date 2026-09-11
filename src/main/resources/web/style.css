@@ -1123,6 +1123,189 @@ body {
 /* "(optional)" is a note on the label, not part of its name. */
 .field-optional { color: var(--fg-faint); font-weight: 400; }
 
+/* ------------------------------------------- provider / model / effort picker */
+
+/* The trigger is the composer's first line: a compact control that belongs to
+ * the writing column, not the header. It is a button because opening a menu is
+ * a button's job, and it carries aria-expanded like the other disclosures. */
+.picker { position: relative; display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.picker-settings { align-items: flex-start; gap: var(--sp-2); }
+
+.picker-trigger {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  max-width: 100%;
+  font: 12px/1.2 var(--mono);
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.picker-trigger:hover { background: var(--btn-hover); border-color: var(--accent); }
+.picker-trigger[aria-expanded="true"] { border-color: var(--accent); }
+.picker-label { font: 600 10px/1 var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--fg-faint); }
+.picker-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
+.picker-value-warn { color: var(--warn); }
+.picker-caret { color: var(--fg-faint); font-size: 10px; }
+
+/* The composer's panel opens above the trigger and never covers the message
+ * box it belongs to: the offset clears the composer's own top padding and the
+ * panel's gap, so its bottom edge lands just above the composer. Anchoring to
+ * `.picker` keeps it aligned with the input column on any window width, and
+ * the width is capped by the viewport, never by the content. */
+.picker-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + var(--sp-3) + var(--sp-2));
+  z-index: 20;
+  /* Never wider than its column (so it cannot run off the viewport's right
+   * edge and drag a horizontal scrollbar in), never wider than a reading
+   * card. */
+  width: min(560px, 100%);
+  max-height: min(60vh, 480px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* Inside the settings form the panel is part of the dialog, not a popover: the
+ * dialog's body already scrolls, so a floating panel would be clipped by it.
+ * The markup is the same — only where it sits changes. */
+.picker-settings .picker-panel {
+  position: static;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  box-shadow: none;
+  border-color: var(--border);
+  background: var(--panel);
+}
+
+/* Two columns: providers on the left, that provider's models on the right. */
+.picker-cols { display: flex; gap: var(--sp-3); align-items: flex-start; }
+.picker-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+
+.picker-col-head {
+  margin: 0;
+  font: 600 10px/1 var(--sans);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.picker-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-wrap: wrap;
+  text-align: left;
+  font: 12px/1.3 var(--mono);
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.picker-option:hover { background: var(--btn-hover); border-color: var(--border); }
+.picker-option.browsed { background: var(--btn-hover); }
+.picker-option.active { background: var(--accent-soft); border-color: var(--accent); }
+.picker-option-name { min-width: 0; overflow-wrap: anywhere; }
+
+.picker-badge {
+  font: 600 9px/1 var(--sans);
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+
+.picker-option.active .picker-badge { color: var(--accent); border-color: var(--accent); }
+.picker-option-meta { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-left: auto; }
+
+.picker-empty { font-size: 12px; line-height: 1.4; color: var(--fg-faint); padding: 4px 2px; overflow-wrap: anywhere; }
+
+/* The hand-typed model: a provider with no listed models (or a model the
+ * catalogue does not know) is still usable, exactly as the flat field was. */
+.picker-manual { display: flex; gap: var(--sp-1); margin-top: 2px; }
+.picker-manual input,
+.field .picker-manual input {
+  width: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 12px/1.3 var(--mono);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+}
+.picker-manual input::placeholder, .field .picker-manual input::placeholder { color: var(--fg-faint); }
+.picker-manual input:focus,
+.field .picker-manual input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
+.picker-manual .btn { flex: 0 0 auto; }
+
+.picker-effort { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); }
+.picker-effort-label {
+  font: 600 10px/1 var(--sans);
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  margin-right: 2px;
+}
+
+.picker-tier {
+  font: 12px/1 var(--mono);
+  color: var(--fg-dim);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.picker-tier:hover { border-color: var(--accent); color: var(--fg); }
+.picker-tier.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.picker-effort-hint { margin: 0; font-size: 11px; color: var(--fg-faint); }
+.picker-error { margin: 0; }
+
+@media (max-width: 640px) {
+  .picker-cols { flex-direction: column; }
+}
+
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 900px) {

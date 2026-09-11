@@ -117,6 +117,45 @@
       </div>
 
       <form id="composer" class="composer" autocomplete="off">
+        <!-- Provider, model and effort, directly above the message box: the
+             same column as the input, so it reads as part of the composer.
+             The panel opens upward and never covers what it belongs to. -->
+        <div class="picker" id="composer-picker" data-picker="composer">
+          <button type="button" class="picker-trigger" id="picker-trigger" data-role="trigger"
+                  aria-haspopup="true" aria-expanded="false" aria-controls="picker-panel"
+                  title="Provider, model and effort">
+            <span class="picker-label">Model</span>
+            <span class="picker-value picker-value-warn" id="picker-value" data-role="value">not configured</span>
+            <span class="picker-caret" aria-hidden="true">▾</span>
+          </button>
+
+          <div class="picker-panel" id="picker-panel" data-role="panel" role="dialog"
+               aria-label="Choose a provider, model and effort" hidden>
+            <div class="picker-cols">
+              <div class="picker-col">
+                <p class="picker-col-head" id="picker-providers-head">Provider</p>
+                <ul class="picker-list" id="picker-providers" data-role="providers"
+                    aria-labelledby="picker-providers-head"></ul>
+              </div>
+              <div class="picker-col">
+                <p class="picker-col-head" id="picker-models-head">Model</p>
+                <ul class="picker-list" id="picker-models" data-role="models"
+                    aria-labelledby="picker-models-head"></ul>
+                <div class="picker-manual">
+                  <label class="sr-only" for="picker-model-input">Model name</label>
+                  <input type="text" id="picker-model-input" data-role="modelInput"
+                         spellcheck="false" autocomplete="off" placeholder="type a model name">
+                  <button type="button" class="btn sm" id="picker-model-use" data-role="modelUse">Use</button>
+                </div>
+              </div>
+            </div>
+            <div class="picker-effort" id="picker-effort" data-role="effort"
+                 role="group" aria-label="Reasoning effort"></div>
+            <p class="picker-effort-hint" id="picker-effort-hint" data-role="effortHint"></p>
+            <p class="picker-error err" id="picker-error" data-role="error" role="alert" hidden></p>
+          </div>
+        </div>
+
         <button type="button" id="jump" class="jump" hidden>jump to latest</button>
         <label class="sr-only" for="input">Message</label>
         <textarea id="input" rows="3" spellcheck="false"
@@ -176,20 +215,47 @@
       <form class="settings-form" id="settings-form" autocomplete="off">
         <p class="err settings-error" id="settings-error" hidden></p>
 
+        <!-- The same layered control as the composer's, mounted in the form:
+             choosing only fills the draft, Save is what applies it. -->
         <div class="field">
-          <label for="cfg-provider">Provider</label>
-          <input type="text" id="cfg-provider" list="cfg-provider-options" spellcheck="false"
-                 autocomplete="off" placeholder="openai">
-          <datalist id="cfg-provider-options"></datalist>
+          <label for="cfg-picker-trigger">Provider &amp; model</label>
+          <div class="picker picker-settings" id="cfg-picker" data-picker="settings">
+            <button type="button" class="picker-trigger" id="cfg-picker-trigger" data-role="trigger"
+                    aria-haspopup="true" aria-expanded="false" aria-controls="cfg-picker-panel"
+                    title="Provider, model and effort">
+              <span class="picker-label">Model</span>
+              <span class="picker-value picker-value-warn" id="cfg-picker-value" data-role="value">not configured</span>
+              <span class="picker-caret" aria-hidden="true">▾</span>
+            </button>
+
+            <div class="picker-panel" id="cfg-picker-panel" data-role="panel" role="dialog"
+                 aria-label="Choose a provider, model and effort" hidden>
+              <div class="picker-cols">
+                <div class="picker-col">
+                  <p class="picker-col-head" id="cfg-picker-providers-head">Provider</p>
+                  <ul class="picker-list" id="cfg-picker-providers" data-role="providers"
+                      aria-labelledby="cfg-picker-providers-head"></ul>
+                </div>
+                <div class="picker-col">
+                  <p class="picker-col-head" id="cfg-picker-models-head">Model</p>
+                  <ul class="picker-list" id="cfg-picker-models" data-role="models"
+                      aria-labelledby="cfg-picker-models-head"></ul>
+                  <div class="picker-manual">
+                    <label class="sr-only" for="cfg-picker-model-input">Model name</label>
+                    <input type="text" id="cfg-picker-model-input" data-role="modelInput"
+                           spellcheck="false" autocomplete="off" placeholder="type a model name">
+                    <button type="button" class="btn sm" id="cfg-picker-model-use" data-role="modelUse">Use</button>
+                  </div>
+                </div>
+              </div>
+              <div class="picker-effort" id="cfg-picker-effort" data-role="effort"
+                   role="group" aria-label="Reasoning effort"></div>
+              <p class="picker-effort-hint" id="cfg-picker-effort-hint" data-role="effortHint"></p>
+              <p class="picker-error err" id="cfg-picker-error" data-role="error" role="alert" hidden></p>
+            </div>
+          </div>
           <span class="field-hint" id="cfg-provider-hint" hidden></span>
           <span class="field-error" id="cfg-provider-error" hidden></span>
-        </div>
-
-        <div class="field">
-          <label for="cfg-model">Model</label>
-          <input type="text" id="cfg-model" list="cfg-model-options" spellcheck="false"
-                 autocomplete="off" placeholder="gpt-4o-mini">
-          <datalist id="cfg-model-options"></datalist>
           <span class="field-hint" id="cfg-model-hint" hidden></span>
           <span class="field-error" id="cfg-model-error" hidden></span>
         </div>

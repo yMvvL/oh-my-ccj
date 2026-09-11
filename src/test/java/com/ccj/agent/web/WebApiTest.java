@@ -1069,6 +1069,24 @@ class WebApiTest {
     assertEquals(400, get("/api/sessions?workspace=nope").statusCode());
   }
 
+  @Test
+  void theChosenEffortTierIsCarriedIntoTheNextTurn() throws Exception {
+    postJson("/api/config", "{\"reasoning\":\"high\"}");
+    provider.reply(Message.Assistant.text("answered"));
+
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"think hard\"}");
+      sse.await("done", 5000);
+    }
+
+    // The tier must survive the whole path: settings -> stored config -> the turn's options ->
+    // the request a provider actually receives. Asserting the config alone would not catch a
+    // dropped argument on the way.
+    var requests = lastBuilt.requests();
+    assertEquals("high", requests.get(requests.size() - 1).reasoning(), requests.toString());
+    assertEquals(1, requests.size(), "one turn, one request");
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private static Message.Assistant call(String name, String field, String value) {

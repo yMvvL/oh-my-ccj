@@ -146,6 +146,11 @@ public final class Cli {
     try {
       configFile = options.config() == null ? paths.configFile() : Path.of(options.config());
       config = Config.layered(configFile, env, options.overrides());
+      if (options.demo()) {
+        // The UI reports the *configured* provider, so a demo run has to say it is the demo one —
+        // showing a provider that is not the one answering would be a lie the status line tells.
+        config = config.merge(demoConfig());
+      }
     } catch (RuntimeException e) {
       return fail(err, e);
     }
@@ -357,6 +362,11 @@ public final class Cli {
       }
     }
     return SessionStore.create(sessionsDir);
+  }
+
+  private static Config demoConfig() {
+    return new Config(
+        "demo", "demo", null, null, null, null, null, null, null, null, null, null);
   }
 
   /** The directory this run starts in: {@code -C} wins, otherwise the process directory. */

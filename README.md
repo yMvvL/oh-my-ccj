@@ -98,12 +98,13 @@ key is never sent back to the browser, only whether one exists and where it come
 | Tools | `read`, `write`, `edit`, `bash`, `glob`, `grep` — each with a hand-written JSON Schema and self-describing errors. |
 | Loop | One model turn at a time; every requested tool runs, its result goes back, and the model is asked again. Bounded by `--max-steps`. |
 | Usage | Prompt/output tokens, steps, tool calls and the **cache hit rate** per session, parsed from both protocols (`prompt_tokens_details.cached_tokens`, `prompt_cache_hit_tokens`, `cache_read_input_tokens`), shown live in the side panel and in each turn's token line, and persisted with the session so resuming continues the count. |
-| Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, created on the first message (an empty session leaves no file), resumable with `--resume` / `--continue`, replayed into the transcript when the UI opens one, and deletable one at a time or all at once from the UI. |
+| Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, created on the first message (an empty session leaves no file), resumable with `--resume` / `--continue`, replayed into the transcript when the UI opens one, and deletable one at a time or all at once from the sidebar — including in a workspace you are not currently in. |
 | Approval | Anything that writes or executes asks first; without a terminal it is denied, not silently allowed. |
 | Rendering | Streaming prose, tool cards with argument summaries, per-call timing, dimmed reasoning, a spinner that yields the terminal to prompts. |
 | Themes | Light/dark/system, remembered per browser, applied before the first paint. |
+| Effort tiers | A picker above the message box: provider → model → `default`/`low`/`high`/`max`, translated per protocol (`reasoning_effort` for OpenAI-shaped APIs, extended-thinking budgets for Anthropic). `default` sends nothing, so ordinary models are unaffected. |
 | Folder picker | "Add workspace" can open the desktop's own folder chooser (`zenity`, `kdialog` or Swing) because a browser cannot hand back an absolute path; typing one always works too. |
-| Workspaces | Named directories, each with its own session history. The workspace `ccj` starts in keeps the original sessions directory; added ones get their own under `<home>/workspaces/<name>/`. Switching changes the working directory *and* the history in one move. |
+| Workspaces | A VS Code-style sidebar: every workspace is a folder that expands to its own sessions, with lazy loading, per-row delete and per-node remove. Named directories with their own session history — the workspace `ccj` starts in keeps the original sessions directory, added ones get their own under `<home>/workspaces/<name>/`. Switching changes the working directory *and* the history in one move, and reading a folded folder never moves the session you are in. |
 | Web UI | `ccj` serves the same loop as a single page: streaming transcript, tool cards, blocking approval prompts, session switching, and a settings panel that configures the model at runtime. No framework, no build step. |
 
 ## Usage
@@ -277,7 +278,7 @@ mappings and the reasoning behind the design.
 ## Development
 
 ```bash
-mvn test                                  # 213 tests, no network, no API key
+mvn test                                  # 223 tests, no network, no API key
 mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
 mvn -Dtest=WebApiTest test                # HTTP + SSE + approval handshake only
 mvn -DskipTests package                   # fat jar
@@ -291,13 +292,13 @@ file on disk, session written.
 
 | Area | Tests |
 |---|---|
-| providers (SSE parsing, both wire mappings, retry policy, custom definitions) | 33 |
+| providers (SSE parsing, both wire mappings, retry policy, custom definitions, effort tiers) | 37 |
 | tools (matching, truncation, timeouts, denial paths) | 34 |
 | core (loop behaviour, config precedence, config persistence) | 26 |
 | session (codec round-trips, append/reopen, listing) | 19 |
 | CLI (argument parsing, mode selection) | 10 |
 | end-to-end (CLI → HTTP → tool → disk) | 9 |
-| web API (HTTP, SSE, approvals, token gate, settings, workspaces, deletion) | 28 |
+| web API (HTTP, SSE, approvals, token gate, settings, workspaces, deletion) | 32 |
 | workspaces (registry rules, persistence, isolation) | 7 |
 | folder chooser (subprocess plumbing, timeout, single-dialog guard) | 5 |
 | provider registry and catalogue | 8 |
