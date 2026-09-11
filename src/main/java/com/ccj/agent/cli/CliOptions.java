@@ -29,6 +29,7 @@ public record CliOptions(
     String home,
     String system,
     String cwd,
+    boolean demo,
     boolean web,
     Integer port,
     String host,
@@ -81,6 +82,7 @@ public record CliOptions(
     String home = null;
     String system = null;
     String cwd = null;
+    boolean demo = false;
     boolean web = false;
     Integer port = null;
     String host = null;
@@ -128,6 +130,10 @@ public record CliOptions(
         }
         case "--web" -> {
           web = true;
+          i++;
+        }
+        case "--demo" -> {
+          demo = true;
           i++;
         }
         case "--open" -> {
@@ -225,6 +231,7 @@ public record CliOptions(
         home,
         system,
         cwd,
+        demo,
         web,
         port,
         host,
@@ -238,10 +245,14 @@ public record CliOptions(
     return """
         Usage: ccj [options]
 
-        One-shot:
+    One-shot:
           -p, --print <prompt>     run a single turn, print the answer, and exit
 
-        Model:
+    Demo:
+          --demo                   no model and no key: read/run/list/search become real tool calls,
+                                   so the loop, the tools and the approval prompts can be tried out
+
+    Model:
               --provider <name>    provider to use (openai, anthropic, ...)
               --model <name>       model identifier
               --base-url <url>     override the provider base URL

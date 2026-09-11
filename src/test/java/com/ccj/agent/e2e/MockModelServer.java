@@ -11,9 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CountDownLatch;
 
 /**
  * Scripted stand-in for a model backend.
@@ -29,7 +27,6 @@ final class MockModelServer implements AutoCloseable {
   private final HttpServer server;
   private final ConcurrentLinkedQueue<String> responses = new ConcurrentLinkedQueue<>();
   private final List<Recorded> recorded = Collections.synchronizedList(new ArrayList<>());
-  private boolean playground;
 
   MockModelServer() throws IOException {
     this(0);
@@ -88,96 +85,13 @@ final class MockModelServer implements AutoCloseable {
     server.stop(0);
   }
 
-  // ---------------------------------------------------------------- playground mode
-
-  /**
-   * Makes the server answer from a tiny routing policy instead of a queue, so the real CLI can be
-   * driven with no API key: {@code read <path>}, {@code run <command>}, {@code list [glob]} and
-   * {@code search <regex>} become real tool calls; anything else is answered in prose. Once a tool
-   * result comes back it always answers in prose, which is what ends the loop.
-   */
-  MockModelServer playground() {
-    this.playground = true;
-    return this;
-  }
-
-  /** What the playground model decided to do with one request. */
-  sealed interface PlaygroundAction {
-    record Call(String id, String name, String argumentsJson) implements PlaygroundAction {}
-
-    record Say(String text) implements PlaygroundAction {}
-  }
-
-  static PlaygroundAction playgroundAction(JsonNode request) {
-    JsonNode messages = request.path("messages");
-    if (!messages.isArray() || messages.isEmpty()) {
-      return new PlaygroundAction.Say("(playground) say something like: read README.md");
-    }
-    JsonNode last = messages.get(messages.size() - 1);
-    if ("tool".equals(last.path("role").asText())) {
-      String content = last.path("content").asText("");
-      long lines = content.lines().count();
-      String first = content.lines().findFirst().orElse("(no output)");
-      return new PlaygroundAction.Say(
-          "tool said: " + first + (lines > 1 ? " … (" + lines + " lines)" : ""));
-    }
-
-    String text = last.path("content").asText("").strip();
-    String lower = text.toLowerCase(Locale.ROOT);
-    int space = text.indexOf(' ');
-    String rest = space < 0 ? "" : text.substring(space + 1).strip();
-
-    if (lower.startsWith("read ") && !rest.isEmpty()) {
-      return new PlaygroundAction.Call("play_read", "read", args("path", rest));
-    }
-    if ((lower.startsWith("run ") || lower.startsWith("bash ")) && !rest.isEmpty()) {
-      return new PlaygroundAction.Call("play_bash", "bash", args("command", rest));
-    }
-    if (lower.equals("list") || lower.startsWith("list ")) {
-      return new PlaygroundAction.Call(
-          "play_glob", "glob", args("pattern", rest.isEmpty() ? "**/*" : rest));
-    }
-    if (lower.startsWith("search ") && !rest.isEmpty()) {
-      return new PlaygroundAction.Call("play_grep", "grep", args("pattern", rest));
-    }
-    return new PlaygroundAction.Say(
-        "(playground model) there is no real model behind this endpoint, only a tool router."
-            + " Try: read <path> | run <command> | list [glob] | search <regex>. You said: \""
-            + text
-            + "\"");
-  }
-
-  String playgroundResponse(JsonNode request) {
-    return switch (playgroundAction(request)) {
-      case PlaygroundAction.Call c -> openAiToolCallWhole(c.id(), c.name(), c.argumentsJson());
-      case PlaygroundAction.Say s -> openAiText(s.text());
-    };
-  }
-
-  private static String args(String name, String value) {
-    return Json.write(Json.object().put(name, value));
-  }
-
-  /**
-   * Runs the playground server standalone: {@code java -cp ... com.ccj.agent.e2e.MockModelServer
-   * [port]}. {@code scripts/playground.sh} wraps this and points the CLI at it.
-   */
-  public static void main(String[] args) throws Exception {
-    int port = args.length > 0 ? Integer.parseInt(args[0]) : 8777;
-    try (MockModelServer server = new MockModelServer(port).playground()) {
-      System.out.println("playground model on http://127.0.0.1:" + port + "/v1");
-      System.out.flush();
-      new CountDownLatch(1).await();
-    }
-  }
-
   private void respond(HttpExchange exchange) throws IOException {
     String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
     String auth = exchange.getRequestHeaders().getFirst("Authorization");
     String key = exchange.getRequestHeaders().getFirst("x-api-key");
     recorded.add(new Recorded(exchange.getRequestURI().getPath(), auth, key, body));
 
-    String queued = playground ? playgroundResponse(Json.parse(body)) : responses.poll();
+    String queued = responses.poll();
     if (queued == null) {
       send(exchange, 599, "text/plain", "no scripted response left");
       return;
@@ -223,11 +137,6 @@ final class MockModelServer implements AutoCloseable {
         new String[][] {
           {id, name, argumentsJson.substring(0, a), argumentsJson.substring(a, b), argumentsJson.substring(b)}
         });
-  }
-
-  /** One tool call delivered whole, with no fragment splitting: what the playground emits. */
-  static String openAiToolCallWhole(String id, String name, String argumentsJson) {
-    return openAiToolCalls(new String[][] {{id, name, argumentsJson}});
   }
 
   static String openAiToolCalls(String[]... calls) {

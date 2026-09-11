@@ -9,6 +9,7 @@ import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolRegistry;
 import com.ccj.agent.core.ToolSpec;
+import com.ccj.agent.demo.DemoProvider;
 import com.ccj.agent.provider.Providers;
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
@@ -127,7 +128,7 @@ public final class Cli {
 
     Provider provider;
     try {
-      provider = Providers.create(config, env);
+      provider = options.demo() ? new DemoProvider() : Providers.create(config, env);
     } catch (RuntimeException e) {
       return fail(err, e);
     }
@@ -148,11 +149,18 @@ public final class Cli {
       ConsoleRenderer renderer = new ConsoleRenderer(out, err, Ansi.enabled());
       AgentOptions agentOptions =
           new AgentOptions(
-              config.model(),
+              options.demo() ? "demo" : config.model(),
               config.systemPrompt(),
               config.temperature(),
               config.maxTokens(),
               config.maxSteps());
+
+      if (options.demo() && options.print() == null) {
+        out.println(
+            "demo model — no key needed. Try: read README.md | run git status --short"
+                + " | list src/**/*.java | search TODO");
+        out.flush();
+      }
 
       if (options.web()) {
         return serveWeb(
@@ -345,7 +353,7 @@ public final class Cli {
         new AgentHub.Settings(
             agentOptions,
             VERSION,
-            config.baseUrl(),
+            options.demo() ? "demo://local" : config.baseUrl(),
             cwd,
             sessionsDir,
             config.outputLimitBytes(),

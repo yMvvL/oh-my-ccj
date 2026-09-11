@@ -2,7 +2,7 @@
 
 A coding agent runtime written from scratch in plain Java 21. No agent framework, no HTTP client
 library, no CLI library — `java.net.http` for transport, `com.sun.net.httpserver` for the web UI and
-the test doubles, ~6k lines of hand-written Java plus a 1.6k-line vanilla page, 137 tests.
+the test doubles, 6.2k lines of hand-written Java plus a 1.6k-line vanilla page, 139 tests.
 
 `ccj` streams a conversation with a model, lets the model call tools that touch your filesystem,
 feeds the results back, and repeats until the model answers. It is a small, readable implementation
@@ -26,6 +26,10 @@ Added the check on line 42 and the suite passes.
 mvn package                      # builds target/ccj.jar (shaded, no classpath juggling)
 ./ccj --help                     # launcher; builds the jar on first use
 
+./ccj --demo                     # try it now: no key, no config, no network
+./ccj --demo --web --open        # ... or in a browser
+
+# then point it at a real model:
 mkdir -p ~/.oh-my-ccj
 cat > ~/.oh-my-ccj/config.json <<'JSON'
 {
@@ -36,8 +40,9 @@ cat > ~/.oh-my-ccj/config.json <<'JSON'
 JSON
 export OPENAI_API_KEY=sk-...
 
-ccj                              # interactive REPL
+ccj                                    # interactive REPL
 ccj -p "what does src/Main.java do?"   # one-shot
+ccj --web --open                       # browser UI
 ```
 
 Requires JDK 21+ and Maven. The only runtime dependency is `jackson-databind`.
@@ -61,22 +66,22 @@ is a small program, not a service.
 ### Try it without an API key
 
 ```bash
-scripts/playground.sh                              # REPL against a local fake model
-scripts/playground.sh -p "read README.md"          # one-shot
+ccj --demo                 # interactive REPL, no model, no key
+ccj --demo -p "read pom.xml"
+ccj --demo --web --open    # the same in a browser
 ```
 
-The playground starts a throwaway OpenAI-compatible endpoint on localhost that turns `read <path>`,
-`run <command>`, `list [glob]` and `search <regex>` into **real** tool calls, then hands you the
-normal CLI: same approval prompts, same tool cards, same session handling. Nothing leaves the
-machine, no key is involved, and the working directory is this repository — the fastest way to watch
-the loop work end to end.
+`--demo` swaps the model for a local tool router: `read <path>`, `run <command>`, `list [glob]` and
+`search <regex>` become **real** tool calls, and anything else is answered with that vocabulary.
+Everything else stays real — same loop, same tools, same approval prompts, same sessions — and it
+needs no key, no network and no second process. It is the fastest way to watch the agent work.
 
 ## Web UI
 
 ```bash
 ccj --web                 # http://127.0.0.1:8787 — same loop, in a browser
 ccj --web --open          # ... and open it
-scripts/playground.sh --web --open   # the same thing with no API key
+ccj --demo --web --open   # the same with no key at all
 ```
 
 The page streams the assistant's prose, shows every tool call as a card with its arguments, timing and
@@ -203,6 +208,7 @@ exceptions all come back as error results the model can read and correct.
 cli/       argument parsing, wiring, REPL, exit codes   (the only place that calls System.exit)
 ui/        AgentListener implementation: streaming text, tool cards, spinner, ANSI
 web/       the same loop behind HTTP: agent hub, SSE stream, approval handshake, single page
+demo/      a tool-routing stand-in for a model, so the CLI can be demonstrated with no key
 session/   JSONL message codec, FileSession, SessionStore
 tool/      read write edit bash glob grep + approval-aware helpers
 provider/  OpenAI-compatible and Anthropic providers over java.net.http, plus the SSE reader
@@ -218,7 +224,7 @@ mappings and the reasoning behind the design.
 ## Development
 
 ```bash
-mvn test                                  # 137 tests, no network, no API key
+mvn test                                  # 139 tests, no network, no API key
 mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
 mvn -Dtest=WebApiTest test                # HTTP + SSE + approval handshake only
 mvn -DskipTests package                   # fat jar
@@ -232,13 +238,14 @@ file on disk, session written.
 
 | Area | Tests |
 |---|---|
-| providers (SSE parsing, both wire mappings, retry policy) | 28 |
+| providers (SSE parsing, both wire mappings, retry policy) | 29 |
 | tools (matching, truncation, timeouts, denial paths) | 34 |
-| core (loop behaviour, config precedence) | 21 |
+| core (loop behaviour, config precedence) | 22 |
 | session (codec round-trips, append/reopen, listing) | 19 |
 | CLI (argument parsing) | 8 |
 | end-to-end (CLI → HTTP → tool → disk) | 9 |
 | web API (HTTP, SSE, approvals, token gate) | 10 |
+| demo provider (routing, termination) | 8 |
 
 ## Limitations
 
