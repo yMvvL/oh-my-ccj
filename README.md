@@ -144,6 +144,12 @@ command-line flags.
 | `CCJ_AUTO_APPROVE`, `CCJ_SYSTEM_PROMPT` | approval mode and prompt override |
 | `CCJ_HOME` | application home directory |
 
+`model` can be omitted for `openai` and `anthropic`: the defaults are `gpt-4o-mini` and
+`claude-sonnet-4-5`. They are deliberately **not** applied when you point `baseUrl` at your own
+endpoint — relays and local servers name models freely, so guessing there would replace a clear
+configuration error with an obscure 404. In that case `--model` / `CCJ_MODEL` is required and the
+error says so.
+
 The key comes from `apiKey` in the config file or from the environment variable named by
 `apiKeyEnv` (default `OPENAI_API_KEY` for OpenAI-compatible, `ANTHROPIC_API_KEY` for Anthropic);
 keeping it in the environment means it never lands in a file. Keys are never printed — `/config` and

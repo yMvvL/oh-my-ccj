@@ -129,6 +129,35 @@ class ConfigTest {
   }
 
   @Test
+  void appliesAProviderDefaultModelOnlyAgainstTheOfficialEndpoint() {
+    assertEquals(Config.DEFAULT_OPENAI_MODEL, Config.empty().resolved().model());
+    assertEquals(
+        Config.DEFAULT_ANTHROPIC_MODEL,
+        new Config("anthropic", null, null, null, null, null, null, null, null, null, null)
+            .resolved()
+            .model());
+    assertEquals(
+        Config.DEFAULT_OPENAI_MODEL,
+        new Config(null, null, Config.OPENAI_BASE_URL, null, null, null, null, null, null, null, null)
+            .resolved()
+            .model());
+
+    Config relay =
+        new Config(
+                null, null, "https://relay.example.com/v1", null, null, null, null, null, null, null,
+                null)
+            .resolved();
+    assertNull(relay.model(), "relays name models freely; guessing one would hide the real error");
+
+    assertEquals(
+        "my-model",
+        Config.empty()
+            .merge(new Config(null, "my-model", null, null, null, null, null, null, null, null, null))
+            .resolved()
+            .model());
+  }
+
+  @Test
   void apiKeyComesFromConfigThenEnvironment() {
     Config fromConfig =
         Config.empty().merge(new Config(null, null, null, "sk-literal", null, null, null, null, null, null, null));

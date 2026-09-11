@@ -36,6 +36,8 @@ public record Config(
   public static final String ANTHROPIC_BASE_URL = "https://api.anthropic.com";
   public static final String OPENAI_KEY_ENV = "OPENAI_API_KEY";
   public static final String ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY";
+  public static final String DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+  public static final String DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5";
   public static final int DEFAULT_MAX_STEPS = 25;
   public static final int DEFAULT_OUTPUT_LIMIT_BYTES = 32 * 1024;
 
@@ -69,9 +71,10 @@ public record Config(
         baseUrl != null && !baseUrl.isBlank() ? stripTrailingSlash(baseUrl) : defaultBaseUrl(resolvedProvider);
     String resolvedKeyEnv =
         apiKeyEnv != null && !apiKeyEnv.isBlank() ? apiKeyEnv : defaultKeyEnv(resolvedProvider);
+    String resolvedModel = model != null && !model.isBlank() ? model : defaultModelFor(resolvedProvider, resolvedBaseUrl);
     return new Config(
         resolvedProvider,
-        model,
+        resolvedModel,
         resolvedBaseUrl,
         apiKey,
         resolvedKeyEnv,
@@ -89,6 +92,26 @@ public record Config(
 
   public static String defaultKeyEnv(String provider) {
     return "anthropic".equals(provider) ? ANTHROPIC_KEY_ENV : OPENAI_KEY_ENV;
+  }
+
+  /** The model to use when none is configured, or null when the provider has no obvious one. */
+  public static String defaultModel(String provider) {
+    if (provider == null) {
+      return null;
+    }
+    return switch (provider.strip().toLowerCase()) {
+      case "openai" -> DEFAULT_OPENAI_MODEL;
+      case "anthropic" -> DEFAULT_ANTHROPIC_MODEL;
+      default -> null;
+    };
+  }
+
+  /**
+   * A default model only makes sense against the provider's own endpoint. Relays name models
+   * freely, so guessing there would turn a clear configuration error into an obscure 404.
+   */
+  private static String defaultModelFor(String provider, String baseUrl) {
+    return defaultBaseUrl(provider).equals(baseUrl) ? defaultModel(provider) : null;
   }
 
   /** The API key to send, or null when neither the config nor the environment provides one. */
@@ -158,7 +181,7 @@ public record Config(
   public Map<String, String> describe(Map<String, String> env) {
     Map<String, String> out = new LinkedHashMap<>();
     out.put("provider", provider);
-    out.put("model", model == null ? "(provider default)" : model);
+    out.put("model", model == null ? "(unset)" : model);
     out.put("baseUrl", baseUrl);
     out.put("apiKey", resolvedApiKey(env) == null ? "(unset)" : "***" + tail(resolvedApiKey(env)));
     out.put("maxSteps", String.valueOf(maxSteps));

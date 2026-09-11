@@ -113,6 +113,9 @@ class CliEndToEndTest {
 
     String secondRequest = server.lastRequest().body();
     assertTrue(
+        secondRequest.contains("\"model\":\"test-model\""),
+        "the configured model must reach the wire: " + secondRequest);
+    assertTrue(
         secondRequest.contains("hello from disk"),
         "the tool result must be fed back to the model: " + secondRequest);
     assertTrue(

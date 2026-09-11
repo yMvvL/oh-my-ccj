@@ -53,10 +53,21 @@ public final class Providers {
   }
 
   private static void requireModel(Config resolved) {
-    if (resolved.model() == null || resolved.model().isBlank()) {
-      throw new IllegalArgumentException(
-          "no model configured: pass --model or set CCJ_MODEL (there is no provider-wide default)");
+    if (resolved.model() != null && !resolved.model().isBlank()) {
+      return;
     }
+    String provider = resolved.provider();
+    String fallback = Config.defaultModel(provider);
+    String why =
+        fallback == null
+            ? "provider '" + provider + "' has no default model"
+            : "a default (" + fallback + ") only applies to the provider's own endpoint, and '"
+                + resolved.baseUrl()
+                + "' is a custom one";
+    throw new IllegalArgumentException(
+        "no model configured: pass --model <name>, set CCJ_MODEL, or add \"model\" to the config file"
+            + " — "
+            + why);
   }
 
   private static String requireApiKey(Config resolved, Map<String, String> env, String provider) {

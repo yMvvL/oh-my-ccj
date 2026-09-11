@@ -53,14 +53,30 @@ class ProvidersTest {
   }
 
   @Test
-  void rejectsAMissingModelWithAnActionableMessage() {
+  void usesTheProviderDefaultModelOnItsOwnEndpoint() {
+    Config config =
+        new Config("openai", null, null, "k", null, null, null, null, null, null, null).resolved();
+
+    assertEquals(Config.DEFAULT_OPENAI_MODEL, config.model());
+    assertEquals("openai", Providers.create(config, Map.of()).name());
+  }
+
+  @Test
+  void rejectsAMissingModelWhenTheEndpointIsCustom() {
+    Config relay =
+        new Config(
+                "openai", null, "https://relay.example.com/v1", "k", null, null, null, null, null,
+                null, null)
+            .resolved();
+
     IllegalArgumentException failure =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> Providers.create(config("openai", null, "k"), Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> Providers.create(relay, Map.of()));
 
     assertTrue(failure.getMessage().contains("--model"), failure.getMessage());
     assertTrue(failure.getMessage().contains("CCJ_MODEL"), failure.getMessage());
+    assertTrue(
+        failure.getMessage().contains("custom"),
+        "the message must explain why no default applies: " + failure.getMessage());
   }
 
   @Test
