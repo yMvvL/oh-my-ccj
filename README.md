@@ -96,7 +96,8 @@ key is never sent back to the browser, only whether one exists and where it come
 | Providers | Any OpenAI-compatible endpoint (`/chat/completions`, SSE) and Anthropic (`/v1/messages`, SSE). Streaming with incremental tool-call assembly, retry with backoff on 408/429/5xx. |
 | Tools | `read`, `write`, `edit`, `bash`, `glob`, `grep` — each with a hand-written JSON Schema and self-describing errors. |
 | Loop | One model turn at a time; every requested tool runs, its result goes back, and the model is asked again. Bounded by `--max-steps`. |
-| Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, resumable in a later process with `--resume` / `--continue`. |
+| Usage | Prompt/output tokens, steps, tool calls and the **cache hit rate** per session, parsed from both protocols (`prompt_tokens_details.cached_tokens`, `prompt_cache_hit_tokens`, `cache_read_input_tokens`), shown live in the side panel and in each turn's token line, and persisted with the session so resuming continues the count. |
+| Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, created on the first message (an empty session leaves no file), resumable with `--resume` / `--continue`, and replayed into the transcript when the UI opens one. |
 | Approval | Anything that writes or executes asks first; without a terminal it is denied, not silently allowed. |
 | Rendering | Streaming prose, tool cards with argument summaries, per-call timing, dimmed reasoning, a spinner that yields the terminal to prompts. |
 | Web UI | `ccj` serves the same loop as a single page: streaming transcript, tool cards, blocking approval prompts, session switching, and a settings panel that configures the model at runtime. No framework, no build step. |
@@ -267,6 +268,9 @@ file on disk, session written.
 - No MCP, no plugins, no sandboxing — approval is the only guard, and `--yolo` removes it.
 - Bash runs as the current user with your full environment.
 - Sessions grow without bound; there is no compaction or summarisation.
+- `cacheHitRate` is `n/a` unless the provider reports cache figures — a local model has no cache to
+  hit and is not reported as 0%. Usage totals cover one session (they are stored beside the
+  conversation, one record per turn), not a whole project or a billing period.
 - The OpenAI path targets the chat-completions API, not the newer Responses API.
 - The API key is stored in plaintext when you let the UI save it (the file is `0600`); keeping it
   in the environment instead is one dropdown away.

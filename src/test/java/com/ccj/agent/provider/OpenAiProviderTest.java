@@ -2,6 +2,7 @@ package com.ccj.agent.provider;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -214,5 +215,65 @@ class OpenAiProviderTest {
         List.of(new ToolSpec("read", "Read a file", TOOL_SCHEMA)),
         0.5,
         128);
+  }
+
+  @Test
+  void reportsCachedPromptTokensWhenTheEndpointSendsThem() throws Exception {
+    String stream =
+        """
+        data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}
+
+        data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":80}}}
+
+        data: [DONE]
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      provider.complete(request(), events::add);
+
+      assertTrue(events.contains(new Provider.Event.Usage(100, 5, 80)), events.toString());
+      provider.close();
+    }
+  }
+
+  @Test
+  void understandsDeepSeekStyleCacheFields() throws Exception {
+    String stream =
+        """
+        data: {"choices":[{"index":0,"delta":{"content":"hi"}}],"usage":{"prompt_tokens":50,"completion_tokens":2,"prompt_cache_hit_tokens":40}}
+
+        data: [DONE]
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      provider.complete(request(), events::add);
+
+      assertTrue(events.contains(new Provider.Event.Usage(50, 2, 40)), events.toString());
+      provider.close();
+    }
+  }
+
+  @Test
+  void anEndpointThatReportsNoCacheLeavesItUnknown() throws Exception {
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(STREAM))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      provider.complete(request(), events::add);
+
+      Provider.Event.Usage usage =
+          (Provider.Event.Usage)
+              events.stream().filter(Provider.Event.Usage.class::isInstance).findFirst().orElseThrow();
+      assertNull(
+          usage.cachedInputTokens(),
+          "no cache fields means unknown, which must not be rendered as 0%");
+      provider.close();
+    }
   }
 }

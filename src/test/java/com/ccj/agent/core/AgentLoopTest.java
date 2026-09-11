@@ -334,4 +334,32 @@ class AgentLoopTest {
             })
             .toList());
   }
+
+  @Test
+  void reportsHowMuchOfThePromptTheProviderHadCached() {
+    ScriptedProvider provider =
+        new ScriptedProvider(ScriptedProvider.Reply.text("hi")).usage(100, 5, 80);
+    Harness h = harness(AgentOptions.defaults(), new ToolRegistry(), provider);
+
+    h.loop().run("go");
+
+    assertTrue(
+        h.notices().stream().anyMatch(n -> n.contains("100 in (80% cached) / 5 out")),
+        h.notices().toString());
+  }
+
+  @Test
+  void staysQuietAboutCachingWhenTheProviderSaysNothing() {
+    ScriptedProvider provider =
+        new ScriptedProvider(ScriptedProvider.Reply.text("hi")).usage(100, 5, null);
+    Harness h = harness(AgentOptions.defaults(), new ToolRegistry(), provider);
+
+    h.loop().run("go");
+
+    assertTrue(
+        h.notices().stream().anyMatch(n -> n.contains("100 in / 5 out")), h.notices().toString());
+    assertTrue(
+        h.notices().stream().noneMatch(n -> n.contains("cached")),
+        "an unreported rate must not be invented: " + h.notices());
+  }
 }

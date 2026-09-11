@@ -24,6 +24,7 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `POST` | `/api/auto-approve` | `{"enabled": true}` — flip the whole session to auto-approve |
 | `POST` | `/api/session` | `{"action": "new"}` or `{"action": "resume", "id": "..."}` |
 | `GET` | `/api/sessions` | session summaries, newest first |
+| `GET` | `/api/history` | the current session replayed as render events (see below) |
 | `GET` | `/api/config` | what the settings form needs: current values, whether a key exists, where it is stored |
 | `POST` | `/api/config` | save provider/model/key settings and switch to them immediately |
 | `POST` | `/api/config/test` | send one tiny request with the posted settings **without saving** |
@@ -89,6 +90,62 @@ resume with `Last-Event-ID` (the server keeps a small replay buffer).
 | `notice` | `text` | token usage, retries, step-limit warnings |
 | `done` | `finalText`, `aborted` | the turn finished |
 | `error` | `message` | the turn failed |
+| `usage` | `turns`, `steps`, `inputTokens`, `outputTokens`, `cachedInputTokens`, `cacheHitRate`, `toolCalls`, `toolErrors`, `elapsedMs` | running totals for the current session |
+
+## History and usage
+
+A page that loads, reloads, or switches sessions must show the conversation that already exists —
+otherwise resuming a session looks like it worked and then shows an empty screen. `GET /api/history`
+returns the current session encoded as **the same event objects the stream emits**, so the page
+renders history and live turns with one code path:
+
+```json
+{"sessionId": "20260911-233115-94cf",
+ "usage": {"turns": 1, "steps": 2, "inputTokens": 1200, "outputTokens": 340,
+           "cachedInputTokens": 900, "cacheHitRate": 0.75, "toolCalls": 1,
+           "toolErrors": 0, "elapsedMs": 480},
+ "events": [
+   {"type": "user", "text": "read pom.xml", "replay": true},
+   {"type": "tool", "id": "call_1", "name": "read", "summary": "pom.xml",
+    "state": "start", "replay": true},
+   {"type": "tool", "id": "call_1", "name": "read", "state": "end", "ok": true,
+    "elapsedMs": null, "output": "…", "replay": true},
+   {"type": "text", "delta": "Reading it now.", "replay": true}
+ ]}
+```
+
+Replay events carry `replay: true` and have no SSE id (they are not part of the live stream, and the
+dedupe that protects reconnects does not apply to them). A tool call and its result are paired by
+`id`, so the renderer produces the same card it would have produced live. Two fields differ from the
+live stream: replayed `tool` end events have `elapsedMs: null` because the session file stores the
+conversation and not timings, and no `notice` events are replayed at all — token lines are transient,
+and the usage panel is fed by `usage` instead.
+
+`usage` totals belong to the session, not to the process: every turn end appends one accounting line
+to the session file (`{"type":"usage","input_tokens":…}`) and reopening a session restores it, so a
+resumed conversation continues its cache hit rate instead of starting at zero. They arrive as an
+event during and after every turn and are also embedded in the `status` payload as a `usage` object,
+so a fresh page has numbers before the first turn. `turns` counts user turns, `steps` counts model
+turns (a turn that calls three tools is three steps plus the answer), and `elapsedMs` is time spent
+inside turns. `cachedInputTokens` and `cacheHitRate` are `null` when the
+provider reported no cache figures — "no information" and "nothing was cached" are different things,
+and reporting 0% for a local model would be a lie.
+
+Cache accounting per protocol: OpenAI-compatible endpoints report
+`prompt_tokens_details.cached_tokens` (DeepSeek and others use `prompt_cache_hit_tokens`), which is
+already included in `prompt_tokens`; Anthropic reports `cache_read_input_tokens` and
+`cache_creation_input_tokens` **in addition to** `input_tokens`, so the prompt size is their sum and
+the hit rate is `cache_read / prompt size`.
+
+## Session lifecycle
+
+A session file is created on the **first message**, not when a session id is minted: opening the
+CLI, or pressing `New session`, must not leave an empty file behind that pollutes the session list.
+`POST /api/session {"action": "new"}` on an already-empty session is a no-op and says so through a
+`notice` event rather than minting yet another id.
+
+Accounting records share the file but are not messages: `FileSession` filters them out of the
+conversation, and the last one wins when a session is reopened.
 
 ## Approval
 

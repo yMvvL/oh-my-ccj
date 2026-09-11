@@ -198,6 +198,7 @@ public final class AnthropicProvider implements Provider {
     Map<Integer, Block> blocks = new TreeMap<>();
     int inputTokens = 0;
     int outputTokens = 0;
+    Integer cachedInputTokens = null;
     boolean usageEmitted = false;
     try (Sse sse = Sse.of(lines)) {
       for (Sse.Event event = sse.next(); event != null; event = sse.next()) {
@@ -207,9 +208,21 @@ public final class AnthropicProvider implements Provider {
         JsonNode payload = Json.parse(event.data());
         String type = payload.path("type").asText(event.event());
         switch (type) {
-          case "message_start" ->
-              inputTokens =
-                  payload.path("message").path("usage").path("input_tokens").asInt(inputTokens);
+          case "message_start" -> {
+            JsonNode usage = payload.path("message").path("usage");
+            JsonNode read = usage.get("cache_read_input_tokens");
+            JsonNode created = usage.get("cache_creation_input_tokens");
+            if (read == null && created == null) {
+              inputTokens = usage.path("input_tokens").asInt(inputTokens);
+            } else {
+              // Cache reads and writes are reported *in addition to* input_tokens, so the prompt is
+              // their sum — otherwise a cached turn would look smaller than an uncached one.
+              int readTokens = read == null ? 0 : read.asInt();
+              int createdTokens = created == null ? 0 : created.asInt();
+              inputTokens = usage.path("input_tokens").asInt(0) + readTokens + createdTokens;
+              cachedInputTokens = readTokens;
+            }
+          }
           case "content_block_start" -> openBlock(payload, blocks, sink);
           case "content_block_delta" -> appendDelta(payload, blocks, sink);
           case "content_block_stop" -> {
@@ -217,12 +230,12 @@ public final class AnthropicProvider implements Provider {
           }
           case "message_delta" -> {
             outputTokens = payload.path("usage").path("output_tokens").asInt(outputTokens);
-            sink.accept(new Event.Usage(inputTokens, outputTokens));
+            sink.accept(new Event.Usage(inputTokens, outputTokens, cachedInputTokens));
             usageEmitted = true;
           }
           case "message_stop" -> {
             if (!usageEmitted && (inputTokens != 0 || outputTokens != 0)) {
-              sink.accept(new Event.Usage(inputTokens, outputTokens));
+              sink.accept(new Event.Usage(inputTokens, outputTokens, cachedInputTokens));
             }
           }
           case "error" -> throw new Exception("anthropic error: " + payload.path("error"));

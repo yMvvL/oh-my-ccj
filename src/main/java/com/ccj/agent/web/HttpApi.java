@@ -102,6 +102,7 @@ public final class HttpApi implements AutoCloseable {
         case "/style.css" -> staticResource(exchange, "/web/style.css", "text/css; charset=utf-8");
         case "/api/status" -> get(exchange, hub.status());
         case "/api/sessions" -> get(exchange, Json.object().set("sessions", hub.sessionsJson()));
+        case "/api/history" -> get(exchange, hub.historyJson());
         case "/api/events" -> events(exchange);
         case "/api/message" -> message(exchange);
         case "/api/abort" -> abort(exchange);
@@ -233,16 +234,21 @@ public final class HttpApi implements AutoCloseable {
     exchange.sendResponseHeaders(200, 0);
 
     OutputStream out = exchange.getResponseBody();
-    SseClient client = new SseClient(out, lastEventId(exchange));
+    long lastEventId = lastEventId(exchange);
+    SseClient client = new SseClient(out, lastEventId);
     List<AgentHub.Event> missed = hub.subscribe(client);
     try {
-      for (AgentHub.Event event : missed) {
-        if (event.id() > client.lastSent()) {
-          client.send(event);
+      // The replay buffer exists for one purpose: filling the gap a reconnecting page missed. A
+      // fresh connection has no gap — it gets the conversation from /api/history, so replaying the
+      // buffer here would render every recent event a second time.
+      if (lastEventId > 0) {
+        for (AgentHub.Event event : missed) {
+          if (event.id() > client.lastSent()) {
+            client.send(event);
+          }
         }
       }
-      // A browser that just connected has no state yet, and the replay buffer may be empty (fresh
-      // server, idle session). The contract promises a status event on connect; this is it.
+      // A browser that just connected has no state yet, and the contract promises a status event.
       hub.publishStatus();
       while (!client.closed()) {
         Thread.sleep(HEARTBEAT_MILLIS);

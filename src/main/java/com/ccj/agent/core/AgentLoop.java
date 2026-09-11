@@ -125,11 +125,23 @@ public final class AgentLoop {
       // card when the call is actually about to run (see executeTool), so this wire-level signal is
       // informational only.
       case Provider.Event.ToolCallStart ignored -> {}
-      case Provider.Event.Usage u -> listener.onNotice(
-          "tokens: " + u.inputTokens() + " in / " + u.outputTokens() + " out");
+      case Provider.Event.Usage u -> {
+        listener.onUsage(u.inputTokens(), u.outputTokens(), u.cachedInputTokens());
+        listener.onNotice(usageNotice(u));
+      }
       case Provider.Event.Retry r -> listener.onNotice(
           "retrying " + provider.name() + " (attempt " + r.attempt() + "): " + r.reason());
     }
+  }
+
+  /** One readable line: prompt size, how much of it the provider had cached, reply size. */
+  private static String usageNotice(Provider.Event.Usage usage) {
+    StringBuilder text = new StringBuilder("tokens: ").append(usage.inputTokens()).append(" in");
+    if (usage.cachedInputTokens() != null && usage.inputTokens() > 0) {
+      int percent = Math.round(usage.cachedInputTokens() * 100f / usage.inputTokens());
+      text.append(" (").append(percent).append("% cached)");
+    }
+    return text.append(" / ").append(usage.outputTokens()).append(" out").toString();
   }
 
   private void executeTool(Message.ToolCall call) {

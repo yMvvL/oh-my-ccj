@@ -264,7 +264,28 @@ public final class OpenAiProvider implements Provider {
       return;
     }
     sink.accept(
-        new Event.Usage(input == null ? 0 : input.asInt(), output == null ? 0 : output.asInt()));
+        new Event.Usage(
+            input == null ? 0 : input.asInt(),
+            output == null ? 0 : output.asInt(),
+            cachedTokens(source)));
+  }
+
+  /**
+   * Cache accounting, when the endpoint reports it: OpenAI puts it under
+   * {@code prompt_tokens_details.cached_tokens}, DeepSeek and friends expose
+   * {@code prompt_cache_hit_tokens}. Absent fields mean "not reported", which is not the same as
+   * zero — the UI distinguishes the two.
+   */
+  private static Integer cachedTokens(JsonNode usage) {
+    JsonNode details = usage.path("prompt_tokens_details").path("cached_tokens");
+    if (details.isNumber()) {
+      return details.asInt();
+    }
+    JsonNode hit = usage.path("prompt_cache_hit_tokens");
+    if (hit.isNumber()) {
+      return hit.asInt();
+    }
+    return null;
   }
 
   private static String stripTrailingSlash(String url) {

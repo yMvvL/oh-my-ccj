@@ -223,6 +223,10 @@ body {
 
 .ev { margin: 0 0 10px; }
 
+/* A conversation restored from disk is deliberately a little quieter than the
+ * turn happening live right now. */
+.ev.replay { opacity: .78; }
+
 .muted { color: var(--fg-faint); }
 
 .ev-user {
@@ -506,7 +510,47 @@ body {
 .tool-list .name { font: 600 12px var(--mono); color: var(--accent); display: block; }
 .tool-list .desc { font-size: 12px; color: var(--fg-dim); overflow-wrap: anywhere; }
 
-.usage { font: 12px var(--mono); color: var(--fg-dim); white-space: pre-wrap; overflow-wrap: anywhere; }
+.usage { font: 12px var(--mono); color: var(--fg-dim); overflow-wrap: anywhere; }
+
+.usage-hero {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 10px;
+  flex-wrap: wrap;
+}
+
+.usage-hero-label {
+  font: 600 11px var(--sans);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.usage-hero-value { font: 600 20px/1.1 var(--mono); color: var(--fg); }
+.usage-hero-value.na { color: var(--fg-faint); font-weight: 400; }
+
+.usage-hint { margin: 4px 0 0; font: 11px/1.35 var(--sans); color: var(--fg-faint); }
+
+.usage-alert {
+  margin: 6px 0 0;
+  font: 600 12px var(--sans);
+  color: var(--err);
+  overflow-wrap: anywhere;
+}
+
+.usage-table { width: 100%; border-collapse: collapse; margin-top: 8px; table-layout: fixed; }
+.usage-table th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--fg-faint);
+  padding: 3px 0;
+  overflow-wrap: anywhere;
+}
+.usage-table td { text-align: right; color: var(--fg-dim); padding: 3px 0; font-variant-numeric: tabular-nums; }
+.usage-table tr + tr th, .usage-table tr + tr td { border-top: 1px solid var(--border); }
+.usage-table td.bad { color: var(--err); font-weight: 600; }
+.usage-table tr.bad th { color: var(--err); }
 
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
 .kv .k { color: var(--fg-faint); }

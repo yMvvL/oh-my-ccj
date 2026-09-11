@@ -12,6 +12,7 @@ import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolRegistry;
 import com.ccj.agent.core.ToolResult;
 import com.ccj.agent.core.ToolSpec;
+import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
 import com.ccj.agent.ui.ToolSummary;
@@ -111,6 +112,18 @@ public final class AgentHub implements AutoCloseable {
   private final AtomicReference<Provider> provider = new AtomicReference<>();
   private final Object sessionLock = new Object();
 
+  // Session-scoped usage. Live totals only: the session file stores the conversation, not the
+  // accounting, so a resumed session starts counting again from zero.
+  private final AtomicLong totalInputTokens = new AtomicLong();
+  private final AtomicLong totalOutputTokens = new AtomicLong();
+  private final AtomicLong totalCachedInputTokens = new AtomicLong();
+  private final AtomicInteger userTurns = new AtomicInteger();
+  private final AtomicInteger modelTurns = new AtomicInteger();
+  private final AtomicInteger toolCalls = new AtomicInteger();
+  private final AtomicInteger toolErrors = new AtomicInteger();
+  private final AtomicLong turnMillis = new AtomicLong();
+  private final AtomicBoolean cacheReported = new AtomicBoolean();
+
   private volatile Config config;
   private volatile FileSession session;
   private volatile boolean closed;
@@ -127,6 +140,10 @@ public final class AgentHub implements AutoCloseable {
     this.settings = settings;
     this.session = session;
     this.autoApprove.set(settings.autoApprove());
+    if (session != null) {
+      // A server started on an existing session (--resume / --continue) continues its books.
+      applyTotals(session.totals());
+    }
   }
 
   // ------------------------------------------------------------------ status
@@ -154,6 +171,7 @@ public final class AgentHub implements AutoCloseable {
     node.put("messageCount", current == null ? 0 : current.messages().size());
     node.put("autoApprove", autoApprove.get());
     node.put("busy", busy.get());
+    node.set("usage", usageFields());
     ArrayNode toolList = node.putArray("tools");
     for (ToolSpec spec : tools.specs()) {
       ObjectNode tool = toolList.addObject();
@@ -173,6 +191,109 @@ public final class AgentHub implements AutoCloseable {
       node.put("lastModified", TIMESTAMP.format(summary.lastModified()));
     }
     return array;
+  }
+
+  /**
+   * Running totals for the current session.
+   *
+   * <p>{@code cacheHitRate} is null until a provider reports cache figures: "no information" and
+   * "nothing was cached" are different facts, and only one of them is a 0%.
+   */
+  public ObjectNode usageFields() {
+    UsageTotals totals = currentTotals();
+    ObjectNode node = Json.object();
+    node.put("turns", totals.userTurns());
+    node.put("steps", totals.modelTurns());
+    node.put("inputTokens", totals.inputTokens());
+    node.put("outputTokens", totals.outputTokens());
+    Double hitRate = totals.cacheHitRate();
+    if (hitRate == null) {
+      node.putNull("cachedInputTokens");
+      node.putNull("cacheHitRate");
+    } else {
+      node.put("cachedInputTokens", totals.cachedInputTokens());
+      node.put("cacheHitRate", hitRate);
+    }
+    node.put("toolCalls", totals.toolCalls());
+    node.put("toolErrors", totals.toolErrors());
+    node.put("elapsedMs", totals.elapsedMillis());
+    return node;
+  }
+
+  private UsageTotals currentTotals() {
+    return new UsageTotals(
+        totalInputTokens.get(),
+        totalOutputTokens.get(),
+        totalCachedInputTokens.get(),
+        userTurns.get(),
+        modelTurns.get(),
+        toolCalls.get(),
+        toolErrors.get(),
+        turnMillis.get(),
+        cacheReported.get());
+  }
+
+  private void applyTotals(UsageTotals totals) {
+    totalInputTokens.set(totals.inputTokens());
+    totalOutputTokens.set(totals.outputTokens());
+    totalCachedInputTokens.set(totals.cachedInputTokens());
+    userTurns.set(totals.userTurns());
+    modelTurns.set(totals.modelTurns());
+    toolCalls.set(totals.toolCalls());
+    toolErrors.set(totals.toolErrors());
+    turnMillis.set(totals.elapsedMillis());
+    cacheReported.set(totals.cacheReported());
+  }
+
+  /**
+   * The current session replayed as the events the stream would have emitted, so a page renders
+   * history and live turns with one code path.
+   *
+   * <p>Replayed tool results carry no timing: the conversation stores what the model saw, not how
+   * long the tool took, and inventing a zero would read as a measurement.
+   */
+  public ObjectNode historyJson() {
+    FileSession current = session();
+    ArrayNode events = Json.mapper().createArrayNode();
+    for (Message message : current == null ? List.<Message>of() : current.messages()) {
+      switch (message) {
+        case Message.User user -> events.add(replay("user").put("text", user.text()));
+        case Message.Assistant assistant -> {
+          if (!assistant.text().isBlank()) {
+            events.add(replay("text").put("delta", assistant.text()));
+          }
+          for (Message.ToolCall call : assistant.toolCalls()) {
+            events.add(
+                replay("tool")
+                    .put("id", call.id())
+                    .put("name", call.name())
+                    .put("state", "start")
+                    .put("summary", ToolSummary.summarize(call)));
+          }
+        }
+        case Message.ToolResult result ->
+            events.add(
+                replay("tool")
+                    .put("id", result.toolCallId())
+                    .put("name", result.toolName())
+                    .put("state", "end")
+                    .put("ok", !result.error())
+                    .putNull("elapsedMs")
+                    .put("output", result.content()));
+        default -> {
+          // System messages are not part of a rendered conversation.
+        }
+      }
+    }
+    ObjectNode node = Json.object();
+    node.put("sessionId", current == null ? "" : current.id());
+    node.set("events", events);
+    node.set("usage", usageFields());
+    return node;
+  }
+
+  private static ObjectNode replay(String type) {
+    return Json.object().put("type", type).put("replay", true);
   }
 
   // ------------------------------------------------------------------ settings
@@ -346,6 +467,7 @@ public final class AgentHub implements AutoCloseable {
     if (!busy.compareAndSet(false, true)) {
       return false;
     }
+    userTurns.incrementAndGet();
     publish("user", Json.object().put("text", text));
     publishStatus();
     turns.submit(() -> runTurn(text));
@@ -365,6 +487,7 @@ public final class AgentHub implements AutoCloseable {
   private void runTurn(String text) {
     AgentLoop loop = newLoop();
     running.set(loop);
+    long started = System.nanoTime();
     try {
       AgentLoop.Result result = loop.run(text);
       publish(
@@ -373,8 +496,13 @@ public final class AgentHub implements AutoCloseable {
     } catch (RuntimeException e) {
       publish("error", Json.object().put("message", message(e)));
     } finally {
+      turnMillis.addAndGet((System.nanoTime() - started) / 1_000_000);
       running.set(null);
       busy.set(false);
+      // Persisting at turn boundaries keeps the file from growing per token and still survives a
+      // kill: after the worst case the last turn is missing, never the whole session.
+      persistTotals();
+      publishUsage();
       publishStatus();
     }
   }
@@ -399,8 +527,19 @@ public final class AgentHub implements AutoCloseable {
 
   // ------------------------------------------------------------------ sessions
 
+  /**
+   * Starts a fresh session — unless the current one is already empty, in which case minting another
+   * id would only produce a second empty session and confuse whoever pressed the button.
+   */
   public void newSession() {
     requireIdle();
+    FileSession current = session();
+    if (current != null && current.messages().isEmpty()) {
+      publish(
+          "notice",
+          Json.object().put("text", "this session is already empty — say something first"));
+      return;
+    }
     useSession(SessionStore.create(settings.sessionsDir()));
   }
 
@@ -421,6 +560,9 @@ public final class AgentHub implements AutoCloseable {
     if (previous != null) {
       previous.close();
     }
+    // Reopening a session continues its books; a brand new one starts empty.
+    applyTotals(next.totals());
+    publishUsage();
     publishStatus();
   }
 
@@ -521,6 +663,17 @@ public final class AgentHub implements AutoCloseable {
     publish("status", statusFields());
   }
 
+  public void publishUsage() {
+    publish("usage", usageFields());
+  }
+
+  private void persistTotals() {
+    FileSession current = session();
+    if (current != null) {
+      current.totals(currentTotals());
+    }
+  }
+
   private FileSession session() {
     synchronized (sessionLock) {
       return session;
@@ -560,17 +713,38 @@ public final class AgentHub implements AutoCloseable {
 
     @Override
     public void onToolStart(Message.ToolCall call) {
+      toolCalls.incrementAndGet();
       publish("tool", toolPayload(call, "start"));
     }
 
     @Override
     public void onToolEnd(Message.ToolCall call, ToolResult result, long elapsedMillis) {
+      if (result.error()) {
+        toolErrors.incrementAndGet();
+      }
       publish(
           "tool",
           toolPayload(call, "end")
               .put("ok", !result.error())
               .put("elapsedMs", elapsedMillis)
               .put("output", result.content()));
+    }
+
+    /** Model turns are counted here, not from usage: a provider that reports no usage still ran. */
+    @Override
+    public void onTurnStart(int step) {
+      modelTurns.incrementAndGet();
+    }
+
+    @Override
+    public void onUsage(int inputTokens, int outputTokens, Integer cachedInputTokens) {
+      totalInputTokens.addAndGet(inputTokens);
+      totalOutputTokens.addAndGet(outputTokens);
+      if (cachedInputTokens != null) {
+        cacheReported.set(true);
+        totalCachedInputTokens.addAndGet(cachedInputTokens);
+      }
+      publishUsage();
     }
 
     @Override

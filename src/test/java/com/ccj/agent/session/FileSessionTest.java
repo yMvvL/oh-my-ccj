@@ -1,10 +1,12 @@
 package com.ccj.agent.session;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ccj.agent.core.Message;
+import com.ccj.agent.core.UsageTotals;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -79,5 +81,72 @@ class FileSessionTest {
         assertThrows(IllegalArgumentException.class, () -> FileSession.open(dir, "20200101-000000-abcd"));
 
     assertTrue(error.getMessage().contains(":2:"), error.getMessage());
+  }
+
+  @Test
+  void aNewSessionLeavesNoFileUntilSomethingIsSaid() {
+    Path sessions = dir.resolve("sessions");
+
+    FileSession session = FileSession.create(sessions);
+
+    assertFalse(Files.exists(session.file()), "an id is free; a file is a claim");
+    assertFalse(Files.exists(sessions), "not even the directory yet");
+
+    session.append(new Message.User("hello"));
+
+    assertTrue(Files.exists(session.file()));
+    assertEquals(1, FileSession.readAll(session.file()).size());
+  }
+
+  @Test
+  void anEmptySessionNeverAppearsInTheListing() {
+    Path sessions = dir.resolve("sessions");
+
+    FileSession.create(sessions);
+    FileSession.create(sessions);
+
+    assertEquals(0, SessionStore.list(sessions).size(), "pressing new session must not pile up sessions");
+
+    FileSession second = FileSession.create(sessions);
+    second.append(new Message.User("real"));
+    assertEquals(1, SessionStore.list(sessions).size());
+  }
+
+  @Test
+  void totalsSurviveReopeningAndStayOutOfTheConversation() {
+    Path sessions = dir.resolve("totals");
+    FileSession session = FileSession.create(sessions);
+    session.append(new Message.User("hello"));
+    session.totals(new UsageTotals(100, 20, 80, 1, 2, 3, 1, 1500, true));
+    session.append(new Message.Assistant("hi", List.of()));
+    session.close();
+
+    FileSession reopened = FileSession.open(sessions, session.id());
+
+    assertEquals(2, reopened.messages().size(), "an accounting line is not a message");
+    assertEquals(new UsageTotals(100, 20, 80, 1, 2, 3, 1, 1500, true), reopened.totals());
+    assertEquals(0.8, reopened.totals().cacheHitRate(), 0.001);
+    assertEquals(1, SessionStore.list(sessions).size());
+    assertEquals(2, SessionStore.list(sessions).get(0).messageCount());
+  }
+
+  @Test
+  void anUnreportedCacheIsNotZeroPercent() {
+    assertEquals(null, UsageTotals.empty().cacheHitRate());
+    assertEquals(0.0, new UsageTotals(50, 1, 0, 1, 1, 0, 0, 5, true).cacheHitRate());
+  }
+
+  @Test
+  void clearingASessionAlsoClearsItsBooks() {
+    Path sessions = dir.resolve("cleared");
+    FileSession session = FileSession.create(sessions);
+    session.append(new Message.User("hello"));
+    session.totals(new UsageTotals(10, 1, 5, 1, 1, 0, 0, 10, true));
+
+    session.clear();
+
+    assertEquals(UsageTotals.empty(), session.totals());
+    session.close();
+    assertEquals(UsageTotals.empty(), FileSession.open(sessions, session.id()).totals());
   }
 }

@@ -47,7 +47,21 @@ public interface Provider extends AutoCloseable {
 
     record ToolCallStart(String id, String name) implements Event {}
 
-    record Usage(int inputTokens, int outputTokens) implements Event {}
+    /**
+     * Token accounting for one turn.
+     *
+     * @param inputTokens prompt tokens as billed; for Anthropic that is the sum of the plain,
+     *     cache-read and cache-creation counts, which is the only figure comparable across
+     *     providers
+     * @param cachedInputTokens how much of the prompt was served from the provider's cache, or null
+     *     when the provider reports nothing — "no information" and "nothing cached" are different
+     *     facts and must not both render as 0%
+     */
+    record Usage(int inputTokens, int outputTokens, Integer cachedInputTokens) implements Event {
+      public Usage(int inputTokens, int outputTokens) {
+        this(inputTokens, outputTokens, null);
+      }
+    }
 
     /** Emitted when a transient transport failure is about to be retried. */
     record Retry(int attempt, String reason, long delayMillis) implements Event {}

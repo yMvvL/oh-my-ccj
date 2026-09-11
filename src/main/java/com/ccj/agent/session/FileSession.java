@@ -2,6 +2,7 @@ package com.ccj.agent.session;
 
 import com.ccj.agent.core.Message;
 import com.ccj.agent.core.Session;
+import com.ccj.agent.core.UsageTotals;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.io.Writer;
@@ -33,33 +34,36 @@ public final class FileSession implements Session {
   private static final SecureRandom RANDOM = new SecureRandom();
   private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]*");
 
+  /** Line prefix that marks an accounting record rather than a conversation message. */
+  public static final String USAGE_TYPE = "usage";
+
   private final String id;
   private final Path file;
   private final List<Message> history;
   private Writer writer;
+  private UsageTotals totals = UsageTotals.empty();
 
   public FileSession(String id, Path file, List<Message> history) {
+    this(id, file, history, UsageTotals.empty());
+  }
+
+  public FileSession(String id, Path file, List<Message> history, UsageTotals totals) {
     this.id = id;
     this.file = file;
     this.history = new ArrayList<>(history == null ? List.of() : history);
+    this.totals = totals == null ? UsageTotals.empty() : totals;
   }
 
-  /** Generates a fresh id and creates its (empty) file under {@code sessionsDir}. */
+  /**
+   * Generates a fresh id for {@code sessionsDir} and leaves the file to {@link #append}.
+   *
+   * <p>Creating the file eagerly would litter the session list with empty sessions every time a
+   * front end starts or the user presses "new session" — an id costs nothing, a file is a claim
+   * that something was said.
+   */
   public static FileSession create(Path sessionsDir) {
     String id = newId();
-    Path file = fileFor(sessionsDir, id);
-    try {
-      Files.createDirectories(sessionsDir);
-      Files.writeString(
-          file,
-          "",
-          StandardCharsets.UTF_8,
-          StandardOpenOption.CREATE,
-          StandardOpenOption.TRUNCATE_EXISTING);
-    } catch (IOException e) {
-      throw new UncheckedIOException("cannot create session file " + file, e);
-    }
-    return new FileSession(id, file, List.of());
+    return new FileSession(id, fileFor(sessionsDir, id), List.of());
   }
 
   /** Reopens an existing session, restoring its full history. */
@@ -71,7 +75,7 @@ public final class FileSession implements Session {
     if (!Files.isRegularFile(file)) {
       throw new IllegalArgumentException("no session '" + id + "' in " + sessionsDir);
     }
-    return new FileSession(id, file, readAll(file));
+    return new FileSession(id, file, readAll(file), readTotals(file));
   }
 
   /** Timestamp plus a random suffix, so sessions created in the same second stay distinct. */
@@ -101,7 +105,7 @@ public final class FileSession implements Session {
     List<Message> messages = new ArrayList<>(lines.size());
     for (int i = 0; i < lines.size(); i++) {
       String line = lines.get(i);
-      if (line.isBlank()) {
+      if (line.isBlank() || isUsageLine(line)) {
         continue;
       }
       try {
@@ -111,6 +115,48 @@ public final class FileSession implements Session {
       }
     }
     return messages;
+  }
+
+  /** True for an accounting line, which is not part of the conversation. */
+  private static boolean isUsageLine(String line) {
+    return line.contains("\"type\":\"" + USAGE_TYPE + "\"");
+  }
+
+  /** The last accounting record in the file, or nothing when the session never recorded any. */
+  public static UsageTotals readTotals(Path file) {
+    List<String> lines;
+    try {
+      lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+    } catch (NoSuchFileException e) {
+      return UsageTotals.empty();
+    } catch (IOException e) {
+      throw new UncheckedIOException("cannot read session file " + file, e);
+    }
+    UsageTotals found = UsageTotals.empty();
+    for (String line : lines) {
+      if (isUsageLine(line)) {
+        found = MessageCodec.totalsFromJson(line);
+      }
+    }
+    return found;
+  }
+
+  @Override
+  public UsageTotals totals() {
+    return totals;
+  }
+
+  @Override
+  public void totals(UsageTotals updated) {
+    this.totals = updated == null ? UsageTotals.empty() : updated;
+    try {
+      Writer out = writer();
+      out.write(MessageCodec.totalsToJson(this.totals));
+      out.write('\n');
+      out.flush();
+    } catch (IOException e) {
+      throw new UncheckedIOException("cannot append usage to session file " + file, e);
+    }
   }
 
   @Override
@@ -144,12 +190,15 @@ public final class FileSession implements Session {
   public void clear() {
     close();
     history.clear();
+    totals = UsageTotals.empty();
+    if (!Files.exists(file)) {
+      return; // nothing on disk yet; the file appears with the next append
+    }
     try {
       Files.writeString(
           file,
           "",
           StandardCharsets.UTF_8,
-          StandardOpenOption.CREATE,
           StandardOpenOption.TRUNCATE_EXISTING);
     } catch (IOException e) {
       throw new UncheckedIOException("cannot clear session file " + file, e);

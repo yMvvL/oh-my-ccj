@@ -34,7 +34,11 @@
     return t.length > max ? t.slice(0, Math.max(0, max - 1)) + '…' : t;
   }
 
+  /* Replayed tool results carry elapsedMs: null — the session file keeps the
+   * conversation, not the timings — so an absent value prints nothing rather
+   * than a fake "0 ms". */
   function msLabel(v) {
+    if (v === null || v === undefined) { return ''; }
     const n = Number(v);
     return isFinite(n) ? Math.max(0, Math.round(n)) + ' ms' : '';
   }
@@ -105,6 +109,18 @@
     side: $('side'),
     toolList: $('tool-list'),
     usage: $('usage'),
+    uHit: $('u-hit'),
+    uHint: $('u-hint'),
+    uAlert: $('u-alert'),
+    uTurns: $('u-turns'),
+    uSteps: $('u-steps'),
+    uIn: $('u-in'),
+    uOut: $('u-out'),
+    uCached: $('u-cached'),
+    uErrorsRow: $('u-errors-row'),
+    uErrors: $('u-errors'),
+    uTools: $('u-tools'),
+    uElapsed: $('u-elapsed'),
     sessionInfo: $('session-info'),
     overlay: $('sessions-overlay'),
     sessionsBody: $('sessions-body'),
@@ -147,7 +163,13 @@
     approvals: new Map(),  // approval id -> record
     stick: true,           // transcript pinned to the bottom
     status: null,
-    configured: null       // status.configured: null until known, then boolean
+    configured: null,      // status.configured: null until known, then boolean
+    sessionId: '',         // id of the session the transcript currently shows
+    historyPromise: null,  // in-flight history load for the initial page
+    historyInFlight: false,
+    replaying: false,      // rendering a history snapshot, not the live stream
+    pendingLive: [],       // SSE messages held back until a replay lands
+    usage: null            // last usage object seen (event or status)
   };
 
   // --------------------------------------------------------- text batching
@@ -225,6 +247,14 @@
    * caching the flag from scroll events alone leans on events a hidden tab
    * never fires. */
   function appendToTranscript(node) {
+    if (state.replaying) {
+      // Restored from history: dim it and skip per-node scroll bookkeeping —
+      // the replay ends with a single scroll to the bottom.
+      node.classList.add('replay');
+      node.setAttribute('data-replay', '1');
+      dom.transcript.appendChild(node);
+      return node;
+    }
     const atBottom = nearBottom();
     dom.transcript.appendChild(node);
     settleScroll(atBottom);
@@ -232,6 +262,11 @@
   }
 
   function settleScroll(atBottom) {
+    if (state.replaying) {
+      dropPlaceholder();
+      state.stick = true;
+      return;
+    }
     dropPlaceholder();
     state.stick = atBottom;
     if (atBottom) {
@@ -374,12 +409,95 @@
     });
   }
 
+  // ------------------------------------------------------------ usage panel
+
+  function fmtCount(v) {
+    const n = Number(v);
+    return v === null || v === undefined || !isFinite(n) ? '—' : n.toLocaleString();
+  }
+
+  /* null means "the provider reported nothing", which is not the same as zero:
+   * a model that reports no cache figures must not look like a 0% hit rate. */
+  function fmtCacheTokens(v) {
+    return v === null || v === undefined ? 'n/a' : fmtCount(v);
+  }
+
+  function fmtHitRate(v) {
+    if (v === null || v === undefined) { return 'n/a'; }
+    const n = Number(v);
+    if (!isFinite(n)) { return 'n/a'; }
+    const pct = Math.max(0, n * 100);
+    return (pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)) + '%';
+  }
+
+  function fmtDuration(v) {
+    const n = Number(v);
+    if (!isFinite(n) || n < 0) { return '—'; }
+    const s = n / 1000;
+    if (s < 10) { return s.toFixed(1) + ' s'; }
+    if (s < 60) { return Math.round(s) + ' s'; }
+    const m = Math.floor(s / 60);
+    const rest = Math.round(s % 60);
+    return m + 'm ' + (rest < 10 ? '0' : '') + rest + 's';
+  }
+
+  function setUsageCell(node, text, bad) {
+    node.textContent = text;
+    node.classList.toggle('bad', !!bad);
+  }
+
+  function resetUsage() {
+    state.usage = null;
+    [dom.uTurns, dom.uSteps, dom.uIn, dom.uOut, dom.uCached, dom.uTools, dom.uErrors, dom.uElapsed]
+      .forEach(function (node) { setUsageCell(node, '—', false); });
+    dom.uHit.textContent = '—';
+    dom.uHit.classList.add('na');
+    dom.uHint.hidden = true;
+    dom.uAlert.hidden = true;
+    dom.uAlert.textContent = '';
+    dom.uErrorsRow.classList.remove('bad');
+  }
+
+  /* One renderer for both sources — the `usage` event and status.usage. */
+  function renderUsage(u) {
+    if (!u || typeof u !== 'object') { resetUsage(); return; }
+    state.usage = u;
+
+    const noCache = u.cacheHitRate === null || u.cacheHitRate === undefined
+      || u.cachedInputTokens === null || u.cachedInputTokens === undefined;
+    const hit = fmtHitRate(u.cacheHitRate);
+    dom.uHit.textContent = hit;
+    dom.uHit.classList.toggle('na', hit === 'n/a');
+    dom.uHint.hidden = !noCache;
+
+    setUsageCell(dom.uTurns, fmtCount(u.turns), false);
+    setUsageCell(dom.uSteps, fmtCount(u.steps), false);
+    setUsageCell(dom.uIn, fmtCount(u.inputTokens), false);
+    setUsageCell(dom.uOut, fmtCount(u.outputTokens), false);
+    setUsageCell(dom.uCached, fmtCacheTokens(u.cachedInputTokens), false);
+    setUsageCell(dom.uTools, fmtCount(u.toolCalls), false);
+    setUsageCell(dom.uElapsed, fmtDuration(u.elapsedMs), false);
+
+    // A failing tool call is a signal, not a footnote: say it in words and in
+    // colour instead of leaving it as a zero nobody looks at.
+    const errors = Number(u.toolErrors);
+    const bad = isFinite(errors) && errors > 0;
+    setUsageCell(dom.uErrors, fmtCount(u.toolErrors), bad);
+    dom.uErrorsRow.classList.toggle('bad', bad);
+    dom.uAlert.hidden = !bad;
+    dom.uAlert.textContent = bad
+      ? errors + (errors === 1 ? ' tool call failed this session' : ' tool calls failed this session')
+      : '';
+  }
+
   function applyStatus(status) {
     if (!status || typeof status !== 'object') { return; }
     state.status = status;
+    if ('sessionId' in status) { noteSession(str(status.sessionId)); }
     setChips(status);
     renderSessionInfo(status);
     if (Array.isArray(status.tools)) { renderTools(status.tools); }
+    if (status.usage && typeof status.usage === 'object') { renderUsage(status.usage); }
     if (typeof status.autoApprove === 'boolean') {
       state.autoApprove = status.autoApprove;
       paintAuto();
@@ -404,14 +522,10 @@
 
   function appendError(text) { return appendLine('ev ev-error', text); }
 
-  function appendNotice(text) {
-    dom.usage.textContent = str(text) || '—';
-    return appendLine('ev ev-notice', text);
-  }
-
-  /* Like appendNotice, but for UI-authored lines: token-usage events own the
-   * Usage panel, and a settings message must not overwrite it. */
-  function appendTranscriptNotice(text) { return appendLine('ev ev-notice', text); }
+  /* Server notices (refused New session, retries, step-limit warnings) are
+   * transcript lines. The Usage panel is owned by `usage` events and
+   * status.usage, so a notice never writes there. */
+  function appendNotice(text) { return appendLine('ev ev-notice', text); }
 
   function assistantBlock() {
     if (state.block && state.block.root.parentNode === dom.transcript) { return state.block; }
@@ -446,9 +560,98 @@
     state.block = null;
     state.toolCards.clear();
     state.approvals.clear();
+    state.runningTools = 0;
     state.lastEventId = -1;   // dedupe scope is one transcript
     state.stick = true;
     dom.jump.hidden = true;
+    resetUsage();
+  }
+
+  // -------------------------------------------------------- history replay
+
+  /* The session id is the page's notion of "what the transcript shows". History
+   * is fetched exactly once per id — on the transition to it — so the status
+   * events that repeat the current id (turn end, reconnect, a refused New
+   * session) can never fetch or render the same conversation twice. */
+  function noteSession(id) {
+    if (id === state.sessionId) { return; }
+    state.sessionId = id;
+    clearTranscript();
+    state.historyPromise = loadHistory(id);
+  }
+
+  const HISTORY_TIMEOUT_MS = 8000;
+  let historySeq = 0;
+
+  async function loadHistory(sessionId) {
+    const seq = ++historySeq;
+    state.historyInFlight = true;
+    state.pendingLive = [];
+    const safety = setTimeout(function () {
+      // A hung history request must not hold the live stream hostage.
+      if (seq === historySeq) {
+        historySeq += 1;
+        state.historyInFlight = false;
+        flushPendingLive();
+      }
+    }, HISTORY_TIMEOUT_MS);
+    try {
+      const data = await request('/api/history');
+      if (seq !== historySeq) { return; }          // superseded by a newer load
+      if (data && typeof data === 'object' && 'sessionId' in data
+        && str(data.sessionId) !== state.sessionId) {
+        return;                                    // the server moved on
+      }
+      renderReplay(data && Array.isArray(data.events) ? data.events : []);
+      // A fresh page gets its numbers from the same response that restored the
+      // conversation, so the panel is populated before the first turn.
+      if (data && data.usage && typeof data.usage === 'object') { renderUsage(data.usage); }
+    } catch (err) {
+      if (seq === historySeq) {
+        appendError('Could not load history: ' + str(err && err.message));
+      }
+    } finally {
+      clearTimeout(safety);
+      if (seq === historySeq) {
+        state.historyInFlight = false;
+        flushPendingLive();
+      }
+    }
+  }
+
+  /* Replay goes through the same dispatch() the live stream uses, so a restored
+   * conversation renders exactly like a live one. Replay events carry no SSE
+   * id, so they never touch state.lastEventId: the reconnect dedupe keeps
+   * working, and live events always land *after* the snapshot they follow. */
+  function renderReplay(events) {
+    state.replaying = true;
+    try {
+      if (!events.length) { showPlaceholder(); return; }
+      dropPlaceholder();
+      events.forEach(function (ev) {
+        if (!ev || typeof ev !== 'object') { return; }
+        const type = str(ev.type);
+        if (type === 'status' || type === 'done') { return; }   // live lifecycle, not content
+        try {
+          dispatch(ev);
+        } catch (err) {
+          appendError('UI error replaying ' + type + ': ' + str(err && err.message ? err.message : err));
+        }
+      });
+      flushText();
+    } finally {
+      state.replaying = false;
+    }
+    state.stick = true;
+    scrollToBottom();
+    dom.jump.hidden = true;
+    refreshLive();
+  }
+
+  function flushPendingLive() {
+    const queued = state.pendingLive;
+    state.pendingLive = [];
+    queued.forEach(processMessage);
   }
 
   // ------------------------------------------------------------ tool cards
@@ -523,13 +726,15 @@
     if (ev.summary) { card.summary.textContent = clip(firstLine(ev.summary), 160); }
 
     if (start) {
-      if (!card.counted) { card.counted = true; state.runningTools += 1; }
+      // A replayed start must not make the live indicator claim a tool is
+      // running right now.
+      if (!state.replaying && !card.counted) { card.counted = true; state.runningTools += 1; }
       card.running = true;
       card.root.classList.remove('failed');
       card.spinner.hidden = false;
       card.mark.hidden = true;
       card.meta.textContent = 'running…';
-      setLive('running', ev.name);
+      if (!state.replaying) { setLive('running', ev.name); }
     } else {
       if (card.counted) { card.counted = false; state.runningTools = Math.max(0, state.runningTools - 1); }
       const ok = ev.ok !== false;
@@ -543,7 +748,7 @@
       const elapsed = msLabel(ev.elapsedMs);
       card.meta.textContent = (ok ? 'done' : 'failed') + (elapsed ? ' · ' + elapsed : '');
       if (!card.output) { renderToolOutput(card, ev.output); }
-      refreshLive();
+      if (!state.replaying) { refreshLive(); }
     }
   }
 
@@ -697,6 +902,7 @@
       case 'approval': breakBlock(); onApproval(ev); break;
       case 'approval-closed': onApprovalClosed(ev); break;
       case 'notice': breakBlock(); appendNotice(str(ev.text)); break;
+      case 'usage': renderUsage(ev); break;
       case 'done': onDone(ev); break;
       case 'error':
         flushText();
@@ -709,8 +915,17 @@
   }
 
   function handleMessage(msg) {
+    // Live frames that arrive while a history snapshot is being rendered are
+    // held back and replayed after it, so the snapshot is always the base and
+    // nothing is lost or interleaved out of order.
+    if (state.historyInFlight) { state.pendingLive.push(msg); return; }
+    processMessage(msg);
+  }
+
+  function processMessage(msg) {
     // The SSE id is what makes the transcript idempotent across reconnects:
-    // the server may replay frames the page has already rendered.
+    // the server may replay frames the page has already rendered. Replayed
+    // history never passes through here, so it cannot consume live ids.
     const rawId = str(msg.lastEventId) || str(msg.id);
     const idNum = parseInt(rawId, 10);
     const hasId = isFinite(idNum);
@@ -813,8 +1028,10 @@
     try {
       const res = await postJSON('/api/session', body);
       closeSessions();
-      clearTranscript();
-      state.runningTools = 0;
+      // Whether the transcript is cleared (and history fetched) is decided by
+      // the session id in the answer, never by which button was pressed: a
+      // refused `new` on an empty session answers with the same id, and the
+      // transcript must stay exactly as it is.
       if (res && typeof res === 'object' && ('sessionId' in res || 'busy' in res)) {
         applyStatus(res);   // /api/session answers with the full status payload
       } else {
@@ -964,7 +1181,7 @@
       const res = await postJSON('/api/config', settingsPayload());
       closeSettings();
       if (res && typeof res === 'object') { applyStatus(res); }   // chips now, status event later
-      appendTranscriptNotice(configSummary(res, 'Settings saved'));
+      appendNotice(configSummary(res, 'Settings saved'));
     } catch (err) {
       showSaveError(err);
     }
@@ -1160,7 +1377,11 @@
   async function init() {
     paintAuto();
     setBusy(false);
+    // The first status tells us which session the page is showing; its history
+    // is rendered before the stream opens, so the initial replay has no live
+    // events to race with.
     await refreshStatus();
+    if (state.historyPromise) { await state.historyPromise; }
     connect();
     const settingsOpen = await maybeOpenSettingsOnFirstLoad();
     if (!settingsOpen) { dom.input.focus(); }

@@ -9,6 +9,8 @@ import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
 import com.ccj.agent.core.Message;
 import com.ccj.agent.core.Provider;
+import com.ccj.agent.core.UsageTotals;
+import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
 import com.ccj.agent.tool.Tools;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -100,6 +102,10 @@ class WebApiTest {
    * provider named after the model, so a runtime swap is observable from the outside.
    */
   private AgentHub hub(Provider initial, Config config) {
+    return hub(initial, config, SessionStore.create(sessions), sessions);
+  }
+
+  private AgentHub hub(Provider initial, Config config, FileSession session, Path sessionsDir) {
     return new AgentHub(
         initial,
         config,
@@ -107,7 +113,7 @@ class WebApiTest {
         new AgentHub.Settings(
             "test",
             cwd,
-            sessions,
+            sessionsDir,
             configFile,
             Map.of(),
             (candidate, env) -> {
@@ -122,7 +128,7 @@ class WebApiTest {
             },
             List.of("openai", "anthropic"),
             false),
-        SessionStore.create(sessions));
+        session);
   }
 
   // ------------------------------------------------------------------ tests
@@ -456,7 +462,195 @@ class WebApiTest {
     assertTrue(failure.body().contains("gemini"), failure.body());
   }
 
+  // ------------------------------------------------------------------ history and usage
+
+  @Test
+  void usageTotalsAndCacheHitRateAccumulateAcrossATurn() throws Exception {
+    // The double reports the same accounting every turn, so two turns double both sides.
+    provider.usage(100, 5, 40).reply(Message.Assistant.text("one"));
+    provider.reply(Message.Assistant.text("two"));
+
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"first\"}");
+      sse.await("done", 5000);
+      post("/api/message", "{\"text\":\"second\"}");
+      sse.awaitAtLeast("done", 2, 5000);
+    }
+
+    JsonNode usage = json("/api/status").path("usage");
+    assertEquals(2, usage.path("turns").asInt());
+    assertEquals(2, usage.path("steps").asInt());
+    assertEquals(200, usage.path("inputTokens").asInt());
+    assertEquals(10, usage.path("outputTokens").asInt());
+    assertEquals(80, usage.path("cachedInputTokens").asInt());
+    assertEquals(0.4, usage.path("cacheHitRate").asDouble(), 0.001);
+    assertTrue(usage.path("elapsedMs").asLong() >= 0);
+  }
+
+  @Test
+  void aProviderThatReportsNoCacheLeavesTheRateUnknown() throws Exception {
+    provider.reply(Message.Assistant.text("hi"));
+
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"hello\"}");
+      sse.await("done", 5000);
+    }
+
+    JsonNode usage = json("/api/status").path("usage");
+    assertTrue(usage.path("cachedInputTokens").isNull(), usage.toString());
+    assertTrue(usage.path("cacheHitRate").isNull(), "unknown must not render as 0%");
+    assertEquals(1, usage.path("turns").asInt());
+  }
+
+  @Test
+  void historyReplaysTheConversationAsRenderEvents() throws Exception {
+    Files.writeString(cwd.resolve("note.txt"), "on disk\n");
+    provider.reply(call("read", "path", "note.txt"));
+    provider.reply(Message.Assistant.text("done"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"make the file\"}");
+      sse.await("done", 5000);
+    }
+
+    JsonNode history = json("/api/history");
+    assertEquals(json("/api/status").path("sessionId").asText(), history.path("sessionId").asText());
+
+    List<String> types = new ArrayList<>();
+    history.path("events").forEach(event -> types.add(event.path("type").asText()));
+    assertEquals(List.of("user", "tool", "tool", "text"), types, history.toString());
+
+    JsonNode start = history.path("events").get(1);
+    JsonNode end = history.path("events").get(2);
+    assertEquals("start", start.path("state").asText());
+    assertEquals("read", start.path("name").asText());
+    assertEquals("note.txt", start.path("summary").asText());
+    assertEquals(start.path("id").asText(), end.path("id").asText(), "cards pair by call id");
+    assertTrue(end.path("ok").asBoolean());
+    assertTrue(end.path("output").asText().contains("on disk"), end.toString());
+    assertTrue(end.path("elapsedMs").isNull(), "history stores no timing, so none is invented");
+    history
+        .path("events")
+        .forEach(event -> assertTrue(event.path("replay").asBoolean(), event.toString()));
+    assertEquals(1, history.path("usage").path("turns").asInt(), "one user turn");
+    assertEquals(2, history.path("usage").path("steps").asInt(), "tool call, then the answer");
+  }
+
+  @Test
+  void anEmptyConversationReplaysAsNothing() throws Exception {
+    JsonNode history = json("/api/history");
+
+    assertEquals(0, history.path("events").size());
+    assertEquals(json("/api/status").path("sessionId").asText(), history.path("sessionId").asText());
+  }
+
+  @Test
+  void newSessionOnAnEmptySessionIsRefusedInsteadOfMintingAnotherId() throws Exception {
+    String before = json("/api/status").path("sessionId").asText();
+
+    try (Sse sse = watch()) {
+      JsonNode response = postJson("/api/session", "{\"action\":\"new\"}");
+      assertEquals(before, response.path("sessionId").asText(), "the id must not change");
+      assertTrue(sse.await("notice", 3000).path("text").asText().contains("already empty"));
+    }
+    assertTrue(SessionStore.list(sessions).isEmpty(), "no session file may appear for an empty session");
+  }
+
+  @Test
+  void newSessionAfterARealTurnDoesStartAFreshOne() throws Exception {
+    provider.reply(Message.Assistant.text("hi"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"hello\"}");
+      sse.await("done", 5000);
+    }
+    String before = json("/api/status").path("sessionId").asText();
+
+    JsonNode created = postJson("/api/session", "{\"action\":\"new\"}");
+
+    assertNotEquals(before, created.path("sessionId").asText());
+    assertEquals(0, json("/api/history").path("events").size(), "the new session is empty");
+    assertEquals(0, json("/api/status").path("usage").path("inputTokens").asInt(), "totals reset");
+  }
+
+  @Test
+  void onlyAReconnectingClientGetsTheReplayBuffer() throws Exception {
+    provider.reply(Message.Assistant.text("live answer"));
+    long lastIdOfTheTurn;
+    try (Sse first = watch()) {
+      post("/api/message", "{\"text\":\"hello\"}");
+      SseEvent done = first.awaitEvent("done", 5000);
+      lastIdOfTheTurn = done.id();
+    }
+
+    // A fresh page has no gap to fill: it renders the conversation from /api/history, so replaying
+    // the buffer here would draw every recent event a second time.
+    try (Sse fresh = watch()) {
+      fresh.await("status", 3000);
+      Thread.sleep(300);
+      assertEquals(
+          List.of("status"),
+          fresh.types(),
+          "a fresh connection gets its state, not the live events of turns it never saw");
+    }
+
+    // A reconnecting page does have a gap, and only that gap.
+    try (Sse resumed = watchWithLastEventId(lastIdOfTheTurn - 1)) {
+      assertEquals("done", resumed.await("done", 3000).path("type").asText());
+    }
+  }
+
+  @Test
+  void aResumedSessionContinuesItsTotalsInsteadOfStartingAtZero() throws Exception {
+    provider.usage(100, 5, 40).reply(Message.Assistant.text("first"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"one\"}");
+      sse.await("done", 5000);
+    }
+    String sessionId = json("/api/status").path("sessionId").asText();
+
+    api.close();
+    hub.close();
+    hub = hub(new MockProvider("mock"), testConfig());
+    api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), null);
+    origin = "http://127.0.0.1:" + api.port();
+    postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + sessionId + "\"}");
+
+    JsonNode usage = json("/api/status").path("usage");
+    assertEquals(1, usage.path("turns").asInt(), "the earlier turn is part of this session");
+    assertEquals(100, usage.path("inputTokens").asInt());
+    assertEquals(0.4, usage.path("cacheHitRate").asDouble(), 0.001);
+    assertEquals(2, json("/api/history").path("events").size(), "and so is its conversation");
+  }
+
+  @Test
+  void aServerStartedOnAnExistingSessionContinuesItsBooks() throws Exception {
+    Path ownedDir = Files.createDirectories(tmp.resolve("owned"));
+    FileSession owned = SessionStore.create(ownedDir);
+    owned.append(new Message.User("an earlier conversation"));
+    owned.totals(new UsageTotals(200, 30, 150, 1, 2, 1, 0, 900, true));
+
+    api.close();
+    hub.close();
+    hub = hub(provider, testConfig(), owned, ownedDir);
+    api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), null);
+    origin = "http://127.0.0.1:" + api.port();
+
+    JsonNode usage = json("/api/status").path("usage");
+    assertEquals(1, usage.path("turns").asInt(), "restarting must not forget the turns");
+    assertEquals(200, usage.path("inputTokens").asInt());
+    assertEquals(150, usage.path("cachedInputTokens").asInt());
+    assertEquals(0.75, usage.path("cacheHitRate").asDouble(), 0.001);
+    assertEquals(1, json("/api/history").path("events").size());
+  }
+
   // ------------------------------------------------------------------ helpers
+
+  private static Message.Assistant call(String name, String field, String value) {
+    return new Message.Assistant(
+        "",
+        List.of(
+            new Message.ToolCall(
+                "call_" + name, name, Json.write(Json.object().put(field, value)))));
+  }
 
   private static Message.Assistant bashCall(String command) {
     return new Message.Assistant(
@@ -470,6 +664,20 @@ class WebApiTest {
         client.send(
             HttpRequest.newBuilder(URI.create(origin + "/api/events"))
                 .header("Accept", "text/event-stream")
+                .timeout(Duration.ofSeconds(30))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofInputStream());
+    assertEquals(200, response.statusCode(), "the event stream must open");
+    return new Sse(response.body());
+  }
+
+  private Sse watchWithLastEventId(long lastEventId) throws Exception {
+    HttpResponse<InputStream> response =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/events"))
+                .header("Accept", "text/event-stream")
+                .header("Last-Event-ID", String.valueOf(lastEventId))
                 .timeout(Duration.ofSeconds(30))
                 .GET()
                 .build(),
@@ -518,9 +726,12 @@ class WebApiTest {
   }
 
   /** Collects the SSE stream in the background so tests can await individual events. */
+  /** One received event: the SSE id and its payload. */
+  private record SseEvent(long id, JsonNode payload) {}
+
   private static final class Sse implements AutoCloseable {
 
-    private final List<JsonNode> events = Collections.synchronizedList(new ArrayList<>());
+    private final List<SseEvent> events = Collections.synchronizedList(new ArrayList<>());
     private final InputStream body;
 
     Sse(InputStream body) {
@@ -530,10 +741,13 @@ class WebApiTest {
               () -> {
                 try (BufferedReader in =
                     new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8))) {
+                  long id = 0;
                   String line;
                   while ((line = in.readLine()) != null) {
-                    if (line.startsWith("data: ")) {
-                      events.add(Json.parse(line.substring("data: ".length())));
+                    if (line.startsWith("id: ")) {
+                      id = Long.parseLong(line.substring("id: ".length()).strip());
+                    } else if (line.startsWith("data: ")) {
+                      events.add(new SseEvent(id, Json.parse(line.substring("data: ".length()))));
                     }
                   }
                 } catch (IOException | RuntimeException ignored) {
@@ -547,6 +761,30 @@ class WebApiTest {
 
     JsonNode await(String type, long millis) throws InterruptedException {
       return awaitAtLeast(type, 1, millis);
+    }
+
+    /** The same as {@link #await} but with the SSE id, for tests about replay and reconnects. */
+    SseEvent awaitEvent(String type, long millis) throws InterruptedException {
+      long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+      while (System.nanoTime() < deadline) {
+        for (SseEvent event : raw()) {
+          if (type.equals(event.payload().path("type").asText())) {
+            return event;
+          }
+        }
+        Thread.sleep(10);
+      }
+      throw new AssertionError("no '" + type + "' event with an id; saw " + snapshot());
+    }
+
+    List<SseEvent> raw() {
+      synchronized (events) {
+        return List.copyOf(events);
+      }
+    }
+
+    List<String> types() {
+      return raw().stream().map(event -> event.payload().path("type").asText()).toList();
     }
 
     /** Waits until at least {@code count} events of {@code type} have arrived. */
@@ -572,9 +810,9 @@ class WebApiTest {
 
     List<JsonNode> ofType(String type) {
       List<JsonNode> matches = new ArrayList<>();
-      for (JsonNode event : snapshot()) {
-        if (type.equals(event.path("type").asText())) {
-          matches.add(event);
+      for (SseEvent event : raw()) {
+        if (type.equals(event.payload().path("type").asText())) {
+          matches.add(event.payload());
         }
       }
       return matches;
@@ -590,9 +828,7 @@ class WebApiTest {
     }
 
     List<JsonNode> snapshot() {
-      synchronized (events) {
-        return List.copyOf(events);
-      }
+      return raw().stream().map(SseEvent::payload).toList();
     }
 
     @Override
@@ -612,6 +848,7 @@ class WebApiTest {
     private final Deque<Message.Assistant> script = new ArrayDeque<>();
     private final List<Provider.Request> requests = new CopyOnWriteArrayList<>();
     private volatile CountDownLatch gate;
+    private int[] usage;
 
     MockProvider(String name) {
       this.name = name;
@@ -619,6 +856,13 @@ class WebApiTest {
 
     MockProvider reply(Message.Assistant assistant) {
       script.add(assistant);
+      return this;
+    }
+
+    /** Reports this token accounting after every turn; cached may be null for "not reported". */
+    MockProvider usage(int inputTokens, int outputTokens, Integer cachedInputTokens) {
+      this.usage =
+          new int[] {inputTokens, outputTokens, cachedInputTokens == null ? -1 : cachedInputTokens};
       return this;
     }
 
@@ -659,6 +903,9 @@ class WebApiTest {
       }
       for (Message.ToolCall call : next.toolCalls()) {
         listener.accept(new Event.ToolCallStart(call.id(), call.name()));
+      }
+      if (usage != null) {
+        listener.accept(new Event.Usage(usage[0], usage[1], usage[2] < 0 ? null : usage[2]));
       }
       return next;
     }

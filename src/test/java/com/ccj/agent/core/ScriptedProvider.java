@@ -27,6 +27,7 @@ final class ScriptedProvider implements Provider {
   private final List<Provider.Request> requests = new ArrayList<>();
   private int cursor;
   private Exception failure;
+  private int[] usage;
 
   ScriptedProvider(Reply... replies) {
     this("scripted", List.of(replies));
@@ -39,6 +40,12 @@ final class ScriptedProvider implements Provider {
 
   ScriptedProvider failingWith(Exception failure) {
     this.failure = failure;
+    return this;
+  }
+
+  /** Reports token accounting after each turn: input, output, cached (cached may be null). */
+  ScriptedProvider usage(int inputTokens, int outputTokens, Integer cachedInputTokens) {
+    this.usage = new int[] {inputTokens, outputTokens, cachedInputTokens == null ? -1 : cachedInputTokens};
     return this;
   }
 
@@ -68,6 +75,10 @@ final class ScriptedProvider implements Provider {
     }
     for (Message.ToolCall call : reply.toolCalls()) {
       listener.accept(new Event.ToolCallStart(call.id(), call.name()));
+    }
+    if (usage != null) {
+      listener.accept(
+          new Event.Usage(usage[0], usage[1], usage[2] < 0 ? null : usage[2]));
     }
     return new Message.Assistant(reply.text(), reply.toolCalls());
   }

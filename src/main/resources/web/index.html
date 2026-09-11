@@ -69,7 +69,26 @@
       </section>
       <section class="side-sec">
         <h2>Usage</h2>
-        <div class="usage" id="usage">—</div>
+        <div class="usage" id="usage">
+          <div class="usage-hero">
+            <span class="usage-hero-label">cache hit rate</span>
+            <span class="usage-hero-value" id="u-hit">—</span>
+          </div>
+          <p class="usage-hint" id="u-hint" hidden>the provider did not report cache usage</p>
+          <p class="usage-alert" id="u-alert" hidden></p>
+          <table class="usage-table">
+            <tbody>
+              <tr><th scope="row">turns</th><td id="u-turns">—</td></tr>
+              <tr><th scope="row">steps</th><td id="u-steps">—</td></tr>
+              <tr><th scope="row">input tokens</th><td id="u-in">—</td></tr>
+              <tr><th scope="row">output tokens</th><td id="u-out">—</td></tr>
+              <tr><th scope="row">cached input</th><td id="u-cached">—</td></tr>
+              <tr id="u-errors-row"><th scope="row">tool errors</th><td id="u-errors">—</td></tr>
+              <tr><th scope="row">tool calls</th><td id="u-tools">—</td></tr>
+              <tr><th scope="row">elapsed</th><td id="u-elapsed">—</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
       <section class="side-sec">
         <h2>Session</h2>

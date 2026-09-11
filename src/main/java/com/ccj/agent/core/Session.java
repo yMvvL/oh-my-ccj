@@ -17,5 +17,16 @@ public interface Session {
 
   void append(Message message);
 
+  /**
+   * Accounting for this session, restored when it is reopened. Defaults to nothing so a session that
+   * keeps no books ({@link MemorySession}) stays valid.
+   */
+  default UsageTotals totals() {
+    return UsageTotals.empty();
+  }
+
+  /** Records the totals; implementations that persist them may ignore or store them. */
+  default void totals(UsageTotals totals) {}
+
   default void close() {}
 }

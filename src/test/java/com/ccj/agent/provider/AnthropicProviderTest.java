@@ -221,4 +221,40 @@ class AnthropicProviderTest {
         0.7,
         null);
   }
+
+  @Test
+  void addsCacheReadsAndWritesToThePromptSize() throws Exception {
+    String stream =
+        """
+        event: message_start
+        data: {"type":"message_start","message":{"id":"m","usage":{"input_tokens":9,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      provider.complete(request(), events::add);
+
+      // 9 + 100 + 20: cache reads and writes are billed on top of input_tokens, so a cached turn
+      // must not look smaller than an uncached one.
+      assertTrue(events.contains(new Provider.Event.Usage(129, 4, 100)), events.toString());
+      provider.close();
+    }
+  }
 }

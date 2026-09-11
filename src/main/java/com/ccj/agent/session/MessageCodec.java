@@ -2,6 +2,7 @@ package com.ccj.agent.session;
 
 import com.ccj.agent.core.Json;
 import com.ccj.agent.core.Message;
+import com.ccj.agent.core.UsageTotals;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -151,5 +152,41 @@ public final class MessageCodec {
 
   private static String describe(JsonNode node) {
     return node == null ? "nothing" : node.getNodeType().toString().toLowerCase();
+  }
+
+  /**
+   * Accounting records share the session file but are not messages: the codec writes them so totals
+   * survive a restart, and {@code FileSession} filters them out of the conversation.
+   */
+  public static String totalsToJson(UsageTotals totals) {
+    ObjectNode node = Json.object();
+    node.put("type", FileSession.USAGE_TYPE);
+    node.put("input_tokens", totals.inputTokens());
+    node.put("output_tokens", totals.outputTokens());
+    node.put("cached_input_tokens", totals.cachedInputTokens());
+    node.put("user_turns", totals.userTurns());
+    node.put("model_turns", totals.modelTurns());
+    node.put("tool_calls", totals.toolCalls());
+    node.put("tool_errors", totals.toolErrors());
+    node.put("elapsed_ms", totals.elapsedMillis());
+    node.put("cache_reported", totals.cacheReported());
+    return Json.write(node);
+  }
+
+  public static UsageTotals totalsFromJson(String line) {
+    JsonNode node = Json.parse(line);
+    if (!FileSession.USAGE_TYPE.equals(node.path("type").asText())) {
+      throw new IllegalArgumentException("not a usage record");
+    }
+    return new UsageTotals(
+        node.path("input_tokens").asLong(),
+        node.path("output_tokens").asLong(),
+        node.path("cached_input_tokens").asLong(),
+        node.path("user_turns").asInt(),
+        node.path("model_turns").asInt(),
+        node.path("tool_calls").asInt(),
+        node.path("tool_errors").asInt(),
+        node.path("elapsed_ms").asLong(),
+        node.path("cache_reported").asBoolean());
   }
 }

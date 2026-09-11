@@ -24,6 +24,12 @@ public interface AgentListener {
 
   default void onToolEnd(Message.ToolCall call, ToolResult result, long elapsedMillis) {}
 
+  /**
+   * Token accounting for one turn. Separate from the human-readable notice because front ends want
+   * the numbers: a usage panel cannot add up prose.
+   */
+  default void onUsage(int inputTokens, int outputTokens, Integer cachedInputTokens) {}
+
   /** Out-of-band remark, e.g. "step limit reached". */
   default void onNotice(String text) {}
 }
