@@ -1358,17 +1358,15 @@ body {
   .btn:active:not(:disabled) { transform: none; }
 }
 
-/* Providers the user removed from the picker: still valid, so the way back has
- * to be visible rather than implied. */
-.picker-hidden {
+/* Built-ins that are not in the list right now: offered as a choice inside the
+ * add form, not announced as something that is missing. */
+.provider-builtins {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin: 6px 0 0;
+  margin: 8px 0 0;
   font-size: 12px;
   color: var(--fg-dim);
 }
-.picker-hidden-names { color: var(--fg); overflow-wrap: anywhere; }
-
-.hidden-item .provider-badge.hidden { color: var(--warn); border-color: var(--warn); }
+.provider-builtins-list { display: flex; flex-wrap: wrap; gap: 6px; }

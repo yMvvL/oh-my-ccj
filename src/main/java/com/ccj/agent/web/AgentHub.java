@@ -16,6 +16,7 @@ import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.core.Workspace;
 import com.ccj.agent.core.ProviderDefinition;
 import com.ccj.agent.provider.ModelCatalog;
+import com.ccj.agent.provider.Providers;
 import com.ccj.agent.provider.ProviderStore;
 import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.session.FileSession;
@@ -393,9 +394,15 @@ public final class AgentHub implements AutoCloseable {
       entry.put("model", model.model());
       entry.put("source", model.source());
     }
-    ArrayNode hiddenNames = root.putArray("hidden");
-    if (settings.providerStore() != null) {
-      settings.providerStore().hidden().forEach(hiddenNames::add);
+    // Built-ins that are not in the list right now: what an "add a built-in" control can offer.
+    // Framed as available, not as hidden — there is nothing to bring back from the dead.
+    ArrayNode available = root.putArray("builtIns");
+    Set<String> offered = new LinkedHashSet<>();
+    providers.forEach(entry -> offered.add(entry.path("name").asText().toLowerCase()));
+    for (String name : com.ccj.agent.provider.Providers.supported()) {
+      if (!offered.contains(name.toLowerCase())) {
+        available.add(name);
+      }
     }
     return root;
   }
@@ -437,55 +444,64 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Removes a provider from the picker.
+   * Removes a provider from the list.
    *
-   * <p>Two kinds exist and only one of them can be deleted: a provider the user defined is deleted,
-   * a built-in one — an alias compiled into the agent — has nothing to delete, so it is hidden. The
-   * gesture is the same in both cases; the notice says which happened, and a hidden name can be
-   * restored.
+   * <p>A definition the user made is deleted. A built-in one is compiled into the agent, so there is
+   * nothing to delete: it leaves the list and the list becomes explicit, which is all "deleted"
+   * needs to mean. Nothing is remembered as hidden and nothing is offered as a restore — adding it
+   * back is an ordinary add.
    */
   public ObjectNode removeProvider(String name) {
     ProviderStore store = requireProviderStore();
     String clean = knownProvider(name);
-    boolean defined = store.find(clean).isPresent();
     boolean inUse = config.provider() != null && config.provider().equalsIgnoreCase(clean);
-    if (defined) {
-      store.remove(clean);
-      publish(
-          "notice",
-          Json.object()
-              .put(
-                  "text",
-                  "provider '"
-                      + clean
-                      + "' deleted"
-                      + (inUse
-                          ? " — it was the one in use; this session keeps running, but choose another"
-                              + " provider before the next restart"
-                          : "")));
+    String tail =
+        inUse
+            ? " — it was the one in use; this session keeps running, but choose another provider"
+                + " before the next restart"
+            : "";
+
+    if (store.find(clean).isEmpty()) {
+      List<String> remaining = new ArrayList<>(currentProviderNames());
+      remaining.removeIf(known -> known.equalsIgnoreCase(clean));
+      store.setShown(remaining);
     } else {
-      store.hide(clean);
-      publish(
-          "notice",
-          Json.object()
-              .put(
-                  "text",
-                  "provider '"
-                      + clean
-                      + "' hidden (it is built in, so it cannot be deleted; restore it from Settings)"));
+      store.remove(clean);
     }
+    publish("notice", Json.object().put("text", "provider '" + clean + "' deleted" + tail));
     publishStatus();
     return modelsJson();
   }
 
-  /** Brings a hidden built-in back to the picker. */
-  public ObjectNode restoreProvider(String name) {
+  /** Adds a built-in back to the list — an ordinary add, not a resurrection. */
+  public ObjectNode addBuiltInProvider(String name) {
     ProviderStore store = requireProviderStore();
     String clean = name == null ? "" : name.strip();
-    store.show(clean);
-    publish("notice", Json.object().put("text", "provider '" + clean + "' restored"));
+    boolean builtIn =
+        Providers.supported().stream().anyMatch(known -> known.equalsIgnoreCase(clean));
+    if (!builtIn) {
+      throw new IllegalArgumentException(
+          "'" + clean + "' is not a built-in provider; define it instead");
+    }
+    if (currentProviderNames().stream().anyMatch(known -> known.equalsIgnoreCase(clean))) {
+      throw new IllegalArgumentException("'" + clean + "' is already in the list");
+    }
+    List<String> next = new ArrayList<>(currentProviderNames());
+    next.add(clean);
+    store.setShown(next);
+    publish("notice", Json.object().put("text", "provider '" + clean + "' added"));
     publishStatus();
     return modelsJson();
+  }
+
+  /** Every provider name the catalogue currently offers. */
+  private List<String> currentProviderNames() {
+    List<String> names = new java.util.ArrayList<>();
+    ModelCatalog catalog = settings.modelCatalog();
+    if (catalog != null) {
+      catalog.providers().forEach(entry -> names.add(entry.name()));
+    }
+    return names;
   }
 
   /**

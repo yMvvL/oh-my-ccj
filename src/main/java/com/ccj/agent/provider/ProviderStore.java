@@ -43,11 +43,14 @@ public final class ProviderStore {
   private final Map<String, List<String>> modelLists = new LinkedHashMap<>();
 
   /**
-   * Built-in providers the user removed from the picker. Hiding is the only thing that can be done
-   * to them — they are code, not configuration — and it is recorded rather than applied, so a
-   * hidden alias can be brought back instead of being gone for good.
+   * The providers the user actually has, once they have narrowed the list.
+   *
+   * <p>Empty means "no opinion: everything the agent ships plus your definitions". Once anything is
+   * removed the list becomes explicit, so a deleted provider is simply absent rather than
+   * remembered as "hidden" — the UI has nothing to explain and nothing to restore, and adding one
+   * back is an ordinary add.
    */
-  private final java.util.Set<String> hidden = new java.util.LinkedHashSet<>();
+  private java.util.List<String> shown;
 
   private ProviderStore(Path home) {
     this.home = home.toAbsolutePath().normalize();
@@ -73,29 +76,32 @@ public final class ProviderStore {
    * "recorded as empty" — the difference is what lets a user remove the last model and have it stay
    * removed instead of the provider's default list reappearing.
    */
-  /** Built-in names the user hid, lower-cased. */
-  public synchronized List<String> hidden() {
-    return List.copyOf(hidden);
+  /** The explicit list, or empty when the user has never removed a provider. */
+  public synchronized List<String> shown() {
+    return shown == null ? List.of() : List.copyOf(shown);
   }
 
-  public synchronized boolean isHidden(String provider) {
-    return provider != null && hidden.contains(provider.strip().toLowerCase());
-  }
-
-  public synchronized void hide(String provider) {
-    String key = provider == null ? "" : provider.strip().toLowerCase();
-    if (key.isEmpty()) {
-      throw new IllegalArgumentException("a provider name is required");
+  public synchronized boolean isShown(String provider) {
+    if (shown == null || provider == null) {
+      return true;
     }
-    hidden.add(key);
-    write();
+    String key = provider.strip().toLowerCase();
+    return shown.stream().anyMatch(name -> name.equalsIgnoreCase(key));
   }
 
-  public synchronized void show(String provider) {
-    String key = provider == null ? "" : provider.strip().toLowerCase();
-    if (!hidden.remove(key)) {
-      throw new IllegalArgumentException("'" + key + "' is not hidden");
+  /**
+   * Records the whole list. Called with what should remain, because only the caller knows the
+   * built-ins the store never stored.
+   */
+  public synchronized void setShown(List<String> providers) {
+    java.util.List<String> clean = new java.util.ArrayList<>();
+    for (String provider : providers == null ? List.<String>of() : providers) {
+      String value = provider == null ? "" : provider.strip();
+      if (!value.isEmpty() && clean.stream().noneMatch(name -> name.equalsIgnoreCase(value))) {
+        clean.add(value);
+      }
     }
+    shown = clean;
     write();
   }
 
@@ -163,9 +169,10 @@ public final class ProviderStore {
     } catch (IOException e) {
       throw new UncheckedIOException("cannot read " + file, e);
     }
-    JsonNode hiddenNames = root.path("hidden");
-    if (hiddenNames.isArray()) {
-      hiddenNames.forEach(name -> hidden.add(name.asText().toLowerCase()));
+    JsonNode shownNames = root.path("shown");
+    if (shownNames.isArray()) {
+      shown = new java.util.ArrayList<>();
+      shownNames.forEach(name -> shown.add(name.asText()));
     }
     JsonNode models = root.path("models");
     if (models.isObject()) {
@@ -211,9 +218,9 @@ public final class ProviderStore {
 
   private void write() {
     ObjectNode root = Json.object();
-    if (!hidden.isEmpty()) {
-      ArrayNode hiddenNames = root.putArray("hidden");
-      hidden.forEach(hiddenNames::add);
+    if (shown != null) {
+      ArrayNode shownNames = root.putArray("shown");
+      shown.forEach(shownNames::add);
     }
     ObjectNode models = root.putObject("models");
     modelLists.forEach(

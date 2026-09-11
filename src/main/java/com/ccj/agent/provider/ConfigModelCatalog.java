@@ -29,8 +29,26 @@ public final class ConfigModelCatalog implements ModelCatalog {
   public List<ProviderInfo> providers() {
     List<ProviderInfo> all = new ArrayList<>();
     Set<String> seen = new LinkedHashSet<>();
+    List<String> explicit = store == null ? List.of() : store.shown();
+    if (!explicit.isEmpty()) {
+      // The user narrowed the list: it is exactly this, in this order.
+      for (String name : explicit) {
+        if (!seen.add(name)) {
+          continue;
+        }
+        ProviderDefinition definition = store == null ? null : store.find(name).orElse(null);
+        String kind = definition != null ? definition.kind() : kindOf(name);
+        String baseUrl = definition != null ? definition.baseUrl() : Config.defaultBaseUrl(kind);
+        List<String> models =
+            definition != null
+                ? effective(name, definition.models())
+                : effective(name, List.of(defaultModelFor(kind)));
+        all.add(new ProviderInfo(name, kind, baseUrl, definition == null, models));
+      }
+      return List.copyOf(all);
+    }
     for (String name : Providers.supported()) {
-      if (!seen.add(name) || (store != null && store.isHidden(name))) {
+      if (!seen.add(name)) {
         continue;
       }
       String kind =
@@ -47,7 +65,7 @@ public final class ConfigModelCatalog implements ModelCatalog {
     }
     if (store != null) {
       for (ProviderDefinition definition : store.list()) {
-        if (seen.add(definition.name()) && !store.isHidden(definition.name())) {
+        if (seen.add(definition.name())) {
           all.add(
               new ProviderInfo(
                   definition.name(),
@@ -76,6 +94,13 @@ public final class ConfigModelCatalog implements ModelCatalog {
    * The list to offer for a provider: whatever the user last recorded wins, so a model they removed
    * stays removed and one they added stays added; otherwise the provider's own list applies.
    */
+  /** The protocol a built-in name speaks. */
+  private static String kindOf(String name) {
+    return ProviderDefinition.ANTHROPIC.equalsIgnoreCase(name)
+        ? ProviderDefinition.ANTHROPIC
+        : ProviderDefinition.OPENAI;
+  }
+
   private List<String> effective(String provider, List<String> fallback) {
     return store == null ? fallback : store.modelsFor(provider).orElse(fallback);
   }

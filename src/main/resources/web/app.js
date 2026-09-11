@@ -190,6 +190,8 @@
     cfgTemperature: $('cfg-temperature'),
     cfgProvidersNote: $('cfg-providers-note'),
     cfgProviderList: $('cfg-provider-list'),
+    cfgBuiltInRow: $('cfg-builtin-row'),
+    cfgBuiltIns: $('cfg-builtins'),
     cfgHiddenSection: $('cfg-hidden-section'),
     cfgHiddenList: $('cfg-hidden-list'),
     cfgProviderAddToggle: $('cfg-provider-add-toggle'),
@@ -1997,7 +1999,6 @@
       modelInput: root.querySelector('[data-role="modelInput"]'),
       modelUse: root.querySelector('[data-role="modelAdd"]'),
       addProvider: root.querySelector('[data-role="addProvider"]'),
-      hiddenNote: root.querySelector('[data-role="hiddenNote"]'),
       effort: root.querySelector('[data-role="effort"]'),
       effortHint: root.querySelector('[data-role="effortHint"]'),
       error: root.querySelector('[data-role="error"]')
@@ -2176,24 +2177,6 @@
       nodes.effortHint.textContent = EFFORT_HINT[current] || EFFORT_HINT.default;
     }
 
-    /* Hidden built-ins are the ones the user removed from this list. They are still valid — a
-     * config that names one keeps working — so the only way back is an explicit restore, which
-     * lives in Settings where providers are managed. */
-    function renderHiddenNote() {
-      const hiddenNames = Array.isArray(state.catalog && state.catalog.hidden)
-        ? state.catalog.hidden : [];
-      nodes.hiddenNote.textContent = '';
-      nodes.hiddenNote.hidden = hiddenNames.length === 0;
-      if (!hiddenNames.length) { return; }
-      nodes.hiddenNote.appendChild(el('span', 'picker-hidden-label',
-        hiddenNames.length === 1 ? '1 provider hidden: ' : hiddenNames.length + ' providers hidden: '));
-      nodes.hiddenNote.appendChild(el('span', 'picker-hidden-names', hiddenNames.join(', ')));
-      const restore = el('button', 'btn ghost sm', 'Restore in Settings');
-      restore.type = 'button';
-      restore.addEventListener('click', function () { openAddProviderForm(); });
-      nodes.hiddenNote.appendChild(restore);
-    }
-
     /* Picking a provider has to be enough to switch to it. Browsing alone
      * made another provider unreachable unless it also had a model row to
      * click, so a provider whose list is empty could not be selected at all.
@@ -2303,7 +2286,6 @@
       renderTrigger();
       if (!picker.open) { return; }
       renderProviders();
-      renderHiddenNote();
       renderModels();
       renderEffort();
     };
@@ -2499,7 +2481,7 @@
     state.catalog = {
       providers: records(payload && payload.providers),
       models: records(payload && payload.models),
-      hidden: (Array.isArray(payload && payload.hidden) ? payload.hidden : [])
+      builtIns: (Array.isArray(payload && payload.builtIns) ? payload.builtIns : [])
         .map(function (name) { return str(name); })
         .filter(Boolean)
     };
@@ -2653,44 +2635,40 @@
     return li;
   }
 
-  /* Removed built-ins are hidden rather than deleted, so the way back has to
-   * be a control and not a sentence pointing somewhere else. */
-  function renderHiddenSection() {
-    const names = Array.isArray(state.catalog && state.catalog.hidden) ? state.catalog.hidden : [];
-    dom.cfgHiddenList.textContent = '';
-    dom.cfgHiddenSection.hidden = names.length === 0;
+  /* Built-ins that are not in the list right now, offered as a choice inside the
+   * add form. They are not "hidden" and there is nothing to restore: the list
+   * simply does not contain them, and adding one is an ordinary add. */
+  function renderBuiltInChoices() {
+    const names = Array.isArray(state.catalog && state.catalog.builtIns)
+      ? state.catalog.builtIns : [];
+    dom.cfgBuiltIns.textContent = '';
+    dom.cfgBuiltInRow.hidden = names.length === 0;
     names.forEach(function (name) {
-      const li = el('li', 'provider-item hidden-item');
-      li.setAttribute('data-hidden-provider', name);
-      const top = el('div', 'provider-top');
-      top.appendChild(el('span', 'provider-name', name));
-      top.appendChild(el('span', 'provider-badge', 'built-in'));
-      top.appendChild(el('span', 'provider-badge hidden', 'hidden'));
-      const actions = el('span', 'provider-actions');
-      const restore = el('button', 'btn sm', 'Restore');
-      restore.type = 'button';
-      restore.addEventListener('click', function () { restoreProvider(name, restore); });
-      actions.appendChild(restore);
-      top.appendChild(actions);
-      li.appendChild(top);
-      li.appendChild(el('span', 'provider-meta', 'removed from the picker; still valid if a config names it'));
-      dom.cfgHiddenList.appendChild(li);
+      const add = el('button', 'btn ghost sm', name);
+      add.type = 'button';
+      add.title = 'Add the built-in provider ' + name + ' to your list';
+      add.addEventListener('click', function () { addBuiltInProvider(name, add); });
+      dom.cfgBuiltIns.appendChild(add);
     });
   }
 
-  async function restoreProvider(name, button) {
+  /* Adding a built-in back to the list: the same request the picker uses to delete
+   * one, in reverse. PUT because it is the list being amended, not a definition
+   * being created. */
+  async function addBuiltInProvider(name, button) {
     providerNote('');
+    clearSettingsErrors();
     button.disabled = true;
     try {
       const res = await request('/api/providers', {
         method: 'PUT',
         body: JSON.stringify({ name: name })
       });
-      acceptCatalogue(res, 'Provider ' + name + ' restored.');
+      acceptCatalogue(res, 'Provider ' + name + ' added.');
     } catch (err) {
       providerNote(err && err.status === 404
-        ? providersUnsupported('restoring providers', 'PUT')
-        : 'Could not restore ' + name + ': ' + str(err && err.message));
+        ? providersUnsupported('adding built-in providers', 'PUT')
+        : 'Could not add ' + name + ': ' + str(err && err.message));
     } finally {
       button.disabled = false;
     }
@@ -2700,7 +2678,7 @@
    * and it says so out loud when there are none, rather than leaving an empty
    * box whose meaning the user has to guess. */
   function renderProviderSection() {
-    renderHiddenSection();
+    renderBuiltInChoices();
     dom.cfgProviderList.textContent = '';
     if (state.catalogError) {
       dom.cfgProviderList.appendChild(el('li', 'muted',
@@ -2755,7 +2733,6 @@
     }
     refreshPickers();
     renderProviderSection();
-    renderHiddenSection();
   }
 
   function parseModelList(raw) {

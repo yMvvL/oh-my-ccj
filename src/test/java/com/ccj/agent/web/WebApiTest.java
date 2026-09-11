@@ -1147,34 +1147,59 @@ class WebApiTest {
   }
 
   @Test
-  void aBuiltInProviderCanBeRemovedFromThePickerAndBroughtBack() throws Exception {
+  void aBuiltInProviderCanBeDeletedAndAddedBack() throws Exception {
     assertTrue(providerNames(json("/api/models")).contains("groq"), "there to begin with");
 
-    HttpResponse<String> hidden =
+    HttpResponse<String> deleted =
         client.send(
             HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=groq")).DELETE().build(),
             HttpResponse.BodyHandlers.ofString());
 
-    assertEquals(200, hidden.statusCode(), hidden.body());
-    assertFalse(providerNames(Json.parse(hidden.body())).contains("groq"), "gone from the picker");
-    assertEquals(List.of("groq"), hiddenNames(Json.parse(hidden.body())), "and listed as hidden");
+    assertEquals(200, deleted.statusCode(), deleted.body());
+    JsonNode afterDelete = Json.parse(deleted.body());
+    assertFalse(providerNames(afterDelete).contains("groq"), "gone from the list");
+    assertEquals(
+        List.of(), afterDelete.path("hidden").findValuesAsText("hidden"),
+        "nothing is remembered as hidden — that is what 'deleted' means");
+    assertTrue(availableBuiltIns(afterDelete).contains("groq"), "but it can be added again");
     assertFalse(providerNames(json("/api/models")).contains("groq"), "still gone on the next read");
+    assertFalse(providerStore.shown().contains("groq"), "the explicit list no longer has it");
+    assertEquals(6, providerStore.shown().size(), "the rest stayed: " + providerStore.shown());
 
-    // it is an alias compiled into the agent, so it is hidden rather than deleted, and can come back
-    HttpResponse<String> restored =
+    // Adding a built-in back is an ordinary add, not a restore.
+    HttpResponse<String> added =
         client.send(
             HttpRequest.newBuilder(URI.create(origin + "/api/providers"))
                 .header("Content-Type", "application/json")
                 .PUT(HttpRequest.BodyPublishers.ofString("{\"name\":\"groq\"}"))
                 .build(),
             HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, restored.statusCode(), restored.body());
-    assertTrue(providerNames(Json.parse(restored.body())).contains("groq"));
-    assertEquals(List.of(), hiddenNames(Json.parse(restored.body())));
+    assertEquals(200, added.statusCode(), added.body());
+    assertTrue(providerNames(Json.parse(added.body())).contains("groq"));
+    assertFalse(availableBuiltIns(Json.parse(added.body())).contains("groq"), "offered once");
+
+    // Deleting twice is not an error, and neither is adding what is already there.
+    assertEquals(
+        400,
+        client.send(
+                HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=nope"))
+                    .DELETE()
+                    .build(),
+            HttpResponse.BodyHandlers.ofString())
+            .statusCode());
+    assertEquals(
+        400,
+        client.send(
+                HttpRequest.newBuilder(URI.create(origin + "/api/providers"))
+                    .header("Content-Type", "application/json")
+                    .PUT(HttpRequest.BodyPublishers.ofString("{\"name\":\"groq\"}"))
+                    .build(),
+            HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 
   @Test
-  void aUserDefinedProviderIsDeletedRatherThanHidden() throws Exception {
+  void aUserDefinedProviderIsDeletedOutright() throws Exception {
     postJson(
         "/api/providers",
         "{\"name\":\"mine\",\"kind\":\"openai\",\"baseUrl\":\"http://127.0.0.1:9/v1\",\"models\":\"m\"}");
@@ -1187,31 +1212,41 @@ class WebApiTest {
 
     assertEquals(200, removed.statusCode(), removed.body());
     assertFalse(providerNames(Json.parse(removed.body())).contains("mine"));
-    assertEquals(List.of(), hiddenNames(Json.parse(removed.body())), "deleted, not hidden");
     assertTrue(providerStore.list().isEmpty(), "the definition is gone");
-    assertFalse(providerStore.isHidden("mine"));
+    assertEquals(
+        List.of(),
+        providerStore.shown(),
+        "deleting a definition leaves the built-in list alone: there was no list to narrow");
   }
 
   @Test
-  void aHiddenProviderStillWorksWhenItIsTheOneConfigured() throws Exception {
+  void deletingTheProviderInUseKeepsTheSessionRunning() throws Exception {
     client.send(
         HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=openai")).DELETE().build(),
         HttpResponse.BodyHandlers.ofString());
 
-    // Hiding is a picker decision, not a capability removal: the configured provider keeps working.
+    // Deleting is a list decision, not a capability removal: the configured provider keeps working.
     assertEquals("openai", json("/api/status").path("provider").asText());
     assertTrue(json("/api/status").path("configured").asBoolean());
   }
 
   @Test
-  void removingAnUnknownProviderIsRejected() throws Exception {
-    HttpResponse<String> response =
+  void removingUnknownProvidersAndAddingNonBuiltInsAreRejected() throws Exception {
+    HttpResponse<String> unknown =
         client.send(
             HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=nope")).DELETE().build(),
             HttpResponse.BodyHandlers.ofString());
+    assertEquals(400, unknown.statusCode(), unknown.body());
 
-    assertEquals(400, response.statusCode(), response.body());
-    assertTrue(response.body().contains("no provider named"), response.body());
+    HttpResponse<String> notBuiltIn =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/providers"))
+                .header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString("{\"name\":\"whatever\"}"))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(400, notBuiltIn.statusCode(), notBuiltIn.body());
+    assertTrue(notBuiltIn.body().contains("not a built-in"), notBuiltIn.body());
   }
 
   // ------------------------------------------------------------------ helpers
@@ -1312,9 +1347,9 @@ class WebApiTest {
     return names;
   }
 
-  private static List<String> hiddenNames(JsonNode catalog) {
+  private static List<String> availableBuiltIns(JsonNode catalog) {
     List<String> names = new ArrayList<>();
-    catalog.path("hidden").forEach(entry -> names.add(entry.asText()));
+    catalog.path("builtIns").forEach(entry -> names.add(entry.asText()));
     return names;
   }
 

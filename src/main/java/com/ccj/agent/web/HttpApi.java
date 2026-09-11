@@ -281,7 +281,10 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     if ("PUT".equals(method)) {
-      respond(exchange, 200, hub.restoreProvider(Json.parse(readBody(exchange)).path("name").asText("")));
+      respond(
+          exchange,
+          200,
+          hub.addBuiltInProvider(Json.parse(readBody(exchange)).path("name").asText("")));
       return;
     }
     if ("GET".equals(method)) {
