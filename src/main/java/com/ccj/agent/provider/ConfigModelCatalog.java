@@ -30,7 +30,7 @@ public final class ConfigModelCatalog implements ModelCatalog {
     List<ProviderInfo> all = new ArrayList<>();
     Set<String> seen = new LinkedHashSet<>();
     List<String> explicit = store == null ? List.of() : store.shown();
-    if (!explicit.isEmpty()) {
+    if (store != null && store.narrowed()) {
       // The user narrowed the list: it is exactly this, in this order.
       for (String name : explicit) {
         if (!seen.add(name)) {
@@ -49,7 +49,8 @@ public final class ConfigModelCatalog implements ModelCatalog {
             definition != null
                 ? effective(name, definition.models())
                 : effective(name, List.of(defaultModelFor(kind)));
-        all.add(new ProviderInfo(name, kind, baseUrl, definition == null, models));
+        String keyEnv = definition != null ? definition.apiKeyEnv() : Config.defaultKeyEnv(kind);
+        all.add(new ProviderInfo(name, kind, baseUrl, definition == null, models, keyEnv));
       }
       return List.copyOf(all);
     }
@@ -67,7 +68,8 @@ public final class ConfigModelCatalog implements ModelCatalog {
               kind,
               Config.defaultBaseUrl(kind),
               true,
-              effective(name, List.of(defaultModelFor(kind)))));
+              effective(name, List.of(defaultModelFor(kind))),
+              Config.defaultKeyEnv(kind)));
     }
     if (store != null) {
       for (ProviderDefinition definition : store.list()) {
@@ -78,7 +80,8 @@ public final class ConfigModelCatalog implements ModelCatalog {
                   definition.kind(),
                   definition.baseUrl(),
                   false,
-                  effective(definition.name(), definition.models())));
+                  effective(definition.name(), definition.models()),
+                  definition.apiKeyEnv()));
         }
       }
     }

@@ -30,6 +30,6 @@ public interface AgentListener {
    */
   default void onUsage(int inputTokens, int outputTokens, Integer cachedInputTokens) {}
 
-  /** Out-of-band remark, e.g. "step limit reached". */
+  /** Out-of-band remark, e.g. a truncated context budget or a provider retry. */
   default void onNotice(String text) {}
 }

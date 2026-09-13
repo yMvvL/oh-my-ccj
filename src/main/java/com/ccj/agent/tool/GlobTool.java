@@ -32,6 +32,11 @@ public final class GlobTool implements Tool {
   }
 
   @Override
+  public boolean readOnly() {
+    return true;
+  }
+
+  @Override
   public String description() {
     return "Find files by glob pattern, e.g. **/*.java or src/**/*.md. Results are newest first. "
         + "Skips target/, .git/, node_modules/ and .idea/.";
@@ -117,7 +122,14 @@ public final class GlobTool implements Tool {
     }
     if (shown == 0) {
       return ToolResult.ok(
-          "no files match '" + pattern + "' under " + ToolSupport.display(ctx, base));
+          matched[0] == 0
+              ? "no files match '" + pattern + "' under " + ToolSupport.display(ctx, base)
+              : matched[0]
+                  + " file(s) match '"
+                  + pattern
+                  + "' but their paths do not fit the "
+                  + ctx.outputLimitBytes()
+                  + " byte output limit");
     }
     return ToolResult.ok(out.toString());
   }

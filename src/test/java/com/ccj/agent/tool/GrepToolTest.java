@@ -50,6 +50,41 @@ class GrepToolTest {
   }
 
   @Test
+  void anUnreadableFileIsNamedInsteadOfLosingTheWholeSearch() throws Exception {
+    Files.writeString(dir.resolve("readable.txt"), "needle here\n");
+    Path locked = dir.resolve("locked.txt");
+    Files.writeString(locked, "needle but unreadable\n");
+    // A file the process cannot open: the search must still answer with what it did find.
+    Files.setPosixFilePermissions(locked, java.util.Set.of());
+
+    ToolResult result = new GrepTool().execute("{\"pattern\":\"needle\"}", ToolContext.of(dir));
+
+    assertFalse(result.error(), result.content());
+    assertTrue(result.content().contains("readable.txt:1"), result.content());
+    assertTrue(result.content().contains("locked.txt"), result.content());
+    assertTrue(result.content().contains("could not be read"), result.content());
+  }
+
+  @Test
+  void aNulBytePastTheHeadProbeStillMakesTheFileBinary() throws Exception {
+    // The cheap probe reads the first 8 KiB; a NUL further in is still not text, and quoting the
+    // line around it would put raw bytes in the conversation.
+    StringBuilder text = new StringBuilder();
+    for (int i = 0; i < 2000; i++) {
+      text.append("filler line ").append(i).append(" needle\n");
+    }
+    text.append('\0').append("needle after the NUL\n");
+    Files.writeString(dir.resolve("late-nul.bin"), text.toString());
+    Files.writeString(dir.resolve("clean.txt"), "needle\n");
+
+    ToolResult result = new GrepTool().execute("{\"pattern\":\"needle\"}", ToolContext.of(dir));
+
+    assertFalse(result.error(), result.content());
+    assertTrue(result.content().contains("clean.txt:1"), result.content());
+    assertFalse(result.content().contains("late-nul.bin"), result.content());
+  }
+
+  @Test
   void skipsBinaryFilesAndCapsResults() throws Exception {
     Files.write(dir.resolve("bin.dat"), new byte[] {'m', 'a', 't', 'c', 'h', 0, 'h', 'i'});
     Files.writeString(dir.resolve("text.txt"), "match 1\nmatch 2\nmatch 3\n");

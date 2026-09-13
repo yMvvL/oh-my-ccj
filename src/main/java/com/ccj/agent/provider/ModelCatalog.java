@@ -23,9 +23,17 @@ public interface ModelCatalog {
   /**
    * @param kind the wire protocol: {@code openai} or {@code anthropic}
    * @param builtIn true for the providers compiled into the agent, false for user definitions
+   * @param apiKeyEnv the environment variable this provider's key is read from, or null when only
+   *     the settings form can supply one — a form that offers a key field has to be able to say
+   *     where a key would otherwise come from
    */
   record ProviderInfo(
-      String name, String kind, String baseUrl, boolean builtIn, List<String> models) {}
+      String name,
+      String kind,
+      String baseUrl,
+      boolean builtIn,
+      List<String> models,
+      String apiKeyEnv) {}
 
   List<ProviderInfo> providers();
 

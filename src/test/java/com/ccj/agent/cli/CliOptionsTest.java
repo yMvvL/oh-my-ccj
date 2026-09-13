@@ -13,13 +13,13 @@ class CliOptionsTest {
 
   @Test
   void inlineAndSeparateValueFormsAreEquivalent() {
-    CliOptions inline = CliOptions.parse(new String[] {"--model=gpt-4o", "--max-steps=7"});
-    CliOptions separate = CliOptions.parse(new String[] {"--model", "gpt-4o", "--max-steps", "7"});
+    CliOptions inline = CliOptions.parse(new String[] {"--model=gpt-4o", "--max-tokens=700"});
+    CliOptions separate = CliOptions.parse(new String[] {"--model", "gpt-4o", "--max-tokens", "700"});
 
     assertEquals("gpt-4o", inline.model());
-    assertEquals(7, inline.maxSteps());
+    assertEquals(700, inline.maxTokens());
     assertEquals("gpt-4o", separate.model());
-    assertEquals(7, separate.maxSteps());
+    assertEquals(700, separate.maxTokens());
   }
 
   @Test
@@ -46,6 +46,22 @@ class CliOptionsTest {
   }
 
   @Test
+  void theReasoningTierAndContextBudgetAreFlagsToo() {
+    CliOptions options =
+        CliOptions.parse(new String[] {"--reasoning", "high", "--max-context-tokens", "120000"});
+
+    assertEquals("high", options.reasoning());
+    assertEquals(120000, options.maxContextTokens());
+
+    // The web picker is not the only way to set them: both reach the configuration layer.
+    Config overrides = options.overrides();
+    assertEquals("high", overrides.reasoning());
+    assertEquals(120000, overrides.maxContextTokens());
+    assertNull(CliOptions.parse(new String[0]).reasoning());
+    assertNull(CliOptions.parse(new String[0]).maxContextTokens());
+  }
+
+  @Test
   void unknownFlagIsAUsageError() {
     CliOptions.UsageException error =
         assertThrows(
@@ -67,7 +83,7 @@ class CliOptionsTest {
   void nonNumericValuesAreAUsageError() {
     assertThrows(
         CliOptions.UsageException.class,
-        () -> CliOptions.parse(new String[] {"--max-steps", "many"}));
+        () -> CliOptions.parse(new String[] {"--max-tokens", "many"}));
     assertThrows(
         CliOptions.UsageException.class,
         () -> CliOptions.parse(new String[] {"--temperature", "hot"}));
@@ -95,7 +111,9 @@ class CliOptionsTest {
                   "--temperature",
                   "0.2",
                   "--system",
-                  "be brief"
+                  "be brief",
+                  "--language",
+                  "Simplified Chinese"
                 })
             .overrides();
 
@@ -103,10 +121,10 @@ class CliOptionsTest {
     assertEquals("claude-x", overrides.model());
     assertEquals(0.2, overrides.temperature());
     assertEquals("be brief", overrides.systemPrompt());
+    assertEquals("Simplified Chinese", overrides.language());
     assertNull(overrides.baseUrl());
     assertNull(overrides.apiKey());
     assertNull(overrides.apiKeyEnv());
-    assertNull(overrides.maxSteps());
     assertNull(overrides.maxTokens());
     assertNull(overrides.outputLimitBytes());
   }

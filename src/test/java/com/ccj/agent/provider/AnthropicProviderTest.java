@@ -206,6 +206,225 @@ class AnthropicProviderTest {
     }
   }
 
+  @Test
+  void aTruncatedToolCallStillLeavesASendableRequest() throws Exception {
+    // A stream cut off mid-call leaves half-written arguments behind. Throwing while the *next*
+    // request is built would strand the session: every later turn rebuilds the same history.
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+      Provider.Request request =
+          new Provider.Request(
+              "claude-test",
+              null,
+              List.of(
+                  new Message.User("hi"),
+                  new Message.Assistant(
+                      "", List.of(new Message.ToolCall("toolu_1", "read", "{\"path\": \"oops"))),
+                  new Message.ToolResult("toolu_1", "read", "invalid arguments", true)),
+              List.of(),
+              null,
+              null,
+              null);
+
+      provider.complete(request, event -> {});
+
+      assertEquals(
+          Json.parse("{}"),
+          Json.parse(server.body(0)).path("messages").path(1).path("content").path(0).path("input"),
+          "an unparsable argument string becomes an empty input, not a dead session");
+      provider.close();
+    }
+  }
+
+  @Test
+  void textCarriedInTheOpeningBlockIsNotDropped() throws Exception {
+    String script =
+        """
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Hi"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" there"}}
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(script))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      Message.Assistant assistant =
+          provider.complete(
+              new Provider.Request(
+                  "claude-test", null, List.of(new Message.User("hi")), List.of(), null, null, null),
+              events::add);
+
+      assertEquals("Hi there", assistant.text());
+      assertEquals(
+          List.of(new Provider.Event.TextDelta("Hi"), new Provider.Event.TextDelta(" there")),
+          events);
+      provider.close();
+    }
+  }
+
+  @Test
+  void thinkingBlocksAreKeptAndHandedBackWhenThinkingIsOn() throws Exception {
+    // The API verifies the signature of every thinking block it is handed, and rejects a turn that
+    // drops the ones the model produced; keeping them is the difference between a working
+    // extended-thinking conversation and one that fails on its second request.
+    String script =
+        """
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me look"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-abc"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_9","name":"read"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":\\"a\\"}"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1}
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(script))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+
+      Message.Assistant assistant = provider.complete(reasoningRequest("high"), event -> {});
+
+      assertEquals(
+          List.of(new Message.Thinking("Let me look", "sig-abc", "")),
+          assistant.thinking(),
+          "the block and its signature travel with the turn");
+
+      // And the next request hands it back, before anything else in that assistant turn.
+      provider.complete(
+          new Provider.Request(
+              "claude-test",
+              null,
+              List.of(new Message.User("hi"), assistant, new Message.ToolResult("toolu_9", "read", "ok", false)),
+              List.of(),
+              null,
+              null,
+              "high"),
+          event -> {});
+
+      JsonNode sent = Json.parse(server.body(1));
+      JsonNode assistantTurn = sent.path("messages").path(1);
+      assertEquals("assistant", assistantTurn.path("role").asText());
+      assertEquals(
+          Json.parse(
+              """
+              [
+                {"type": "thinking", "thinking": "Let me look", "signature": "sig-abc"},
+                {"type": "tool_use", "id": "toolu_9", "name": "read", "input": {"path": "a"}}
+              ]
+              """),
+          assistantTurn.path("content"),
+          "thinking first, then the call it reasoned about");
+      provider.close();
+    }
+  }
+
+  @Test
+  void thinkingBlocksAreNotReplayedWhenThinkingIsOff() throws Exception {
+    // The blocks belong to a setting the request is no longer asking for; sending them anyway is
+    // how a user who switches the tier back to `default` would get a rejected turn.
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+      Message.Assistant withThinking =
+          new Message.Assistant(
+              "answer", List.of(), List.of(new Message.Thinking("thought", "sig", "")));
+
+      provider.complete(
+          new Provider.Request(
+              "claude-test",
+              null,
+              List.of(withThinking),
+              List.of(),
+              null,
+              null,
+              null),
+          event -> {});
+
+      JsonNode content = Json.parse(server.body(0)).path("messages").path(0).path("content");
+      assertEquals(
+          Json.parse("[{\"type\": \"text\", \"text\": \"answer\"}]"),
+          content,
+          "no thinking block without a reasoning tier");
+      provider.close();
+    }
+  }
+
+  @Test
+  void anUnsignedThinkingBlockIsNotReplayed() throws Exception {
+    // A stream cut before the signature arrived leaves text without a signature; the API would
+    // reject it, so it is dropped rather than sent.
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+      Message.Assistant unsigned =
+          new Message.Assistant(
+              "answer", List.of(), List.of(new Message.Thinking("half a thought", "", "")));
+
+      provider.complete(reasoningRequest("low"), event -> {});
+
+      provider.complete(
+          new Provider.Request(
+              "claude-test", null, List.of(unsigned), List.of(), null, null, "low"),
+          event -> {});
+
+      JsonNode content = Json.parse(server.body(1)).path("messages").path(0).path("content");
+      assertEquals(Json.parse("[{\"type\": \"text\", \"text\": \"answer\"}]"), content, content.toString());
+      provider.close();
+    }
+  }
+
+  @Test
+  void aRedactedThinkingBlockIsKeptVerbatim() throws Exception {
+    String script =
+        """
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"opaque-1"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(script))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+
+      Message.Assistant assistant = provider.complete(reasoningRequest("high"), event -> {});
+
+      assertEquals(List.of(Message.Thinking.redacted("opaque-1")), assistant.thinking());
+
+      provider.complete(
+          new Provider.Request(
+              "claude-test", null, List.of(assistant), List.of(), null, null, "high"),
+          event -> {});
+
+      assertEquals(
+          Json.parse("[{\"type\": \"redacted_thinking\", \"data\": \"opaque-1\"}]"),
+          Json.parse(server.body(1)).path("messages").path(0).path("content"));
+      provider.close();
+    }
+  }
+
   private static Provider.Request request() {
     return new Provider.Request(
         "claude-test",
@@ -254,6 +473,127 @@ class AnthropicProviderTest {
       // 9 + 100 + 20: cache reads and writes are billed on top of input_tokens, so a cached turn
       // must not look smaller than an uncached one.
       assertTrue(events.contains(new Provider.Event.Usage(129, 4, 100)), events.toString());
+      provider.close();
+    }
+  }
+
+  @Test
+  void explicitNullCacheFieldsLeaveTheCacheUnreported() throws Exception {
+    // A gateway sends explicit nulls where the API omits the field. Jackson hands back a NullNode,
+    // so a plain null check read "not reported" as "nothing was cached" and the UI showed a 0% hit
+    // rate that looked like a measurement.
+    String stream =
+        """
+        event: message_start
+        data: {"type":"message_start","message":{"id":"m","usage":{"input_tokens":100,"cache_read_input_tokens":null,"cache_creation_input_tokens":null}}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      provider.complete(request(), events::add);
+
+      assertTrue(events.contains(new Provider.Event.Usage(100, 4, null)), events.toString());
+      provider.close();
+    }
+  }
+
+  @Test
+  void thinkingDeltasReachTheListenerAndStayOutOfTheReply() throws Exception {
+    // With a reasoning tier set the API can think for seconds; discarding the deltas left the user
+    // watching a spinner with nothing to read.
+    String stream =
+        """
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me check"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      Message.Assistant assistant = provider.complete(request(), events::add);
+
+      assertEquals("answer", assistant.text(), "thinking is not part of the reply");
+      assertEquals(
+          List.of(
+              new Provider.Event.ReasoningDelta("Let me check"),
+              new Provider.Event.TextDelta("answer")),
+          events);
+      provider.close();
+    }
+  }
+
+  @Test
+  void argumentsSentInTheOpeningBlockAreKept() throws Exception {
+    String stream =
+        """
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"read","input":{"path":"a"}}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+
+      Message.Assistant assistant = provider.complete(request(), event -> {});
+
+      assertEquals(
+          List.of(new Message.ToolCall("toolu_1", "read", "{\"path\":\"a\"}")),
+          assistant.toolCalls(),
+          "arguments that arrive with the block must not be dropped");
+      provider.close();
+    }
+  }
+
+  @Test
+  void aTwoHundredThatIsNotAnEventStreamIsNotAnEmptyAnswer() throws Exception {
+    try (FakeServer server =
+        FakeServer.start(FakeServer.Reply.json(200, "{\"error\":{\"message\":\"upstream exploded\"}}"))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+
+      IllegalStateException failure =
+          assertThrows(
+              IllegalStateException.class, () -> provider.complete(request(), event -> {}));
+
+      assertTrue(failure.getMessage().contains("no events"), failure.getMessage());
+      assertTrue(failure.getMessage().contains("upstream exploded"), failure.getMessage());
       provider.close();
     }
   }

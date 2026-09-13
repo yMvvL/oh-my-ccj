@@ -28,6 +28,9 @@ final class ScriptedProvider implements Provider {
   private int cursor;
   private Exception failure;
   private int[] usage;
+  /** How long each streamed delta takes, for tests about stopping a call that is still running. */
+  private long deltaMillis;
+  private int deltaCount;
 
   ScriptedProvider(Reply... replies) {
     this("scripted", List.of(replies));
@@ -40,6 +43,18 @@ final class ScriptedProvider implements Provider {
 
   ScriptedProvider failingWith(Exception failure) {
     this.failure = failure;
+    return this;
+  }
+
+  /**
+   * Makes every delta take this long, standing in for a model that is still writing.
+   *
+   * <p>A real turn streams for seconds or minutes, which is exactly when a user presses stop; without
+   * this a scripted provider answers instantly and there is nothing to interrupt.
+   */
+  ScriptedProvider streaming(long deltaMillis, int deltas) {
+    this.deltaMillis = deltaMillis;
+    this.deltaCount = deltas;
     return this;
   }
 
@@ -70,6 +85,15 @@ final class ScriptedProvider implements Provider {
     }
     Reply reply = script.get(Math.min(cursor, script.size() - 1));
     cursor++;
+    if (deltaMillis > 0) {
+      // Fragment the reply the way the wire does, one piece per interval, so there is a call in
+      // progress for an abort to interrupt.
+      int pieces = Math.max(1, deltaCount);
+      for (int i = 0; i < pieces; i++) {
+        Thread.sleep(deltaMillis);
+        listener.accept(new Event.TextDelta("piece" + i + " "));
+      }
+    }
     if (!reply.text().isEmpty()) {
       listener.accept(new Event.TextDelta(reply.text()));
     }

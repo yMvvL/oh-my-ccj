@@ -22,7 +22,8 @@ class ToolsTest {
   @Test
   void registersTheStandardToolsInAdvertisedOrder() {
     assertEquals(
-        List.of("read", "write", "edit", "bash", "glob", "grep"), Tools.standard().names());
+        List.of("read", "write", "edit", "bash", "glob", "grep", "restart"),
+        Tools.standard().names());
   }
 
   @Test

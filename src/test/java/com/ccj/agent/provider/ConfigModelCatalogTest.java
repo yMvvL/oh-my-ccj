@@ -58,6 +58,21 @@ class ConfigModelCatalogTest {
   }
 
   @Test
+  void anEmptiedListOffersNothingInsteadOfEveryBuiltIn() {
+    // The bug: `shown()` returned an empty list both for "never narrowed" and for "I removed the
+    // last provider", so deleting the final one read as "no opinion" and every built-in came back.
+    ProviderStore store = ProviderStore.open(tmp);
+    store.setShown(List.of("openai"));
+    store.setShown(List.of());
+    ConfigModelCatalog catalog = new ConfigModelCatalog(store);
+
+    assertTrue(store.shown().isEmpty());
+    assertTrue(store.narrowed(), "an emptied list is still an answer");
+    assertTrue(catalog.providers().isEmpty(), "and the catalogue honours it: " + catalog.providers());
+    assertTrue(catalog.models().isEmpty());
+  }
+
+  @Test
   void anEmptyStoreStillOffersTheBuiltIns() {
     ConfigModelCatalog catalog = new ConfigModelCatalog(null);
 

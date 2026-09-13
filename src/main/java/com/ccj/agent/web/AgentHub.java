@@ -7,14 +7,17 @@ import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
 import com.ccj.agent.core.Message;
+import com.ccj.agent.core.Prompts;
 import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolRegistry;
 import com.ccj.agent.core.ToolResult;
 import com.ccj.agent.core.ToolSpec;
+import com.ccj.agent.core.TokenEstimate;
 import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.core.Workspace;
 import com.ccj.agent.core.ProviderDefinition;
+import com.ccj.agent.core.SessionRepair;
 import com.ccj.agent.provider.ModelCatalog;
 import com.ccj.agent.provider.Providers;
 import com.ccj.agent.provider.ProviderStore;
@@ -54,8 +57,14 @@ import java.util.function.Consumer;
  * the model the turns go to.
  *
  * <p>Deliberately headless — it publishes {@link Event}s and knows nothing about HTTP, so the same
- * object could back a websocket or a test. One turn runs at a time; a second submit is refused
- * rather than queued, because two writers on one session is how transcripts get corrupted.
+ * object could back a websocket or a test.
+ *
+ * <p>Every turn belongs to a conversation and runs in that conversation's own slot, so several can
+ * be in flight at once: a long job in one session is not a reason the user cannot start work in
+ * another. The unit that takes one turn at a time is the session — a second message in the
+ * <em>same</em> conversation is refused rather than queued, because two writers on one transcript is
+ * how it gets corrupted. Every event names the session it belongs to, since one stream carries them
+ * all.
  *
  * <p>The provider is swappable at runtime: this server starts happily with no model configured so
  * the UI can be used to configure one, and {@link #applyConfig} validates and installs a new one
@@ -100,44 +109,51 @@ public final class AgentHub implements AutoCloseable {
       FolderChooser folderChooser,
       boolean autoApprove) {}
 
-  /** One thing that happened, shaped for the wire. */
-  public record Event(long id, String type, ObjectNode payload) {}
+  /**
+   * One thing that happened, shaped for the wire.
+   *
+   * <p>{@code sessionId} is part of the event rather than of the connection because one stream
+   * carries every conversation on the server: with turns running in parallel, an event that did not
+   * name its session would be prose rendered into whichever transcript happened to be open.
+   */
+  public record Event(long id, String type, String sessionId, ObjectNode payload) {}
 
   private static final DateTimeFormatter TIMESTAMP =
       DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(ZoneId.systemDefault());
 
   private final ToolRegistry tools;
   private final Settings settings;
-  private final ExecutorService turns =
-      Executors.newSingleThreadExecutor(
-          runnable -> {
-            Thread thread = new Thread(runnable, "ccj-web-turn");
-            thread.setDaemon(true);
-            return thread;
-          });
+
+  /** One per running turn: a session that is working gets its own thread, not the server's. */
+  private final ExecutorService turns = Executors.newVirtualThreadPerTaskExecutor();
 
   private final List<Consumer<Event>> subscribers = new CopyOnWriteArrayList<>();
   private final Deque<Event> replay = new ArrayDeque<>();
   private final AtomicLong nextEventId = new AtomicLong();
   private final AtomicInteger nextApprovalId = new AtomicInteger();
-  private final Map<String, CompletableFuture<Boolean>> pendingApprovals = new ConcurrentHashMap<>();
-  private final AtomicBoolean busy = new AtomicBoolean();
+  /**
+   * Approvals waiting for a human, keyed by their id.
+   *
+   * <p>Server-wide rather than per conversation: an approval is answered by id, from whichever page
+   * notices it, and a request that needs a human in a background turn is exactly the case this must
+   * not get wrong.
+   */
+  private final Map<String, Pending> pendingApprovals = new ConcurrentHashMap<>();
   private final AtomicBoolean autoApprove = new AtomicBoolean();
-  private final AtomicReference<AgentLoop> running = new AtomicReference<>();
   private final AtomicReference<Provider> provider = new AtomicReference<>();
-  private final Object sessionLock = new Object();
 
-  // Session-scoped usage. Live totals only: the session file stores the conversation, not the
-  // accounting, so a resumed session starts counting again from zero.
-  private final AtomicLong totalInputTokens = new AtomicLong();
-  private final AtomicLong totalOutputTokens = new AtomicLong();
-  private final AtomicLong totalCachedInputTokens = new AtomicLong();
-  private final AtomicInteger userTurns = new AtomicInteger();
-  private final AtomicInteger modelTurns = new AtomicInteger();
-  private final AtomicInteger toolCalls = new AtomicInteger();
-  private final AtomicInteger toolErrors = new AtomicInteger();
-  private final AtomicLong turnMillis = new AtomicLong();
-  private final AtomicBoolean cacheReported = new AtomicBoolean();
+  /**
+   * Running turns, one per session, and the conversation each one belongs to.
+   *
+   * <p>The map is the server's answer to "is this session busy": a turn is registered before it
+   * starts and removed when it ends, so a second message in the same conversation is refused while a
+   * message in any other conversation is not. Keyed by session id, so two conversations never share
+   * a slot and switching between them cannot confuse one turn with another.
+   */
+  private final Map<String, Conversation> conversations = new ConcurrentHashMap<>();
+
+  /** The conversation the browsing front end is looking at. */
+  private final Object sessionLock = new Object();
 
   private volatile Config config;
   private volatile FileSession session;
@@ -158,10 +174,6 @@ public final class AgentHub implements AutoCloseable {
     this.autoApprove.set(settings.autoApprove());
     this.folderChooser =
         settings.folderChooser() == null ? new NativeFolderChooser() : settings.folderChooser();
-    if (session != null) {
-      // A server started on an existing session (--resume / --continue) continues its books.
-      applyTotals(session.totals());
-    }
   }
 
   /** Where tools resolve relative paths, and where this run's sessions are kept. */
@@ -194,12 +206,21 @@ public final class AgentHub implements AutoCloseable {
     ObjectNode node = Json.object();
     node.put("version", settings.version());
     node.put("configured", currentProvider != null);
+
     // The configured name, not the implementation's: the user picked "custom" + a relay URL, and
     // "openai" would be a confusing thing to show them.
     node.put("provider", currentProvider == null || active.provider() == null ? "" : active.provider());
     node.put("model", active.model() == null ? "" : active.model());
-    node.put("baseUrl", active.baseUrl() == null ? "" : active.baseUrl());
+    // The endpoint the provider will actually be called at, not the one the file happens to store:
+    // a custom provider is served by its definition unless the stored URL was entered for it.
+    String endpoint = Providers.effectiveBaseUrl(active, settings.providerStore(), active.provider());
+    node.put("baseUrl", endpoint == null ? "" : endpoint);
     node.put("cwd", cwd().toString());
+    // Empty in the normal case. Non-empty means -C pinned a working directory that is not the active
+    // workspace's: two facts that disagree, which the page has to be able to show rather than let
+    // the tree claim the tools run where they do not.
+    Path override = settings.cwdOverride();
+    node.put("cwdOverride", override == null ? "" : override.toString());
     ObjectNode workspaceNode = node.putObject("workspace");
     Workspace activeWorkspace = settings.workspaces().active();
     workspaceNode.put(
@@ -209,7 +230,34 @@ public final class AgentHub implements AutoCloseable {
     node.put("sessionId", current == null ? "" : current.id());
     node.put("messageCount", current == null ? 0 : current.messages().size());
     node.put("autoApprove", autoApprove.get());
-    node.put("busy", busy.get());
+    // "busy" answers for the conversation on screen: a page's composer is about the transcript it
+    // shows, and a turn running somewhere else must not disable it.
+    Conversation shown = conversation(current == null ? "" : current.id());
+    node.put("busy", shown != null && shown.running());
+    // Which other conversations are working, so the tree can mark their rows. Named rather than
+    // counted: "something is running" cannot tell you which session to go back to watch.
+    ArrayNode runningNow = node.putArray("running");
+    for (Conversation entry : conversations.values()) {
+      if (entry.running() && !entry.id().equals(current == null ? "" : current.id())) {
+        runningNow.add(entry.id());
+      }
+    }
+    // Approvals this conversation is waiting on. They are requests blocked in memory rather than
+    // messages, so they are not in the history a page replays when it opens a session — without them
+    // here, looking at another conversation and coming back lost the prompt and left abort as the
+    // only way out.
+    ArrayNode waiting = node.putArray("approvals");
+    String shownId = current == null ? "" : current.id();
+    for (Map.Entry<String, Pending> entry : pendingApprovals.entrySet()) {
+      Pending pending = entry.getValue();
+      if (!pending.sessionId().equals(shownId)) {
+        continue;
+      }
+      ObjectNode request = waiting.addObject();
+      request.put("id", entry.getKey());
+      request.put("title", pending.title());
+      request.put("detail", pending.detail());
+    }
     if (active.reasoning() == null) {
       node.putNull("reasoning");
     } else {
@@ -231,7 +279,6 @@ public final class AgentHub implements AutoCloseable {
   public ArrayNode sessionsJson() {
     return sessionsJson(null);
   }
-
   /**
    * Sessions of one workspace, or of the active one when {@code workspace} is null.
    *
@@ -255,9 +302,14 @@ public final class AgentHub implements AutoCloseable {
     for (SessionStore.Summary summary : SessionStore.list(directory)) {
       ObjectNode node = array.addObject();
       node.put("id", summary.id());
+      node.put("title", summary.title());
       node.put("preview", summary.preview());
       node.put("messageCount", summary.messageCount());
       node.put("lastModified", TIMESTAMP.format(summary.lastModified()));
+      // Which rows are working, so a turn left running in another conversation is visible from
+      // anywhere rather than only from the transcript it is writing.
+      Conversation conversation = conversations.get(summary.id());
+      node.put("running", conversation != null && conversation.running());
     }
     return array;
   }
@@ -269,7 +321,11 @@ public final class AgentHub implements AutoCloseable {
    * "nothing was cached" are different facts, and only one of them is a 0%.
    */
   public ObjectNode usageFields() {
-    UsageTotals totals = currentTotals();
+    return usageFields(session());
+  }
+
+  private ObjectNode usageFields(FileSession target) {
+    UsageTotals totals = totalsOf(target);
     ObjectNode node = Json.object();
     node.put("turns", totals.userTurns());
     node.put("steps", totals.modelTurns());
@@ -286,32 +342,23 @@ public final class AgentHub implements AutoCloseable {
     node.put("toolCalls", totals.toolCalls());
     node.put("toolErrors", totals.toolErrors());
     node.put("elapsedMs", totals.elapsedMillis());
+    // How much of the model's window this conversation would take. It is an estimate and the panel
+    // says so: the count is a heuristic, and the number that matters is the one the user paid for.
+    node.put(
+        "contextTokens",
+        TokenEstimate.of(target == null ? List.<Message>of() : target.messages()));
+    Config active = config;
+    node.put("contextLimit", active.maxContextTokens() == null ? 0 : active.maxContextTokens());
     return node;
   }
 
   private UsageTotals currentTotals() {
-    return new UsageTotals(
-        totalInputTokens.get(),
-        totalOutputTokens.get(),
-        totalCachedInputTokens.get(),
-        userTurns.get(),
-        modelTurns.get(),
-        toolCalls.get(),
-        toolErrors.get(),
-        turnMillis.get(),
-        cacheReported.get());
+    return totalsOf(session());
   }
 
-  private void applyTotals(UsageTotals totals) {
-    totalInputTokens.set(totals.inputTokens());
-    totalOutputTokens.set(totals.outputTokens());
-    totalCachedInputTokens.set(totals.cachedInputTokens());
-    userTurns.set(totals.userTurns());
-    modelTurns.set(totals.modelTurns());
-    toolCalls.set(totals.toolCalls());
-    toolErrors.set(totals.toolErrors());
-    turnMillis.set(totals.elapsedMillis());
-    cacheReported.set(totals.cacheReported());
+  /** A session's books: what the file recorded before, or an empty ledger when there is no file. */
+  private static UsageTotals totalsOf(FileSession session) {
+    return session == null ? UsageTotals.empty() : session.totals();
   }
 
   /**
@@ -324,10 +371,30 @@ public final class AgentHub implements AutoCloseable {
   public ObjectNode historyJson() {
     FileSession current = session();
     ArrayNode events = Json.mapper().createArrayNode();
-    for (Message message : current == null ? List.<Message>of() : current.messages()) {
+    // Repaired first, so a conversation an interruption left invalid replays the same way the model
+    // will read it: a call whose result went missing shows as "not run" rather than as a card that
+    // spins forever.
+    List<Message> messages =
+        current == null || current.messages().isEmpty()
+            ? List.of()
+            : SessionRepair.apply(current.messages()).messages();
+    for (Message message : messages) {
       switch (message) {
         case Message.User user -> events.add(replay("user").put("text", user.text()));
         case Message.Assistant assistant -> {
+          // Reasoning first: it is what the model said to itself before answering, which is also the
+          // order the live stream produced it in. Without this a conversation replayed after a
+          // session switch lost its thinking — the reasoning is in the file, so a replay that drops
+          // it is a replay of a different conversation.
+          for (Message.Thinking block : assistant.thinking()) {
+            if (block.redacted() || block.text().isEmpty()) {
+              // A redacted block's payload is opaque and belongs to the model, unchanged: rendering
+              // it as prose would put a wall of base64 in the transcript. A signature-only block has
+              // nothing to show either.
+              continue;
+            }
+            events.add(replay("reasoning").put("delta", block.text()));
+          }
           if (!assistant.text().isBlank()) {
             events.add(replay("text").put("delta", assistant.text()));
           }
@@ -385,6 +452,13 @@ public final class AgentHub implements AutoCloseable {
       entry.put("kind", provider.kind());
       entry.put("baseUrl", provider.baseUrl());
       entry.put("builtIn", provider.builtIn());
+      // The variable a key would come from, so the settings form can name it instead of guessing
+      // the protocol's default — which is how a relay got told to read somebody else's key variable.
+      if (provider.apiKeyEnv() == null) {
+        entry.putNull("apiKeyEnv");
+      } else {
+        entry.put("apiKeyEnv", provider.apiKeyEnv());
+      }
       ArrayNode list = entry.putArray("models");
       provider.models().forEach(list::add);
     }
@@ -594,7 +668,7 @@ public final class AgentHub implements AutoCloseable {
   private void ensureListed(String name) {
     ProviderStore store = requireProviderStore();
     List<String> shown = new ArrayList<>(store.shown());
-    if (shown.isEmpty() || shown.stream().anyMatch(known -> known.equalsIgnoreCase(name))) {
+    if (!store.narrowed() || shown.stream().anyMatch(known -> known.equalsIgnoreCase(name))) {
       return;
     }
     shown.add(name);
@@ -620,14 +694,16 @@ public final class AgentHub implements AutoCloseable {
       ObjectNode entry = list.addObject();
       entry.put("name", workspace.name());
       entry.put("path", workspace.path().toString());
-      entry.put("sessions", SessionStore.list(workspace.sessionsDir()).size());
+      entry.put("sessions", SessionStore.count(workspace.sessionsDir()));
       entry.put("active", active != null && active.name().equals(workspace.name()));
     }
     return root;
   }
 
   public ObjectNode addWorkspace(String name, String path) {
-    requireIdle();
+    // A registry entry, and nothing more: no running turn reads the list, so adding one cannot
+    // disturb work already under way. Requiring idle here is what made a second workspace
+    // unreachable while the first one was busy.
     if (path == null || path.isBlank()) {
       throw new IllegalArgumentException("a workspace needs a directory");
     }
@@ -636,8 +712,40 @@ public final class AgentHub implements AutoCloseable {
     return workspacesJson();
   }
 
+  /**
+   * Adds a directory chosen from the desktop's own chooser. The chooser is the whole gesture, so the
+   * name is the directory's — see {@link WorkspaceStore#add(Path)} for how a taken name is resolved.
+   */
+  public ObjectNode addWorkspace(Path path) {
+    if (path == null) {
+      throw new IllegalArgumentException("a workspace needs a directory");
+    }
+    requireDistinctPath(path);
+    Workspace added = settings.workspaces().add(path);
+    publish(
+        "notice",
+        Json.object().put("text", "workspace '" + added.name() + "' → " + added.path()));
+    return workspacesJson();
+  }
+
+  /* The registry is keyed by name, so two names may point at one directory — which is fine until it
+   * is the same directory twice: two session histories would then compete for one working
+   * directory, and nothing on screen would say which list belongs to which. */
+  private void requireDistinctPath(Path path) {
+    Path wanted = path.toAbsolutePath().normalize();
+    for (Workspace known : settings.workspaces().list()) {
+      if (known.path().equals(wanted)) {
+        throw new IllegalArgumentException(
+            "that directory is already the workspace '"
+                + known.name()
+                + "'; use the entry in the tree instead of adding it again");
+      }
+    }
+  }
+
   public ObjectNode removeWorkspace(String name) {
-    requireIdle();
+    // Forgetting an entry deletes no file and stops no turn; a running turn keeps the session file it
+    // already holds. Only the active workspace is protected, and that is the registry's own rule.
     settings.workspaces().remove(name);
     publish("notice", Json.object().put("text", "workspace '" + name.strip() + "' forgotten"));
     return workspacesJson();
@@ -649,7 +757,8 @@ public final class AgentHub implements AutoCloseable {
    * worse than an empty transcript.
    */
   public ObjectNode switchWorkspace(String name) {
-    requireIdle();
+    // Allowed while turns are running: each one holds the working directory it started in, so
+    // switching the namespace here cannot redirect a job that is already under way.
     Workspace workspace = settings.workspaces().activate(name);
     useSession(SessionStore.create(workspace.sessionsDir()));
     publish(
@@ -664,18 +773,40 @@ public final class AgentHub implements AutoCloseable {
   public ObjectNode configJson() {
     Config active = config;
     Config fileConfig = Config.fromFile(settings.configFile());
+    // A pair that belongs to this provider: either the file's flat fields, or one it remembers for
+    // this provider from a previous visit. Either way it is this provider's key, and the key itself
+    // never leaves the server.
+    boolean storedForThisProvider =
+        fileConfig.apiKey() != null
+            && !fileConfig.apiKey().isBlank()
+            && (fileConfig.settingsBelongTo(active.provider())
+                || fileConfig.rememberedFor(active.provider()) != null);
     String apiKeySource =
-        fileConfig.apiKey() != null && !fileConfig.apiKey().isBlank()
+        storedForThisProvider
             ? "config"
             : active.resolvedApiKey(settings.env()) != null ? "env" : "none";
     ObjectNode node = Json.object();
     node.put("configured", provider.get() != null);
     node.put("provider", active.provider());
     node.put("model", active.model());
-    node.put("baseUrl", active.baseUrl());
+    node.put("baseUrl", Providers.effectiveBaseUrl(active, settings.providerStore(), active.provider()));
     node.put("apiKeyEnv", active.apiKeyEnv());
+    // Whether the two above are what this provider will actually use. False means they were entered
+    // for a different provider (a custom provider does not use them), and the form must offer this
+    // provider's own endpoint instead of the stale one.
+    node.put(
+        "usesStoredSettings",
+        Providers.usesStoredSettings(active, settings.providerStore(), active.provider()));
+    // Which providers have one saved, by name: the form says "saved" or "not saved" per provider
+    // before anything is pasted, and switching between them is the whole reason the map exists.
+    ArrayNode remembered = node.putArray("rememberedProviders");
+    Set<String> withKey = new LinkedHashSet<>();
+    fileConfig.rememberedNames().forEach(withKey::add);
+    if (storedForThisProvider && active.provider() != null) {
+      withKey.add(active.provider().strip().toLowerCase());
+    }
+    withKey.forEach(remembered::add);
     node.put("apiKeySource", apiKeySource);
-    node.put("maxSteps", active.maxSteps());
     if (active.reasoning() == null) {
       node.putNull("reasoning");
     } else {
@@ -694,6 +825,15 @@ public final class AgentHub implements AutoCloseable {
       node.put("maxTokens", active.maxTokens());
     }
     node.put("configFile", settings.configFile().toString());
+    // The language the prompt asks for, and the list the form offers. `auto` is the absence of a
+    // choice, so it is what a cleared field reports.
+    node.put("language", active.language() == null ? Prompts.AUTO : active.language());
+    ArrayNode languages = node.putArray("languages");
+    Prompts.languageChoices().forEach(choice -> {
+      ObjectNode entry = languages.addObject();
+      entry.put("value", choice[0]);
+      entry.put("label", choice[1]);
+    });
     ArrayNode providers = node.putArray("providers");
     Set<String> names = new LinkedHashSet<>();
     if (settings.modelCatalog() != null) {
@@ -708,14 +848,26 @@ public final class AgentHub implements AutoCloseable {
    *
    * <p>The provider is built first: a wrong key or an unreachable base URL must fail before the file
    * is touched, otherwise a typo would leave a configuration that cannot start.
+   *
+   * <p>Switching provider starts from a configuration with no endpoint and no credential: they
+   * belonged to the provider that was active, and inheriting them is how a session that says
+   * "CommandCode" sends its traffic to the previous provider's address with the previous provider's
+   * key. Whatever this request carried still applies, and the result is marked as the new
+   * provider's, so the stored pair stays honest the next time it is read.
    */
   public ObjectNode applyConfig(JsonNode posted) {
-    requireIdle();
+    requireEverythingIdle("change the model");
     Config changes = changesFrom(posted);
-    Config candidate = config.merge(changes).resolved();
+    // Both sides go through the same transition: the endpoint and key being left are remembered under
+    // the provider they belong to, the one being switched to is recalled, and a change that names a
+    // setting writes it as the active provider's.
+    Config candidate = config.changedBy(changes);
     Provider built = settings.providerFactory().create(candidate, settings.env());
     try {
-      Config.writeInto(settings.configFile(), Config.fromFile(settings.configFile()).merge(changes));
+      // The file is the side that is written, so it carries the provider actually in use: a form can
+      // post a key on its own, and a save must not leave the file without the provider it is about.
+      Config stored = Config.fromFile(settings.configFile()).namedBy(config).changedBy(changes);
+      Config.writeInto(settings.configFile(), stored);
     } catch (RuntimeException e) {
       built.close();
       throw e;
@@ -740,8 +892,11 @@ public final class AgentHub implements AutoCloseable {
    * server spends the user's tokens, and only when they press the button.
    */
   public ObjectNode testConfiguration(JsonNode posted) {
-    requireIdle();
-    Config candidate = config.merge(changesFrom(posted)).resolved();
+    requireShownIdle("test these settings");
+    // Testing settings that are not saved yet must test exactly what was posted: the same transition
+    // the form's Save uses, minus the write, so a value this provider does not own is replaced rather
+    // than left behind.
+    Config candidate = config.changedBy(changesFrom(posted));
     try (Provider probe = settings.providerFactory().create(candidate, settings.env())) {
       long started = System.nanoTime();
       Message.Assistant reply =
@@ -771,10 +926,6 @@ public final class AgentHub implements AutoCloseable {
     if (posted.path("clearApiKey").asBoolean(false)) {
       apiKey = "";
     }
-    Integer maxSteps = integer(posted, "maxSteps");
-    if (maxSteps != null && maxSteps < 1) {
-      throw new IllegalArgumentException("maxSteps must be at least 1");
-    }
     String reasoning = text(posted, "reasoning");
     if (reasoning != null) {
       // "default" is the picker's way of saying "let the provider decide", i.e. clear the tier.
@@ -784,6 +935,9 @@ public final class AgentHub implements AutoCloseable {
     if (temperature != null && (temperature < 0 || temperature > 2)) {
       throw new IllegalArgumentException("temperature must be between 0 and 2");
     }
+    String language = text(posted, "language");
+    // The full shape, named by position: every field this form does not manage is an explicit null,
+    // because the shorter constructors put a String in the wrong slot without saying so.
     return new Config(
         text(posted, "provider"),
         text(posted, "model"),
@@ -792,11 +946,14 @@ public final class AgentHub implements AutoCloseable {
         text(posted, "apiKeyEnv"),
         temperature,
         integer(posted, "maxTokens"),
-        maxSteps,
-        null,
-        null,
-        null,
-        reasoning);
+        null, // autoApprove
+        null, // outputLimitBytes
+        null, // systemPrompt
+        language,
+        reasoning,
+        null, // maxContextTokens
+        null, // settingsFor
+        java.util.Map.of());
   }
 
   private static String text(JsonNode node, String field) {
@@ -835,7 +992,15 @@ public final class AgentHub implements AutoCloseable {
 
   // ------------------------------------------------------------------ turns
 
-  /** Starts a turn. Returns false when one is already running. */
+  /**
+   * Starts a turn in the session the front end is looking at. Returns false when that session already
+   * has one running.
+   *
+   * <p>Refusing per session rather than per server is the whole point: a long job in one conversation
+   * must not stop the user from starting work in another. What is still refused is a second turn in
+   * the <em>same</em> conversation — two writers appending to one transcript is the thing that
+   * corrupts it.
+   */
   public boolean submit(String text) {
     if (closed) {
       throw new IllegalStateException("the web session is shutting down");
@@ -846,50 +1011,80 @@ public final class AgentHub implements AutoCloseable {
     if (provider.get() == null) {
       throw new IllegalStateException("no model configured — open Settings and add one");
     }
-    if (!busy.compareAndSet(false, true)) {
+    FileSession current = session();
+    if (current == null) {
+      throw new IllegalStateException("no session is open");
+    }
+    String id = current.id();
+    Conversation conversation = conversations.computeIfAbsent(id, key -> new Conversation(key, current));
+    if (!conversation.begin()) {
       return false;
     }
-    userTurns.incrementAndGet();
-    publish("user", Json.object().put("text", text));
+    // Where this turn's tools will run, decided now: the user pressed send while looking at this
+    // workspace, and switching to another one later must not move the work they already started.
+    conversation.useCurrentCwd();
+    current.totals(current.totals().plus(0, 0, null, 1, 0, 0, 0, 0));
+    publish(id, "user", Json.object().put("text", text));
     publishStatus();
-    turns.submit(() -> runTurn(text));
+    turns.submit(() -> runTurn(conversation, text));
     return true;
   }
 
-  /** Requests that the running turn stop at the next safe point. */
+  /** Requests that the turn of the session on screen stops at the next safe point. */
   public boolean abort() {
-    AgentLoop loop = running.get();
-    if (loop == null) {
-      return false;
-    }
-    loop.abort();
-    return true;
+    FileSession current = session();
+    Conversation conversation = current == null ? null : conversations.get(current.id());
+    return conversation != null && conversation.abort();
   }
 
-  private void runTurn(String text) {
-    AgentLoop loop = newLoop();
-    running.set(loop);
+  /** Requests that one named session's turn stops, whether or not it is the one on screen. */
+  public boolean abort(String sessionId) {
+    Conversation conversation = sessionId == null ? null : conversations.get(sessionId);
+    return conversation != null && conversation.abort();
+  }
+
+  /**
+   * One user turn, from the request that started it to the events that end it.
+   *
+   * <p>Everything published here carries {@code conversation.id()}, because several of these run at
+   * once and the page files events by session. The books are the session's own: totals live in the
+   * conversation's file, so two turns running side by side cannot add their tokens to each other.
+   */
+  private void runTurn(Conversation conversation, String text) {
+    AgentLoop loop = newLoop(conversation);
+    conversation.attach(loop);
     long started = System.nanoTime();
+    AgentLoop.Result result = null;
+    Throwable failure = null;
     try {
-      AgentLoop.Result result = loop.run(text);
+      result = loop.run(text);
+    } catch (RuntimeException | Error e) {
+      // An Error is not this turn's business to report as a value, but it is still the end of the
+      // turn: leaving the cleanup below to the happy path would strand this session as permanently
+      // busy — every later message refused with 409 — over a StackOverflowError raised by one tool.
+      failure = e;
+    }
+    // The turn is over *before* it says so. A client that reacts to `done` by sending the next
+    // message must not find the session still claiming to be busy — that race is a message answered
+    // with 409 and a composer that stays disabled until something else publishes a status.
+    conversation.end();
+    conversation.addElapsed((System.nanoTime() - started) / 1_000_000);
+    // Persisting at turn boundaries keeps the file from growing per token and still survives a
+    // kill: after the worst case the last turn is missing, never the whole session.
+    conversation.persist();
+    publishUsage(conversation.id());
+    publishStatus();
+    if (failure != null) {
+      publish(conversation.id(), "error", Json.object().put("message", message(failure)));
+    } else {
       publish(
+          conversation.id(),
           "done",
           Json.object().put("finalText", result.finalText()).put("aborted", result.aborted()));
-    } catch (RuntimeException e) {
-      publish("error", Json.object().put("message", message(e)));
-    } finally {
-      turnMillis.addAndGet((System.nanoTime() - started) / 1_000_000);
-      running.set(null);
-      busy.set(false);
-      // Persisting at turn boundaries keeps the file from growing per token and still survives a
-      // kill: after the worst case the last turn is missing, never the whole session.
-      persistTotals();
-      publishUsage();
-      publishStatus();
     }
   }
 
-  private AgentLoop newLoop() {
+  private AgentLoop newLoop(Conversation conversation) {
     Provider current = provider.get();
     if (current == null) {
       throw new IllegalStateException("no model configured — open Settings and add one");
@@ -898,13 +1093,18 @@ public final class AgentHub implements AutoCloseable {
     AgentOptions options =
         new AgentOptions(
             active.model(),
-            active.systemPrompt(),
+            // The project's own CCJ.md is read from this conversation's working directory, which is
+            // the one fixed when its turn started: a rules file belongs to the directory the tools
+            // will actually run in, not to whatever is on screen when the request is built.
+            Prompts.system(active.systemPrompt(), active.language(), conversation.cwd()),
             active.temperature(),
             active.maxTokens(),
-            active.maxSteps(),
-            active.reasoning());
-    ToolContext context = new ToolContext(cwd(), this::askApproval, active.outputLimitBytes());
-    return new AgentLoop(current, tools, session(), options, context, new WebListener());
+            active.reasoning(),
+            active.maxContextTokens());
+    ToolContext context =
+        new ToolContext(conversation.cwd(), this::askApproval, active.outputLimitBytes());
+    return new AgentLoop(
+        current, tools, conversation.session(), options, context, new WebListener(conversation.id()));
   }
 
   // ------------------------------------------------------------------ sessions
@@ -914,7 +1114,6 @@ public final class AgentHub implements AutoCloseable {
    * id would only produce a second empty session and confuse whoever pressed the button.
    */
   public void newSession() {
-    requireIdle();
     FileSession current = session();
     if (current != null && current.messages().isEmpty()) {
       publish(
@@ -926,11 +1125,26 @@ public final class AgentHub implements AutoCloseable {
   }
 
   public void resumeSession(String id) {
-    requireIdle();
     if (id == null || id.isBlank()) {
       throw new IllegalArgumentException("a session id is required");
     }
-    useSession(SessionStore.open(sessionsDir(), id));
+    useSession(openForDisplay(id));
+  }
+
+  /**
+   * The session object to put on screen for {@code id}.
+   *
+   * <p>A conversation that is running already has a {@link FileSession} — the one its turn is
+   * appending to — and that is the object the page gets. Opening a second one on the same file would
+   * be two writers on one transcript, which is the thing the whole per-conversation rule protects;
+   * refusing to *show* the conversation instead is what made a running turn impossible to look at.
+   */
+  private FileSession openForDisplay(String id) {
+    Conversation running = conversations.get(id);
+    if (running != null) {
+      return running.session();
+    }
+    return SessionStore.open(sessionsDir(), id);
   }
 
   /**
@@ -947,12 +1161,12 @@ public final class AgentHub implements AutoCloseable {
    * switches the active workspace. Deleting the session you are in starts a fresh one.
    */
   public ObjectNode deleteSession(String workspace, String id) {
-    requireIdle();
     String target = normaliseWorkspace(workspace);
     Path directory = sessionsDirOf(target);
     FileSession current = session();
     boolean active =
         target == null && current != null && current.id().equals(id);
+    requireNotRunning(id, "delete it");
     if (!SessionStore.delete(directory, id)) {
       throw new IllegalArgumentException(
           "no session '" + id + "' in " + (target == null ? "this workspace" : "'" + target + "'"));
@@ -970,8 +1184,8 @@ public final class AgentHub implements AutoCloseable {
   }
 
   public ObjectNode deleteAllSessions(String workspace) {
-    requireIdle();
     String target = normaliseWorkspace(workspace);
+    requireEverythingIdle("delete every session");
     int deleted = SessionStore.deleteAll(sessionsDirOf(target));
     publish(
         "notice",
@@ -1021,34 +1235,82 @@ public final class AgentHub implements AutoCloseable {
       previous = session;
       session = next;
     }
-    if (previous != null) {
+    // The session leaving the screen is closed only when nothing is using it. A conversation that is
+    // running owns its file — it is what the turn appends to, and it may be the same object being put
+    // back on screen — so closing it here would fail a turn that is still working.
+    if (previous != null && previous != next && !conversations.containsKey(previous.id())) {
       previous.close();
     }
-    // Reopening a session continues its books; a brand new one starts empty.
-    applyTotals(next.totals());
     publishUsage();
     publishStatus();
   }
 
-  private void requireIdle() {
-    if (busy.get()) {
-      throw new IllegalStateException("a turn is still running; abort it first");
+  /**
+   * Refuses an operation whose subject is running.
+   *
+   * <p>This is the rule that replaces "nothing may run while anything runs". One conversation being
+   * busy must not stop the user from working in another, but it must still stop them from pulling the
+   * ground out from under the one that is working: you cannot resume a session over the turn writing
+   * it, or delete the file it is appending to.
+   */
+  private void requireNotRunning(String sessionId, String what) {
+    Conversation running = sessionId == null ? null : conversations.get(sessionId);
+    if (running != null && running.running()) {
+      throw new IllegalStateException(
+          "that session is running a turn; abort it before you " + what);
     }
+  }
+
+  /** Refuses while any conversation is working: what every conversation is built on is changing. */
+  private void requireEverythingIdle(String what) {
+    for (Conversation conversation : conversations.values()) {
+      if (conversation.running()) {
+        throw new IllegalStateException(
+            "a turn is still running in session "
+                + conversation.id()
+                + "; abort it before you "
+                + what);
+      }
+    }
+  }
+
+  /** Refuses while the session on screen is working. */
+  private void requireShownIdle(String what) {
+    requireNotRunning(sessionIdOf(session()), what);
   }
 
   // ------------------------------------------------------------------ approvals
 
   /** Answers a pending approval. Returns false when the id is unknown or already answered. */
   public boolean resolveApproval(String id, boolean allow, boolean remember) {
-    CompletableFuture<Boolean> answer = id == null ? null : pendingApprovals.get(id);
-    if (answer == null) {
+    Pending pending = id == null ? null : pendingApprovals.get(id);
+    if (pending == null) {
       return false;
     }
     if (allow && remember) {
       setAutoApprove(true);
     }
-    return answer.complete(allow);
+    return pending.answer().complete(allow);
   }
+
+  /**
+   * One approval a turn is blocked on, and the session that asked.
+   *
+   * <p>The session is kept because abort has to be able to deny a conversation's own requests:
+   * without it a turn waiting for a human could never be stopped, and a background turn the user is
+   * not looking at would sit there for the full timeout with no way out.
+   */
+  /**
+   * One approval a turn is blocked on: who asked, what about, and the answer it is waiting for.
+   *
+   * <p>The title and detail are kept, not just the future, because the prompt has to be drawable
+   * again. An approval is a request blocked in memory rather than a message, so a page that switches
+   * away and back has no way to reconstruct it from the conversation — it reports what is outstanding
+   * and the page draws it. Without that, looking at another conversation silently threw the question
+   * away and left abort as the only way out.
+   */
+  private record Pending(
+      String sessionId, String title, String detail, CompletableFuture<Boolean> answer) {}
 
   public boolean autoApprove() {
     return autoApprove.get();
@@ -1068,16 +1330,31 @@ public final class AgentHub implements AutoCloseable {
     if (autoApprove.get()) {
       return true;
     }
+    String sessionId = currentTurnSession();
     String id = "ap-" + nextApprovalId.incrementAndGet();
     CompletableFuture<Boolean> answer = new CompletableFuture<>();
-    pendingApprovals.put(id, answer);
-    publish("approval", Json.object().put("id", id).put("title", title).put("detail", detail));
+    pendingApprovals.put(id, new Pending(sessionId, title, detail, answer));
+    // A status too, so a page that is not looking at this conversation still learns that something
+    // is waiting — and so a page that *is* looking at it can rebuild the prompt from the status it
+    // asks for on the way in.
+    publishStatus();
+    publish(
+        sessionId,
+        "approval",
+        Json.object()
+            .put("id", id)
+            .put("title", title)
+            .put("detail", detail)
+            .put("sessionId", sessionId));
     try {
       boolean allow = answer.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-      publish("approval-closed", Json.object().put("id", id).put("allow", allow));
+      publish(sessionId, "approval-closed", Json.object().put("id", id).put("allow", allow));
       return allow;
     } catch (TimeoutException e) {
-      publish("approval-closed", Json.object().put("id", id).put("allow", false).put("reason", "timeout"));
+      publish(
+          sessionId,
+          "approval-closed",
+          Json.object().put("id", id).put("allow", false).put("reason", "timeout"));
       return false;
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
@@ -1087,6 +1364,28 @@ public final class AgentHub implements AutoCloseable {
     } finally {
       pendingApprovals.remove(id);
     }
+  }
+
+  /** The running state of one session, or null when it has none. */
+  private Conversation conversation(String sessionId) {
+    return sessionId == null || sessionId.isEmpty() ? null : conversations.get(sessionId);
+  }
+
+  /**
+   * The session whose turn this thread is running.
+   *
+   * <p>Resolved from the calling thread rather than passed in, because the loop hands the approver to
+   * its tools as a plain {@link Approver}: the turn's own session is the only thing that can say
+   * which conversation is asking, and an approval published without one would appear in every open
+   * transcript at once.
+   */
+  private String currentTurnSession() {
+    for (Conversation conversation : conversations.values()) {
+      if (conversation.ownedByCurrentThread()) {
+        return conversation.id();
+      }
+    }
+    return sessionIdOf(session());
   }
 
   // ------------------------------------------------------------------ events
@@ -1109,9 +1408,20 @@ public final class AgentHub implements AutoCloseable {
   }
 
   private void publish(String type, ObjectNode payload) {
+    publish("", type, payload);
+  }
+
+  private void publish(String sessionId, String type, ObjectNode payload) {
     ObjectNode node = payload == null ? Json.object() : payload;
     node.put("type", type);
-    Event event = new Event(nextEventId.incrementAndGet(), type, node);
+    // A payload that already names its session keeps it — the status is *about* one conversation and
+    // is built with that id in hand. Only a payload that says nothing gets the given id, so an empty
+    // one stays "this is about the server", not "this is about session ''".
+    if (!node.has("sessionId")) {
+      node.put("sessionId", sessionId == null ? "" : sessionId);
+    }
+    Event event =
+        new Event(nextEventId.incrementAndGet(), type, node.path("sessionId").asText(), node);
     synchronized (replay) {
       replay.addLast(event);
       while (replay.size() > REPLAY_LIMIT) {
@@ -1123,19 +1433,29 @@ public final class AgentHub implements AutoCloseable {
     }
   }
 
+  private static String sessionIdOf(FileSession session) {
+    return session == null ? "" : session.id();
+  }
+
   public void publishStatus() {
-    publish("status", statusFields());
+    // The status is about one conversation — the one on screen — so it says which, from the same
+    // place the page reads the id out of: a status with no session would be filed nowhere.
+    ObjectNode node = statusFields();
+    node.put("sessionId", sessionIdOf(session()));
+    publish(sessionIdOf(session()), "status", node);
   }
 
   public void publishUsage() {
-    publish("usage", usageFields());
+    publish(sessionIdOf(session()), "usage", usageFields());
   }
 
-  private void persistTotals() {
-    FileSession current = session();
-    if (current != null) {
-      current.totals(currentTotals());
-    }
+  /** Usage of one session, which is what a turn publishes when its own books change. */
+  public void publishUsage(String sessionId) {
+    Conversation conversation = sessionId == null ? null : conversations.get(sessionId);
+    FileSession target = conversation == null ? session() : conversation.session();
+    ObjectNode node = usageFields(target);
+    node.put("sessionId", sessionId == null ? "" : sessionId);
+    publish(sessionId, "usage", node);
   }
 
   private FileSession session() {
@@ -1147,8 +1467,8 @@ public final class AgentHub implements AutoCloseable {
   @Override
   public void close() {
     closed = true;
-    for (CompletableFuture<Boolean> waiting : pendingApprovals.values()) {
-      waiting.complete(false);
+    for (Pending waiting : pendingApprovals.values()) {
+      waiting.answer().complete(false);
     }
     pendingApprovals.clear();
     turns.shutdownNow();
@@ -1156,64 +1476,205 @@ public final class AgentHub implements AutoCloseable {
     if (current != null) {
       current.close();
     }
+    for (Conversation conversation : conversations.values()) {
+      conversation.close();
+    }
+    conversations.clear();
     FileSession active = session();
     if (active != null) {
       active.close();
     }
   }
 
+  /**
+   * One conversation's live state: its session file, its running turn, and its own books.
+   *
+   * <p>When the server ran one turn at a time this was all instance state, which is precisely why a
+   * running turn locked everything. The unit that can be busy is now the conversation, so the flag,
+   * the loop and the counters live here, and a second conversation simply has its own.
+   *
+   * <p>The counters are the ones the session file already records: they are read and written through
+   * {@link FileSession#totals()}, so two conversations running side by side cannot add their tokens
+   * to each other's ledger.
+   */
+  private final class Conversation {
+
+    private final String id;
+    private final FileSession session;
+    private final AtomicBoolean busy = new AtomicBoolean();
+    private final AtomicReference<AgentLoop> loop = new AtomicReference<>();
+    /** The thread running this conversation's turn, so a callback can be attributed to it. */
+    private final AtomicReference<Thread> owner = new AtomicReference<>();
+    /**
+     * Where this conversation's tools run, fixed when the turn starts.
+     *
+     * <p>Read once rather than on every tool call, because the active workspace can change while a
+     * turn is running — switching to another workspace must not redirect a job that is already half
+     * done into a different directory. A turn owns its working directory from the moment it starts.
+     */
+    private volatile Path cwd;
+
+    Conversation(String id, FileSession session) {
+      this.id = id;
+      this.session = session;
+      this.cwd = AgentHub.this.cwd();
+    }
+
+    String id() {
+      return id;
+    }
+
+    FileSession session() {
+      return session;
+    }
+
+    Path cwd() {
+      return cwd;
+    }
+
+    /** Re-reads the working directory, which a turn starting now should use. */
+    void useCurrentCwd() {
+      this.cwd = AgentHub.this.cwd();
+    }
+
+    boolean running() {
+      return busy.get();
+    }
+
+    /** Claims the turn slot, or returns false when this conversation already has one running. */
+    boolean begin() {
+      return busy.compareAndSet(false, true);
+    }
+
+    void attach(AgentLoop running) {
+      loop.set(running);
+      owner.set(Thread.currentThread());
+    }
+
+    /** Releases the turn slot, so the next message in this conversation is accepted. */
+    void end() {
+      loop.set(null);
+      owner.set(null);
+      busy.set(false);
+    }
+
+    boolean ownedByCurrentThread() {
+      return Thread.currentThread().equals(owner.get());
+    }
+
+    boolean abort() {
+      AgentLoop running = loop.get();
+      if (running == null) {
+        return false;
+      }
+      // A turn waiting for a human is stopped by answering the question: the flag alone would leave
+      // it blocked until the approval timed out, which is not "stopped" in any sense the user meant.
+      for (Map.Entry<String, Pending> entry : pendingApprovals.entrySet()) {
+        if (id.equals(entry.getValue().sessionId())) {
+          entry.getValue().answer().complete(false);
+        }
+      }
+      running.abort();
+      return true;
+    }
+
+    synchronized void add(
+        int input,
+        int output,
+        Integer cached,
+        int userTurnDelta,
+        int modelTurnDelta,
+        int toolCallDelta,
+        int toolErrorDelta,
+        long elapsedDelta) {
+      session.totals(
+          session
+              .totals()
+              .plus(
+                  input,
+                  output,
+                  cached,
+                  userTurnDelta,
+                  modelTurnDelta,
+                  toolCallDelta,
+                  toolErrorDelta,
+                  elapsedDelta));
+    }
+
+    synchronized void addElapsed(long elapsedMillis) {
+      session.totals(session.totals().withElapsed(elapsedMillis));
+    }
+
+    /** Writes the books to disk; called at turn boundaries so the file survives a kill. */
+    synchronized void persist() {
+      session.totals(session.totals());
+    }
+
+    void close() {
+      session.close();
+    }
+  }
+
   /** Translates loop callbacks into wire events; nothing here decides policy. */
   private final class WebListener implements AgentListener {
 
+    private final Conversation conversation;
+
+    WebListener(String sessionId) {
+      Conversation known = conversations.get(sessionId);
+      this.conversation =
+          known != null ? known : new Conversation(sessionId, session());
+    }
+
     @Override
     public void onText(String delta) {
-      publish("text", Json.object().put("delta", delta));
+      publish(conversation.id(), "text", Json.object().put("delta", delta));
     }
 
     @Override
     public void onReasoning(String delta) {
-      publish("reasoning", Json.object().put("delta", delta));
+      publish(conversation.id(), "reasoning", Json.object().put("delta", delta));
     }
 
     @Override
     public void onToolStart(Message.ToolCall call) {
-      toolCalls.incrementAndGet();
-      publish("tool", toolPayload(call, "start"));
+      conversation.add(0, 0, null, 0, 0, 1, 0, 0);
+      publish(conversation.id(), "tool", toolPayload(call, "start"));
+      // The panel counts what is on screen: without this the counters would sit
+      // at the previous turn's totals while a card says a call is running.
+      publishUsage(conversation.id());
     }
 
     @Override
     public void onToolEnd(Message.ToolCall call, ToolResult result, long elapsedMillis) {
       if (result.error()) {
-        toolErrors.incrementAndGet();
+        conversation.add(0, 0, null, 0, 0, 0, 1, 0);
       }
       publish(
+          conversation.id(),
           "tool",
           toolPayload(call, "end")
               .put("ok", !result.error())
               .put("elapsedMs", elapsedMillis)
               .put("output", result.content()));
+      publishUsage(conversation.id());
     }
 
     /** Model turns are counted here, not from usage: a provider that reports no usage still ran. */
     @Override
     public void onTurnStart(int step) {
-      modelTurns.incrementAndGet();
+      conversation.add(0, 0, null, 0, 1, 0, 0, 0);
     }
 
     @Override
     public void onUsage(int inputTokens, int outputTokens, Integer cachedInputTokens) {
-      totalInputTokens.addAndGet(inputTokens);
-      totalOutputTokens.addAndGet(outputTokens);
-      if (cachedInputTokens != null) {
-        cacheReported.set(true);
-        totalCachedInputTokens.addAndGet(cachedInputTokens);
-      }
-      publishUsage();
+      conversation.add(inputTokens, outputTokens, cachedInputTokens, 0, 0, 0, 0, 0);
+      publishUsage(conversation.id());
     }
 
     @Override
     public void onNotice(String text) {
-      publish("notice", Json.object().put("text", text));
+      publish(conversation.id(), "notice", Json.object().put("text", text));
     }
 
     private ObjectNode toolPayload(Message.ToolCall call, String state) {

@@ -36,11 +36,12 @@
 
   /* Replayed tool results carry elapsedMs: null — the session file keeps the
    * conversation, not the timings — so an absent value prints nothing rather
-   * than a fake "0 ms". */
+   * than a fake "0 ms". A negative value is a call that never ran, which must
+   * not read as a measurement either. */
   function msLabel(v) {
     if (v === null || v === undefined) { return ''; }
     const n = Number(v);
-    return isFinite(n) ? Math.max(0, Math.round(n)) + ' ms' : '';
+    return isFinite(n) && n >= 0 ? Math.round(n) + ' ms' : '';
   }
 
   function timeLabel(v) {
@@ -48,23 +49,17 @@
     return isNaN(d.getTime()) ? str(v) : d.toLocaleString();
   }
 
-  /* A session's age is the question the list answers ("which one was I just
-   * in?"), and an absolute timestamp makes the reader do the subtraction. The
-   * exact time is still one hover away, in the row's tooltip. */
-  function relativeTime(v) {
-    const d = new Date(str(v));
-    if (isNaN(d.getTime())) { return str(v); }
-    const seconds = Math.round((Date.now() - d.getTime()) / 1000);
-    if (seconds < 90) { return 'just now'; }
-    const minutes = Math.round(seconds / 60);
-    if (minutes < 90) { return minutes + 'm ago'; }
-    const hours = Math.round(minutes / 60);
-    if (hours < 36) { return hours + 'h ago'; }
-    const days = Math.round(hours / 24);
-    return days < 8 ? days + 'd ago' : d.toLocaleDateString();
-  }
-
   function hasContent(node) { return !!(node && node.firstChild); }
+
+  /* The leading stamp of a session id ("20260913-001746-3377" → "20260913").
+   * Rows are titled by what was asked, not by this; the stamp appears only when
+   * two rows in the same list would otherwise read the same, because then the
+   * title alone cannot say which one to click. */
+  function idStamp(id) {
+    const t = str(id);
+    const i = t.indexOf('-');
+    return i > 0 ? t.slice(0, i) : t;
+  }
 
   /* cwd is the workspace path (the contract says so), so its last segment is
    * the workspace name — a fallback for a server that has not sent
@@ -124,6 +119,7 @@
     btnSidebar: $('btn-sidebar'),
     btnSide: $('btn-side'),
     btnTheme: $('btn-theme'),
+    btnWallpaper: $('btn-wallpaper'),
     themeIcon: $('theme-icon'),
     themeLabel: $('theme-label'),
     transcript: $('transcript'),
@@ -149,20 +145,20 @@
     uErrors: $('u-errors'),
     uTools: $('u-tools'),
     uElapsed: $('u-elapsed'),
+    uContext: $('u-context'),
     sidebar: $('sidebar'),
     sidebarCollapse: $('sidebar-collapse'),
     sidebarAlert: $('sidebar-alert'),
     sidebarNote: $('sidebar-note'),
     wsTree: $('ws-tree'),
     wsDeleteAllHost: $('ws-delete-all-host'),
-    workspaceAddToggle: $('workspace-add-toggle'),
+    workspaceAdd: $('workspace-add'),
     workspaceAddForm: $('workspace-add-form'),
     workspaceSave: $('workspace-save'),
-    wsNewName: $('ws-new-name'),
+    workspacePick: $('workspace-pick'),
     wsNewPath: $('ws-new-path'),
     wsBrowse: $('ws-browse'),
     wsBrowseHint: $('ws-browse-hint'),
-    wsNameError: $('ws-name-error'),
     wsPathError: $('ws-path-error'),
     settingsOverlay: $('settings-overlay'),
     settingsForm: $('settings-form'),
@@ -186,8 +182,8 @@
     cfgClearKeyWrap: $('cfg-clearkey-wrap'),
     cfgApiKeyEnv: $('cfg-apikeyenv'),
     cfgApiKeyEnvHint: $('cfg-apikeyenv-hint'),
-    cfgMaxSteps: $('cfg-maxsteps'),
     cfgTemperature: $('cfg-temperature'),
+    cfgLanguage: $('cfg-language'),
     cfgProvidersNote: $('cfg-providers-note'),
     cfgProviderList: $('cfg-provider-list'),
     cfgBuiltInRow: $('cfg-builtin-row'),
@@ -216,14 +212,28 @@
     everOpen: false,
     retryTimer: 0,
     busy: false,
+    /* When the stream last delivered anything. A page cannot tell a quiet server
+     * from a dead connection by looking at the socket, and a `busy` flag that
+     * outlives its turn is a composer that never comes back. */
+    lastEventAt: Date.now(),
     runningTools: 0,
+    /* Sessions with a turn running somewhere on the server, by id. The page is
+     * not rendering them — that is the point — but the tree marks their rows so
+     * the user can find the turn again, and a turn left running in another
+     * conversation is a fact this page has to be able to show. */
+    runningSessions: new Set(),
     autoApprove: false,    // status.autoApprove, owned by the server
     block: null,           // current assistant block
     toolCards: new Map(),  // tool call id -> { root, ... }
     approvals: new Map(),  // approval id -> record
+    /* Outstanding approvals the server reported while a replay was in flight: held
+     * until the transcript is rebuilt, because drawing a prompt into a transcript
+     * that is about to be cleared is how the prompt was lost in the first place. */
+    pendingApprovalsSync: null,
     stick: true,           // transcript pinned to the bottom
     status: null,
     workspace: null,       // {name, path} of the active workspace
+    cwdOverride: '',       // status.cwdOverride: -C pinned a directory, '' in the normal case
     configured: null,      // status.configured: null until known, then boolean
     sessionId: '',         // id of the session the transcript currently shows
     historyPromise: null,  // in-flight history load for the initial page
@@ -234,7 +244,9 @@
     catalog: null,         // {providers, models} from GET /api/models, null until loaded
     catalogError: '',      // why the last catalogue refresh failed; '' when it worked
     reasoningLevels: null, // status.reasoningLevels: the effort tiers the provider accepts
-    configProviders: []    // provider names the server says are usable (GET /api/config)
+    configProviders: [],    // provider names the server says are usable (GET /api/config)
+    keyProvider: '',        // the provider the settings form's key field is currently about
+    rememberedProviders: [] // provider names the server says have a key saved (GET /api/config)
   };
 
   // --------------------------------------------------------- text batching
@@ -243,28 +255,45 @@
   // pending buffer that is flushed at most once per frame so a long turn costs
   // one text node per flush instead of thousands. A timer backs up rAF because
   // requestAnimationFrame does not fire in a hidden/background tab.
+  //
+  // Markdown goes through the same gate with a different unit of work: an answer
+  // block's source is accumulated and re-rendered, rather than appended to.
+  /* Where a replay pass appends. Normally the transcript; while the earlier part of a conversation is
+   * being drawn it is a detached holder, so the exchange can be built off-screen and inserted above
+   * the reader in one move. */
+  let replayTarget = null;
+  /** Bumped by every replay, so a superseded one stops instead of writing into a new transcript. */
+  let replaySeq = 0;
+
   const queues = new Map();
+  const mdQueues = new Map();   // markdown render state -> the node it renders into
   let rafId = 0;
   let flushTimer = 0;
 
-  function queueText(node, delta) {
-    if (!node || !delta) { return; }
-    queues.set(node, (queues.get(node) || '') + delta);
+  function scheduleFlush() {
     if (!rafId && !flushTimer) {
       rafId = requestAnimationFrame(flushText);
       flushTimer = setTimeout(flushText, 80);
     }
   }
 
+  function queueText(node, delta) {
+    if (!node || !delta) { return; }
+    queues.set(node, (queues.get(node) || '') + delta);
+    scheduleFlush();
+  }
+
   function flushText() {
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = 0; }
-    if (!queues.size) { return; }
+    if (!queues.size && !mdQueues.size) { return; }
     const atBottom = nearBottom();
     queues.forEach(function (text, node) {
       node.appendChild(document.createTextNode(text));
     });
     queues.clear();
+    mdQueues.forEach(function (node, md) { renderMarkdown(md, node); });
+    mdQueues.clear();
     settleScroll(atBottom);
   }
 
@@ -277,6 +306,22 @@
 
   function scrollToBottom() {
     dom.transcript.scrollTop = dom.transcript.scrollHeight;
+  }
+
+  /* The server gives an unanswered approval two minutes and then denies it. A
+   * card older than that cannot still be waiting for one, whatever this page
+   * believes — a server that died, a stream that went quiet — and counting it as
+   * live keeps the composer disabled forever. It is settled with the reason,
+   * because a card that lies about waiting is worse than one that says what
+   * happened. */
+  const APPROVAL_MAX_AGE_MS = 150000;
+
+  function expireStaleApprovals() {
+    state.approvals.forEach(function (rec) {
+      if (!rec.resolved && Date.now() - rec.at > APPROVAL_MAX_AGE_MS) {
+        rec.settle(false, 'No answer from the server — treated as denied', 'bad');
+      }
+    });
   }
 
   function pendingApprovals() {
@@ -302,6 +347,14 @@
     const ws = workspaceName();
     const connected = state.source && state.source.readyState === EventSource.OPEN;
     if (!ws) { return connected ? 'Connected — send a message to start.' : 'Connecting to ccj…'; }
+    if (state.cwdOverride) {
+      // -C pinned a directory that is not the active workspace's. Naming it here is the point: the
+      // tree marks the workspace as active, and input lands somewhere else, so one of the two has
+      // to say so out loud.
+      return connected
+        ? ws + ' · tools run in ' + state.cwdOverride + ' (-C)'
+        : 'Connecting to ' + ws + '…';
+    }
     return connected ? ws + ' · send a message to start' : 'Connecting to ' + ws + '…';
   }
 
@@ -328,10 +381,12 @@
   function appendToTranscript(node) {
     if (state.replaying) {
       // Restored from history: dim it and skip per-node scroll bookkeeping —
-      // the replay ends with a single scroll to the bottom.
+      // the replay ends with a single scroll to the bottom. While the earlier part of
+      // a conversation is being drawn it goes into a detached holder first, so an exchange can be
+      // built off-screen and inserted above the reader in one move.
       node.classList.add('replay');
       node.setAttribute('data-replay', '1');
-      dom.transcript.appendChild(node);
+      (replayTarget || dom.transcript).appendChild(node);
       return node;
     }
     const atBottom = nearBottom();
@@ -403,6 +458,9 @@
   function setBusy(busy) {
     state.busy = !!busy;
     dom.btnAbort.disabled = !state.busy;
+    /* Abort belongs to the turn it stops: it appears next to Send while the
+     * agent works, instead of sitting in the header greyed out all day. */
+    dom.btnAbort.hidden = !state.busy;
     dom.send.disabled = state.busy;
     dom.hint.textContent = composerHint();
     refreshLive();
@@ -470,10 +528,15 @@
   /* status.workspace is authoritative; cwd is the same directory and only
    * stands in until that field arrives (or if an older server omits it). */
   function applyWorkspace(status) {
+    // cwd and the workspace's own path differ only when -C overrode it: the page has to carry both
+    // facts, because the placeholder is where the user finds out where the tools will run.
+    state.cwdOverride = str(status.cwdOverride);
     if (status.workspace && typeof status.workspace === 'object') {
       renderWorkspace(status.workspace);
     } else if (!state.workspace && status.cwd) {
       renderWorkspace({ name: baseName(status.cwd), path: str(status.cwd) });
+    } else {
+      refreshPlaceholder();
     }
   }
 
@@ -525,14 +588,36 @@
     const s = n / 1000;
     if (s < 10) { return s.toFixed(1) + ' s'; }
     if (s < 60) { return Math.round(s) + ' s'; }
-    const m = Math.floor(s / 60);
-    const rest = Math.round(s % 60);
+    /* Round once, then split: rounding the seconds independently of the
+     * minutes printed "1m 60s" for anything just under a whole minute. */
+    const total = Math.round(s);
+    const m = Math.floor(total / 60);
+    const rest = total % 60;
     return m + 'm ' + (rest < 10 ? '0' : '') + rest + 's';
   }
 
   function setUsageCell(node, text, bad) {
     node.textContent = text;
     node.classList.toggle('bad', !!bad);
+  }
+
+  /* Compact token counts: "12k / 200k" is a reading, six exact digits are not. Both numbers are
+   * estimates and the row's label says so. */
+  function fmtTokens(v) {
+    const n = Number(v);
+    if (!isFinite(n)) { return '—'; }
+    if (n < 1000) { return String(Math.round(n)); }
+    if (n < 1000000) { return (n / 1000).toFixed(n < 10000 ? 1 : 0) + 'k'; }
+    return (n / 1000000).toFixed(1) + 'M';
+  }
+
+  /* The budget is only shown when one was configured; without it the row still answers "how big has
+   * this conversation got", which is the question that precedes setting one. */
+  function fmtContext(u) {
+    const used = Number(u.contextTokens);
+    if (!isFinite(used)) { return '—'; }
+    const limit = Number(u.contextLimit);
+    return isFinite(limit) && limit > 0 ? fmtTokens(used) + ' / ' + fmtTokens(limit) : fmtTokens(used);
   }
 
   /* The bar is a second reading of the same number, never a different one:
@@ -551,7 +636,8 @@
 
   function resetUsage() {
     state.usage = null;
-    [dom.uTurns, dom.uSteps, dom.uIn, dom.uOut, dom.uCached, dom.uTools, dom.uErrors, dom.uElapsed]
+    [dom.uTurns, dom.uSteps, dom.uIn, dom.uOut, dom.uCached, dom.uTools, dom.uErrors, dom.uElapsed,
+      dom.uContext]
       .forEach(function (node) { setUsageCell(node, '—', false); });
     dom.uHit.textContent = '—';
     dom.uHit.classList.add('na');
@@ -582,6 +668,12 @@
     setUsageCell(dom.uCached, fmtCacheTokens(u.cachedInputTokens), false);
     setUsageCell(dom.uTools, fmtCount(u.toolCalls), false);
     setUsageCell(dom.uElapsed, fmtDuration(u.elapsedMs), false);
+    const limit = Number(u.contextLimit);
+    const used = Number(u.contextTokens);
+    setUsageCell(
+      dom.uContext,
+      fmtContext(u),
+      isFinite(limit) && limit > 0 && isFinite(used) && used > limit);
 
     // A failing tool call is a signal, not a footnote: say it in words and in
     // colour instead of leaving it as a zero nobody looks at.
@@ -600,6 +692,18 @@
     state.status = status;
     applyWorkspace(status);
     if ('sessionId' in status) { noteSession(str(status.sessionId)); }
+    // The server says which conversations are working. The session on screen is
+    // reported by `busy`; every *other* one is named in `running`, and together
+    // they are what the tree marks.
+    if (Array.isArray(status.running)) {
+      const shown = str(status.sessionId);
+      const next = new Set();
+      status.running.forEach(function (id) {
+        const owner = str(id);
+        if (owner && owner !== shown) { next.add(owner); }
+      });
+      state.runningSessions = next;
+    }
     setChips(status);
     if (Array.isArray(status.tools)) { renderTools(status.tools); }
     if (status.usage && typeof status.usage === 'object') { renderUsage(status.usage); }
@@ -610,7 +714,89 @@
     // The picker above the composer is the same fact as the chips, told where
     // the user is about to type; both follow the server's status.
     if (composerPicker) { composerPicker.setStatus(status); }
+    expireStaleApprovals();
+    // Requests that are still outstanding are part of the server's answer about this conversation.
+    // Applied only when no replay is in flight: a prompt added now would be wiped by the transcript
+    // being rebuilt from history a moment later, which is the very loss this exists to prevent.
+    if (!state.historyInFlight && !state.replaying) {
+      syncApprovals(status.approvals);
+    } else {
+      state.pendingApprovalsSync = Array.isArray(status.approvals) ? status.approvals : null;
+    }
     setBusy(!!status.busy || pendingApprovals() > 0);
+    paintRunningRows();
+  }
+
+  /* ------------------------------------------------------------------ other conversations
+
+   * One page, one stream, every conversation on the server. This page renders
+   * exactly one of them — the one on screen — and the rest are tracked here so
+   * the tree can mark the rows that are working. Nothing about a foreign turn is
+   * rendered into the transcript: its prose belongs to another conversation, and
+   * its `done` must not unstick this composer. */
+
+  function isRunning(id) {
+    const owner = str(id);
+    return owner !== '' && state.runningSessions.has(owner);
+  }
+
+  function markRunning(id, running) {
+    const owner = str(id);
+    if (owner === '') { return; }
+    if (running) {
+      if (state.runningSessions.has(owner)) { return; }
+      state.runningSessions.add(owner);
+    } else {
+      if (!state.runningSessions.delete(owner)) { return; }
+    }
+    paintRunningRows();
+  }
+
+  /* Re-marks the rows already in the tree rather than reloading the list: the
+   * user's turn is what is running, and a full refresh would fight whatever they
+   * are doing to the sidebar while it is. */
+  function paintRunningRows() {
+    const rows = document.querySelectorAll('.session-row');
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const button = row.querySelector('.session-item');
+      if (!button) { continue; }
+      const label = button.querySelector('.session-title');
+      const id = label ? str(label.dataset.sessionId) : '';
+      if (!id) { continue; }
+      const running = isRunning(id);
+      row.classList.toggle('running', running);
+      const existing = button.querySelector('.session-running');
+      if (running && !existing) {
+        const mark = el('span', 'session-running');
+        mark.title = 'Running a turn — open it to watch, or stop it with the ■';
+        mark.setAttribute('aria-label', 'running');
+        button.querySelector('.session-name').appendChild(mark);
+      } else if (!running && existing) {
+        existing.remove();
+      }
+    }
+  }
+
+  /* Stops a turn running in a conversation this page is not showing. The id is
+   * the server's own (the tree's rows carry it), so nothing is guessed. */
+  async function stopSession(id) {
+    const owner = str(id);
+    if (owner === '') { return; }
+    try {
+      const res = await request('/api/abort?id=' + encodeURIComponent(owner), { method: 'POST' });
+      if (res && res.aborted) {
+        markRunning(owner, false);
+      }
+    } catch (err) {
+      appendError('Could not stop ' + owner + ': ' + str(err && err.message));
+    }
+    // One refresh, not two. `reorderSessionsAfterTurn` re-reads the list itself when the workspace is
+    // expanded, and invalidating first made the sidebar pay for that read twice — on a busy machine
+    // that is two parses of every session file, which is exactly the cost this page can least afford
+    // while a turn is streaming.
+    invalidateSessions(owner);
+    reorderSessionsAfterTurn();
   }
 
   async function refreshStatus() {
@@ -622,6 +808,588 @@
     }
   }
 
+  // -------------------------------------------------------------- markdown
+
+  /* Assistant prose is markdown and arrives a few characters at a time, so the
+   * renderer has to be exact *and* incremental.
+   *
+   * Exact: blocks are parsed from the whole source on every flush — string work
+   * only — and a block is rendered from its own source alone. A half-arrived
+   * message therefore renders as the message so far, and nothing that was drawn
+   * early has to be taken back later.
+   *
+   * Incremental: blocks whose source did not change keep the nodes they already
+   * have. An answer that grows by one word re-creates the one block it is still
+   * writing, not the whole message, so the scroll position, a selection and the
+   * paragraph being read all survive a long turn.
+   *
+   * This is a subset of CommonMark, chosen as what an agent actually writes:
+   * headings, paragraphs, fenced code, lists (nested, with GFM task boxes),
+   * blockquotes, tables, rules, and inline code, emphasis, strikethrough, links
+   * and autolinks. Three refusals are decisions rather than omissions: raw HTML
+   * is never interpreted — `<div>` in an answer is shown as the text it is,
+   * because a renderer that passes HTML through is an HTML injection with extra
+   * steps — a link's scheme is filtered, so `javascript:` in an answer stays
+   * text instead of becoming something this page runs, and an image is rendered
+   * as the link it also is, because fetching it would tell a third party that
+   * this conversation is on screen.
+   */
+
+  // -------------------------------------------------------- markdown: parse
+
+  const MD_ITEM_RE = /^([ \t]*)([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/;
+  const MD_HEADING_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/;
+  const MD_HR_RE = /^ {0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$/;
+  const MD_QUOTE_RE = /^ {0,3}>/;
+  const MD_FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^ \t`]*)/;
+  const MD_TABLE_DELIM_RE = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+  const MD_PIPE_RE = /(?<!\\)\|/;
+
+  /* Four columns to a tab, which is all an indentation check needs. */
+  function mdWidth(text) { return str(text).replace(/\t/g, '    ').length; }
+
+  /* How far a line is indented — its leading whitespace, not its whole width.
+   * The distinction is the difference between "this line belongs to the item
+   * above" and "this line happens to be long": measuring the width made the
+   * quote, the code block and the table after a list become items of it. */
+  function mdIndent(line) { return mdWidth(/^[ \t]*/.exec(str(line))[0]); }
+
+  function mdDropIndent(line, width) {
+    let used = 0;
+    let i = 0;
+    while (i < line.length && used < width) {
+      const c = line.charAt(i);
+      if (c === ' ') { used += 1; }
+      else if (c === '\t') { used += 4; }
+      else { break; }
+      i += 1;
+    }
+    return line.slice(i);
+  }
+
+  function mdKey(lines, from, to) { return lines.slice(from, to).join('\n'); }
+
+  function mdOrdered(marker) { return /^[0-9]/.test(str(marker)); }
+
+  /* A line that opens a block, and so ends the paragraph or the quote above it.
+   * An unclosed fenced block counts: its lines are code, not prose. */
+  function mdStartsBlock(line) {
+    return MD_FENCE_RE.test(line) || MD_HEADING_RE.test(line) || MD_HR_RE.test(line)
+      || MD_QUOTE_RE.test(line) || MD_ITEM_RE.test(line);
+  }
+
+  /* Source → block list. Each block carries the raw source it was built from as
+   * its `key`: the renderer compares keys to decide what still stands. */
+  function mdBlocks(src) {
+    const lines = str(src).replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const start = i;
+      const line = lines[i];
+      if (!line.trim()) { i += 1; continue; }
+
+      const fence = MD_FENCE_RE.exec(line);
+      if (fence) {
+        const marker = fence[1].charAt(0);
+        const closing = new RegExp('^ {0,3}' + marker + '{' + fence[1].length + ',}[ \\t]*$');
+        const body = [];
+        i += 1;
+        while (i < lines.length && !closing.test(lines[i])) { body.push(lines[i]); i += 1; }
+        if (i < lines.length) { i += 1; }   // the closing fence belongs to the block
+        out.push({
+          type: 'code', lang: str(fence[2]), text: body.join('\n'), key: mdKey(lines, start, i)
+        });
+        continue;
+      }
+
+      const heading = MD_HEADING_RE.exec(line);
+      if (heading) {
+        out.push({
+          type: 'heading', level: heading[1].length, text: str(heading[2]),
+          key: mdKey(lines, start, i + 1)
+        });
+        i += 1;
+        continue;
+      }
+
+      if (MD_HR_RE.test(line)) {
+        out.push({ type: 'hr', key: mdKey(lines, start, i + 1) });
+        i += 1;
+        continue;
+      }
+
+      if (MD_QUOTE_RE.test(line)) {
+        const body = [];
+        // `>`-prefixed lines, plus a plain line that continues the last one the
+        // way markdown lets a lazy paragraph carry on.
+        while (i < lines.length && lines[i].trim()
+          && (MD_QUOTE_RE.test(lines[i]) || !mdStartsBlock(lines[i]))) {
+          body.push(lines[i].replace(/^ {0,3}>[ \t]?/, ''));
+          i += 1;
+        }
+        out.push({ type: 'quote', blocks: mdBlocks(body.join('\n')), key: mdKey(lines, start, i) });
+        continue;
+      }
+
+      const table = mdTableAt(lines, i);
+      if (table) { out.push(table.block); i = table.next; continue; }
+
+      if (MD_ITEM_RE.test(line)) { const list = mdList(lines, i); out.push(list.block); i = list.next; continue; }
+
+      const body = [line];
+      i += 1;
+      while (i < lines.length && lines[i].trim() && !mdStartsBlock(lines[i]) && !mdTableAt(lines, i)) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      out.push({ type: 'para', text: body.join('\n'), key: mdKey(lines, start, i) });
+    }
+    return out;
+  }
+
+  function mdCells(line) {
+    let s = str(line).trim();
+    if (s.charAt(0) === '|') { s = s.slice(1); }
+    if (s.charAt(s.length - 1) === '|') { s = s.slice(0, -1); }
+    // An escaped pipe is content, not a column break.
+    return s.split(MD_PIPE_RE).map(function (cell) { return cell.trim().replace(/\\\|/g, '|'); });
+  }
+
+  function mdAlign(cell) {
+    const left = cell.charAt(0) === ':';
+    const right = cell.charAt(cell.length - 1) === ':';
+    if (left && right) { return 'center'; }
+    if (right) { return 'right'; }
+    if (left) { return 'left'; }
+    return '';
+  }
+
+  /* A table needs a pipe in the header row and a delimiter row of the same
+   * width — that width check is what keeps "a | b" over a line of dashes from
+   * being read as a table nobody wrote. */
+  function mdTableAt(lines, i) {
+    if (i + 1 >= lines.length) { return null; }
+    if (lines[i].indexOf('|') < 0) { return null; }
+    if (!MD_TABLE_DELIM_RE.test(lines[i + 1]) || lines[i + 1].indexOf('-') < 0) { return null; }
+    const header = mdCells(lines[i]);
+    const align = mdCells(lines[i + 1]).map(mdAlign);
+    if (!header.length || align.length !== header.length) { return null; }
+    const rows = [];
+    let j = i + 2;
+    while (j < lines.length && lines[j].trim() && lines[j].indexOf('|') >= 0) {
+      rows.push(mdCells(lines[j]));
+      j += 1;
+    }
+    return { block: { type: 'table', header: header, align: align, rows: rows, key: mdKey(lines, i, j) }, next: j };
+  }
+
+  /* One list: the items at one indentation, each with the lines that belong to
+   * it — a wrapped continuation, a nested list, a fenced block. Nesting is not
+   * special-cased, because an item's own source is parsed recursively: for
+   * "- a" over "  - b" the inner parse simply finds a list.
+   *
+   * A line belongs to the item above it when it is *indented* to that item's
+   * content column. A lazily continued line at column 0 — markdown allows one —
+   * is deliberately not joined: after a list, a column-0 line is far more often
+   * the next block of the answer than a wrapped bullet, and guessing "wrapped"
+   * once nests everything that follows into the last item. */
+  function mdList(lines, start) {
+    const open = MD_ITEM_RE.exec(lines[start]);
+    const indent = mdWidth(open[1]);
+    const contentIndent = indent + mdWidth(open[2]) + mdWidth(open[3]);
+    const ordered = mdOrdered(open[2]);
+    const startNumber = ordered ? (parseInt(open[2], 10) || 1) : 1;
+    const items = [];
+    let loose = false;
+    let i = start;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) {
+        // A blank line either separates the items of one loose list or ends the
+        // list; the next line that is not blank is what decides.
+        let j = i;
+        while (j < lines.length && !lines[j].trim()) { j += 1; }
+        if (j >= lines.length) { i = j; break; }
+        const nextItem = MD_ITEM_RE.exec(lines[j]);
+        if ((nextItem && mdWidth(nextItem[1]) === indent && mdOrdered(nextItem[2]) === ordered)
+            || mdIndent(lines[j]) >= contentIndent) {
+          loose = true;
+          i = j;
+          continue;
+        }
+        break;
+      }
+      const item = MD_ITEM_RE.exec(line);
+      // A different marker *kind* starts a new list: "- a" over "1. b" is a
+      // bullet followed by a numbered item, not a two-item bullet list.
+      if (item && mdWidth(item[1]) === indent && mdOrdered(item[2]) === ordered) {
+        items.push(item[4]);
+        i += 1;
+        continue;
+      }
+      if (mdIndent(line) < contentIndent || !items.length) { break; }
+      items[items.length - 1] += '\n' + mdDropIndent(line, contentIndent);
+      i += 1;
+    }
+    return {
+      block: {
+        type: 'list', ordered: ordered, startNumber: startNumber, loose: loose,
+        items: items.map(mdItem), key: mdKey(lines, start, i)
+      },
+      next: i
+    };
+  }
+
+  function mdItem(src) {
+    const task = /^\[([ xX])\][ \t]+/.exec(src);
+    return {
+      task: !!task,
+      checked: !!task && task[1] !== ' ',
+      blocks: mdBlocks(task ? src.slice(task[0].length) : src)
+    };
+  }
+
+  // ------------------------------------------------------- markdown: render
+
+  function mdAppend(node, text) { node.appendChild(mdInline(text)); }
+
+  function mdRenderBlocks(blocks) {
+    const out = [];
+    blocks.forEach(function (block) { out.push(mdRenderBlock(block)); });
+    return out;
+  }
+
+  function mdRenderBlock(block) {
+    switch (block.type) {
+      case 'heading': {
+        const h = el('h' + block.level, 'md-h');
+        mdAppend(h, block.text);
+        return h;
+      }
+      case 'code': {
+        const code = el('code', 'md-code');
+        code.textContent = block.text;
+        const pre = el('pre', 'md-pre');
+        pre.appendChild(code);
+        const wrap = el('div', 'md-code-wrap');
+        // The info string is a label, not content: it is what tells a reader
+        // whether this is a shell transcript or JSON.
+        if (block.lang) { wrap.appendChild(el('div', 'md-code-lang', block.lang)); }
+        wrap.appendChild(pre);
+        return wrap;
+      }
+      case 'hr':
+        return el('hr', 'md-hr');
+      case 'quote': {
+        const quote = el('blockquote', 'md-quote');
+        mdRenderBlocks(block.blocks).forEach(function (child) { quote.appendChild(child); });
+        return quote;
+      }
+      case 'list': {
+        const list = el(block.ordered ? 'ol' : 'ul', 'md-list');
+        if (block.ordered && block.startNumber !== 1) { list.start = block.startNumber; }
+        block.items.forEach(function (item) { list.appendChild(mdRenderItem(item, block.loose)); });
+        return list;
+      }
+      case 'table': {
+        const table = el('table', 'md-table');
+        const head = el('thead');
+        head.appendChild(mdRenderRow('th', block.header, block.align));
+        table.appendChild(head);
+        if (block.rows.length) {
+          const body = el('tbody');
+          block.rows.forEach(function (row) { body.appendChild(mdRenderRow('td', row, block.align)); });
+          table.appendChild(body);
+        }
+        // A wide table scrolls inside itself instead of stretching the column.
+        const wrap = el('div', 'md-table-wrap');
+        wrap.appendChild(table);
+        return wrap;
+      }
+      default: {
+        const p = el('p', 'md-p');
+        mdAppend(p, block.text);
+        return p;
+      }
+    }
+  }
+
+  function mdRenderRow(tag, cells, align) {
+    const row = el('tr');
+    for (let i = 0; i < cells.length; i++) {
+      const cell = el(tag, align[i] ? 'md-align-' + align[i] : null);
+      mdAppend(cell, cells[i]);
+      row.appendChild(cell);
+    }
+    return row;
+  }
+
+  /* A tight item is inline content: wrapping it in <p> would give every bullet
+   * the spacing of a paragraph. A loose one (blank lines between the items)
+   * is written as paragraphs, because that is what the author asked for. */
+  function mdRenderItem(item, loose) {
+    const li = el('li', 'md-li');
+    if (item.task) {
+      const box = el('input', 'md-task');
+      box.type = 'checkbox';
+      box.checked = item.checked;
+      box.disabled = true;   // the transcript is a record, not a form
+      li.appendChild(box);
+    }
+    item.blocks.forEach(function (child) {
+      if (child.type === 'para' && !loose) { mdAppend(li, child.text); }
+      else { li.appendChild(mdRenderBlock(child)); }
+    });
+    return li;
+  }
+
+  // ------------------------------------------------------- markdown: inline
+
+  const MD_PUNCT_RE = /[\\`*_{}[\]()#+\-.!>~|]/;
+  const MD_MARKS = ['**', '__', '~~', '*', '_'];
+
+  /* Text → a fragment of nodes. The buffer is what keeps this cheap: plain runs
+   * are collected and emitted as one text node instead of one node per mark.
+   *
+   * `inLink` is on while rendering a label: a link's own text is not scanned for
+   * links again, because an autolink there would be an anchor inside an anchor
+   * (which a browser silently unpicks) and, for a bare URL used as its own
+   * label, would recurse without end. */
+  function mdInline(text, inLink) {
+    const src = str(text);
+    const frag = document.createDocumentFragment();
+    let buf = '';
+    let i = 0;
+
+    function flush() {
+      if (buf) { frag.appendChild(document.createTextNode(buf)); buf = ''; }
+    }
+    function take(node) { flush(); frag.appendChild(node); }
+
+    while (i < src.length) {
+      const c = src.charAt(i);
+
+      if (c === '\\' && i + 1 < src.length) {
+        const next = src.charAt(i + 1);
+        if (next === '\n') { buf = buf.replace(/ +$/, ''); take(el('br')); i += 2; continue; }
+        if (MD_PUNCT_RE.test(next)) { buf += next; i += 2; continue; }
+        buf += c;
+        i += 1;
+        continue;
+      }
+
+      if (c === '\n') {
+        // Two trailing spaces or a backslash is a hard break; a bare newline is
+        // the soft break markdown renders as a space.
+        if (/ {2,}$/.test(buf)) { buf = buf.replace(/ +$/, ''); take(el('br')); }
+        else if (buf) { buf += ' '; }
+        i += 1;
+        continue;
+      }
+
+      if (c === '`') {
+        const span = mdCodeSpan(src, i);
+        if (span) { take(span.node); i = span.next; continue; }
+      }
+
+      if (!inLink && c === '<') {
+        const auto = mdAutolink(src, i);
+        if (auto) { take(auto.node); i = auto.next; continue; }
+      }
+
+      if (!inLink && (c === '[' || (c === '!' && src.charAt(i + 1) === '['))) {
+        const link = mdLink(src, i);
+        if (link) { take(link.node); i = link.next; continue; }
+      }
+
+      if (!inLink && c === 'h' && !/[0-9A-Za-z]/.test(src.charAt(i - 1))
+        && /^https?:\/\//.test(src.slice(i, i + 8))) {
+        const bare = mdBareUrl(src, i);
+        if (bare) { take(bare.node); i = bare.next; continue; }
+      }
+
+      if (c === '*' || c === '_' || c === '~') {
+        const marked = mdEmphasis(src, i, inLink);
+        if (marked) { take(marked.node); i = marked.next; continue; }
+      }
+
+      buf += c;
+      i += 1;
+    }
+    flush();
+    return frag;
+  }
+
+  /* An unclosed backtick is literal text, which is what a stream mid-code-span
+   * looks like for a few milliseconds. */
+  function mdCodeSpan(text, i) {
+    const open = /^`+/.exec(text.slice(i))[0];
+    const end = text.indexOf(open, i + open.length);
+    if (end < 0) { return null; }
+    let body = text.slice(i + open.length, end).replace(/\n/g, ' ');
+    // One space of padding on each side is not content, per the spec.
+    if (body.length > 2 && body.charAt(0) === ' ' && body.charAt(body.length - 1) === ' ') {
+      body = body.slice(1, -1);
+    }
+    return { node: el('code', 'md-code-inline', body), next: end + open.length };
+  }
+
+  function mdAutolink(text, i) {
+    const end = text.indexOf('>', i + 1);
+    if (end < 0) { return null; }
+    const inner = text.slice(i + 1, end);
+    if (!/^(https?:\/\/|mailto:)\S+$/i.test(inner)) { return null; }
+    return { node: mdAnchor(inner, inner), next: end + 1 };
+  }
+
+  function mdLink(text, i) {
+    const image = text.charAt(i) === '!';
+    const open = image ? i + 1 : i;
+    const close = text.indexOf(']', open + 1);
+    if (close < 0 || text.charAt(close + 1) !== '(') { return null; }
+    const end = mdLinkEnd(text, close + 2);
+    if (end < 0) { return null; }
+    let target = text.slice(close + 2, end).trim();
+    const title = /^(\S+)\s+["'(].*["')]$/.exec(target);
+    if (title) { target = title[1]; }
+    let label = text.slice(open + 1, close);
+    // An image would make the page fetch somebody else's URL the moment an
+    // answer arrives — a beacon the reader never asked for — so it is rendered
+    // as the link it also is.
+    if (image && !label) { label = target; }
+    return { node: mdAnchor(label, target), next: end + 1 };
+  }
+
+  /* The destination may contain balanced parentheses — `…/Foo_(bar)` is a URL a
+   * model will paste — so the closing one is found by counting, not by taking
+   * the first `)` seen. */
+  function mdLinkEnd(text, from) {
+    let depth = 0;
+    for (let i = from; i < text.length; i += 1) {
+      const c = text.charAt(i);
+      if (c === '\\') { i += 1; continue; }
+      if (c === '(') { depth += 1; continue; }
+      if (c === ')') {
+        if (depth === 0) { return i; }
+        depth -= 1;
+      }
+    }
+    return -1;
+  }
+
+  function mdBareUrl(text, i) {
+    const match = /^https?:\/\/[^\s<>()[\]"'`]+/.exec(text.slice(i));
+    if (!match) { return null; }
+    let url = match[0];
+    // Sentence punctuation is not part of the URL: a link ends before the dot
+    // in "see https://example.dev."
+    while (url.length && /[.,;:!?]$/.test(url)) { url = url.slice(0, -1); }
+    if (!url) { return null; }
+    return { node: mdAnchor(url, url), next: i + url.length };
+  }
+
+  function mdFindClose(text, from, mark) {
+    let at = text.indexOf(mark, from);
+    while (at >= 0) {
+      const before = text.charAt(at - 1);
+      // The closer cannot follow a space, cannot be a longer run of the same
+      // character and cannot re-close an opener it just followed.
+      if (before && !/\s/.test(before) && before !== mark && text.charAt(at + mark.length) !== mark.charAt(0)) {
+        return at;
+      }
+      at = text.indexOf(mark, at + mark.length);
+    }
+    return -1;
+  }
+
+  function mdEmphasis(text, i, inLink) {
+    for (let k = 0; k < MD_MARKS.length; k++) {
+      const mark = MD_MARKS[k];
+      if (text.slice(i, i + mark.length) !== mark) { continue; }
+      const after = text.charAt(i + mark.length);
+      // A delimiter never opens on a space, and a run of the same character is
+      // not two delimiters.
+      if (!after || after === mark.charAt(0) || /\s/.test(after)) { continue; }
+      // An underscore inside a word is part of the word: `snake_case` is not
+      // `snake` in italics, which matters in an answer full of identifiers.
+      if (mark.charAt(0) === '_' && /[0-9A-Za-z]/.test(text.charAt(i - 1))) { continue; }
+      const at = mdFindClose(text, i + mark.length, mark);
+      if (at < 0) { continue; }
+      const inner = text.slice(i + mark.length, at);
+      if (!inner.trim()) { continue; }
+      const tag = mark === '~~' ? 'del' : (mark.length === 2 ? 'strong' : 'em');
+      const node = el(tag);
+      node.appendChild(mdInline(inner, inLink));
+      return { node: node, next: at + mark.length };
+    }
+    return null;
+  }
+
+  function mdSafeUrl(url) {
+    // The scheme test has to see the string the browser will see, and `a.href =` goes through the
+    // URL parser: it removes tab and newline *anywhere*, and leading/trailing C0 controls or spaces.
+    // Testing "java\nscript:" as written would pass the filter and then be parsed as javascript:,
+    // so the normalisation happens first and the cleaned target is what gets used.
+    const raw = str(url)
+      .replace(/[\t\n\r]/g, '')
+      .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '');
+    // Only the schemes a link in an answer can mean. A scheme-less target is a
+    // relative one, which cannot leave the page's own origin.
+    if (/^[a-z][a-z0-9+.-]*:/i.test(raw) && !/^(https?|mailto):/i.test(raw)) { return ''; }
+    return raw;
+  }
+
+  function mdAnchor(label, url) {
+    const safe = mdSafeUrl(url);
+    if (!safe) { return document.createTextNode(label); }
+    const a = el('a', 'md-a');
+    a.appendChild(mdInline(label, true));
+    a.href = safe;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    return a;
+  }
+
+  // ----------------------------------------------------- markdown: streaming
+
+  /* How many leading blocks the previous render already produced. Identical
+   * source means identical nodes, because a block is rendered from itself
+   * alone — so the answer keeps everything above the block it is still writing. */
+  function mdKeep(prev, next) {
+    if (!prev) { return 0; }
+    let n = 0;
+    while (n < prev.length && n < next.length && prev[n].key === next[n].key) { n += 1; }
+    return n;
+  }
+
+  function renderMarkdown(md, node) {
+    const blocks = mdBlocks(md.source);
+    const keep = mdKeep(md.blocks, blocks);
+    for (let i = md.nodes.length - 1; i >= keep; i -= 1) {
+      if (md.nodes[i].parentNode === node) { node.removeChild(md.nodes[i]); }
+    }
+    md.nodes.length = keep;
+    for (let i = keep; i < blocks.length; i += 1) {
+      const child = mdRenderBlock(blocks[i]);
+      md.nodes.push(child);
+      node.appendChild(child);
+    }
+    md.blocks = blocks;
+  }
+
+  /* Deltas are coalesced exactly like plain text: the parse runs once per frame
+   * at most, and a message nobody is waiting on (a background tab) still gets
+   * its timer flush. */
+  function queueMarkdown(block, delta) {
+    if (!block || !delta) { return; }
+    const node = assistantNode(block, 'text');
+    if (!block.md) { block.md = { source: '', blocks: null, nodes: [] }; }
+    block.md.source += delta;
+    mdQueues.set(block.md, node);
+    scheduleFlush();
+  }
+
   // ----------------------------------------------------------- transcript
 
   function appendLine(cls, text) {
@@ -630,7 +1398,7 @@
 
   function appendError(text) { return appendLine('ev ev-error', text); }
 
-  /* Server notices (refused New session, retries, step-limit warnings) are
+  /* Server notices (a refused New session, provider retries, a trimmed context) are
    * transcript lines. The Usage panel is owned by `usage` events and
    * status.usage, so a notice never writes there. */
   function appendNotice(text) { return appendLine('ev ev-notice', text); }
@@ -646,7 +1414,9 @@
   function assistantNode(block, kind) {
     const key = kind === 'reasoning' ? 'reasoning' : 'answer';
     if (!block[key]) {
-      const node = el('div', key === 'reasoning' ? 'msg-reasoning' : 'msg-answer');
+      // Reasoning is the model talking to itself and is shown as the plain text
+      // it is; only the answer, the thing being handed to a reader, is markdown.
+      const node = el('div', key === 'reasoning' ? 'msg-reasoning' : 'msg-answer md');
       block.root.appendChild(node);
       block[key] = node;
     }
@@ -663,11 +1433,14 @@
   function clearTranscript() {
     flushText();
     queues.clear();
+    mdQueues.clear();
     dom.transcript.textContent = '';
     showPlaceholder();
     state.block = null;
     state.toolCards.clear();
     state.approvals.clear();
+    // The pending sync belongs to the conversation being left; its requests are not this one's.
+    state.pendingApprovalsSync = null;
     state.runningTools = 0;
     state.lastEventId = -1;   // dedupe scope is one transcript
     state.stick = true;
@@ -731,25 +1504,59 @@
     }
   }
 
+  /* How much of a restored conversation is drawn before the page is usable.
+   *
+   * A long session is thousands of tool cards, and building them all at once blocks the thread for
+   * long enough that a turn running behind the switch looks frozen — the cost is paid on the way in,
+   * which is exactly when the user is watching. So a page older than this is drawn in two passes:
+   * the most recent events now, the rest as soon as the browser is idle. Nothing is dropped, and the
+   * reader can start scrolling immediately.
+   *
+   * The number is events, not exchanges, because that is what the cost is proportional to. It is
+   * generous — a few hundred tool cards is a fast draw — and bounded so the first pass cannot itself
+   * become the stall it exists to avoid. */
+  const REPLAY_TAIL_EVENTS = 300;
+
+  /* A history split into what to draw now and what to fill in behind it.
+   *
+   * The cut lands on a user message, which is the boundary the renderer already treats as one
+   * (`appendUser` closes the open block). Splitting mid-turn would hand one assistant turn to both
+   * passes, and the second pass would append its reasoning *after* the answer the first one drew.
+   *
+   * An exchange longer than the limit is kept whole: half an answer is worse than a slow screen, and
+   * the events after that user message all belong to that turn. */
+  function splitReplay(events) {
+    const clean = (Array.isArray(events) ? events : []).filter(function (ev) {
+      return !!ev && typeof ev === 'object';
+    });
+    // The last user message at or before the budget's end is where the tail starts. Walking back from
+    // the end finds the *newest* such boundary, so the tail is as small as the limit allows and still
+    // whole. When there is no budget to spend — a short history — the tail is everything.
+    if (clean.length <= REPLAY_TAIL_EVENTS) {
+      return { head: [], tail: clean, hidden: 0 };
+    }
+    let start = 0;
+    for (let i = clean.length - REPLAY_TAIL_EVENTS; i >= 0; i--) {
+      if (str(clean[i].type) === 'user') {
+        start = i;
+        break;
+      }
+    }
+    return { head: clean.slice(0, start), tail: clean.slice(start), hidden: start };
+  }
+
   /* Replay goes through the same dispatch() the live stream uses, so a restored
    * conversation renders exactly like a live one. Replay events carry no SSE
    * id, so they never touch state.lastEventId: the reconnect dedupe keeps
    * working, and live events always land *after* the snapshot they follow. */
   function renderReplay(events) {
+    const split = splitReplay(events);
+
     state.replaying = true;
     try {
-      if (!events.length) { showPlaceholder(); return; }
+      if (!split.tail.length) { showPlaceholder(); return; }
       dropPlaceholder();
-      events.forEach(function (ev) {
-        if (!ev || typeof ev !== 'object') { return; }
-        const type = str(ev.type);
-        if (type === 'status' || type === 'done') { return; }   // live lifecycle, not content
-        try {
-          dispatch(ev);
-        } catch (err) {
-          appendError('UI error replaying ' + type + ': ' + str(err && err.message ? err.message : err));
-        }
-      });
+      replayPass(split.tail);
       flushText();
     } finally {
       state.replaying = false;
@@ -758,12 +1565,109 @@
     scrollToBottom();
     dom.jump.hidden = true;
     refreshLive();
+
+    if (split.head.length) {
+      // The rest, once the browser has nothing better to do. The page is already usable and the
+      // newest part is already on screen, so this cannot make the switch feel slower.
+      loadOlderReplay(split.head, split.hidden);
+    }
+  }
+
+  /** Runs one replay pass: the events through the renderer, skipping the live lifecycle ones. */
+  function replayPass(events) {
+    events.forEach(function (ev) {
+      const type = str(ev.type);
+      if (type === 'status' || type === 'done') { return; }   // live lifecycle, not content
+      try {
+        dispatch(ev);
+      } catch (err) {
+        appendError('UI error replaying ' + type + ': ' + str(err && err.message ? err.message : err));
+      }
+    });
+  }
+
+  /* Draws the earlier part of a conversation *above* what is already on screen, one exchange at a
+   * time in the browser's idle time.
+   *
+   * Three things make it invisible, and each of them is the reason the machinery exists:
+   *
+   *  - it runs when the browser is idle, so a turn streaming behind it keeps painting;
+   *  - it draws into a detached fragment and inserts it as one node, so nothing is ever half attached;
+   *  - it holds the reader's place by the height it just added. Inserting above the viewport
+   *    otherwise slides the text being read down the screen by however much was added — which is the
+   *    whole reason "fill it in behind" needs care rather than a single insert.
+   *
+   * The chunk boundary is a user message: an assistant turn rendered by two chunks would end up with
+   * its reasoning after its answer. */
+  function loadOlderReplay(head, hidden) {
+    const banner = el('div', 'ev ev-note replay-note',
+      hidden + (hidden === 1 ? ' earlier event' : ' earlier events') + ' — loading…');
+    dom.transcript.insertBefore(banner, dom.transcript.firstChild);
+
+    const seq = ++replaySeq;
+    let end = head.length;   // exclusive: everything from `end` on has been drawn
+
+    const idle = window.requestIdleCallback
+      ? function (fn) { return window.requestIdleCallback(fn, { timeout: 250 }); }
+      : function (fn) { return setTimeout(function () { fn({ timeRemaining: function () { return 8; } }); }, 0); };
+
+    const step = function (deadline) {
+      // Another switch superseded this replay: its transcript is gone, and this one must stop rather
+      // than append an old conversation into a new one.
+      if (seq !== replaySeq) { return; }
+      if (end <= 0) {
+        if (banner.parentNode) { banner.parentNode.removeChild(banner); }
+        return;
+      }
+      // Back to the previous boundary, so one exchange is drawn per pass.
+      let from = end - 1;
+      while (from > 0 && str(head[from].type) !== 'user') { from--; }
+
+      const fragment = document.createDocumentFragment();
+      const holder = el('div');
+      const previousTranscript = dom.transcript;
+      // The renderer appends to the transcript; for this pass it appends into a detached holder and
+      // the result is moved up as one node.
+      replayTarget = holder;
+      const wasReplaying = state.replaying;
+      state.replaying = true;
+      try {
+        replayPass(head.slice(from, end));
+        flushText();
+      } finally {
+        state.replaying = wasReplaying;
+        replayTarget = null;
+      }
+      void previousTranscript;
+      while (holder.firstChild) { fragment.appendChild(holder.firstChild); }
+
+      const anchor = dom.transcript.scrollHeight;
+      const before = dom.transcript.scrollTop;
+      dom.transcript.insertBefore(fragment, banner.nextSibling === null ? null : banner.nextSibling);
+      const grew = dom.transcript.scrollHeight - anchor;
+      if (grew > 0) { dom.transcript.scrollTop = before + grew; }
+
+      end = from;
+      if (end > 0 && deadline.timeRemaining() > 2) {
+        step(deadline);            // still time in this frame
+      } else {
+        idle(step);                // or come back when the browser is free
+      }
+    };
+    idle(step);
   }
 
   function flushPendingLive() {
     const queued = state.pendingLive;
     state.pendingLive = [];
     queued.forEach(processMessage);
+    // A status that arrived while the transcript was being rebuilt carried the outstanding
+    // approvals; now that the replay is done, drawing them cannot be undone by it.
+    if (state.pendingApprovalsSync) {
+      const waiting = state.pendingApprovalsSync;
+      state.pendingApprovalsSync = null;
+      syncApprovals(waiting);
+    }
   }
 
   // ------------------------------------------------------------ tool cards
@@ -877,64 +1781,7 @@
     // page never showed.
     if (rec && rec.resolved) { rec = null; }
     if (!rec) {
-      const root = el('div', 'ev ev-approval pending');
-      const head = el('div', 'approval-head');
-      head.appendChild(el('span', 'approval-flag', 'approval needed'));
-      head.appendChild(el('span', 'approval-title', str(ev.title) || 'Tool call'));
-      root.appendChild(head);
-
-      const detail = el('pre', 'approval-detail', str(ev.detail) || '(no detail)');
-      root.appendChild(detail);
-
-      const actions = el('div', 'approval-actions');
-      const rememberLabel = el('label', 'remember');
-      const remember = el('input');
-      remember.type = 'checkbox';
-      rememberLabel.appendChild(remember);
-      rememberLabel.appendChild(el('span', null, 'always allow'));
-      const stateEl = el('span', 'approval-state', 'waiting for an answer');
-      const deny = el('button', 'btn danger', 'Deny');
-      deny.type = 'button';
-      const approve = el('button', 'btn primary', 'Approve');
-      approve.type = 'button';
-      actions.appendChild(rememberLabel);
-      actions.appendChild(deny);
-      actions.appendChild(approve);
-      actions.appendChild(stateEl);
-      root.appendChild(actions);
-
-      rec = {
-        id: id, root: root, approve: approve, deny: deny,
-        remember: remember, stateEl: stateEl, resolved: false
-      };
-
-      rec.settle = function (allow, label, cls) {
-        rec.resolved = true;
-        rec.root.classList.remove('pending');
-        rec.root.classList.add(allow ? 'approved' : 'denied');
-        rec.approve.disabled = true;
-        rec.deny.disabled = true;
-        rec.remember.disabled = true;
-        rec.stateEl.textContent = label;
-        rec.stateEl.className = 'approval-state ' + cls;
-        refreshLive();
-        updateJump();
-        setBusy(state.busy);
-      };
-
-      rec.answer = function (allow) {
-        if (rec.resolved) { return; }
-        const remember = allow && rec.remember.checked;
-        rec.settle(allow, allow ? (remember ? 'Approved (always allow)' : 'Approved') : 'Denied',
-          allow ? 'ok' : 'bad');
-        answerApproval(id, allow, remember);
-      };
-
-      approve.addEventListener('click', function () { rec.answer(true); });
-      deny.addEventListener('click', function () { rec.answer(false); });
-
-      state.approvals.set(id, rec);
-      appendToTranscript(root);
+      rec = renderApproval(id, ev.title, ev.detail);
     }
 
     if (autoApproveOn() && !rec.resolved) {
@@ -944,6 +1791,100 @@
     }
     refreshLive();
     updateJump();
+  }
+
+  /* Draws one outstanding request and registers it. Split out of onApproval because the status
+   * carries the same three fields, and that is how a request survives the page looking at another
+   * conversation: the answer lives on the server, the prompt lives here, and this is the one place
+   * that knows how to build it. */
+  function renderApproval(id, title, detail) {
+    const root = el('div', 'ev ev-approval pending');
+    const head = el('div', 'approval-head');
+    head.appendChild(el('span', 'approval-flag', 'approval needed'));
+    head.appendChild(el('span', 'approval-title', str(title) || 'Tool call'));
+    root.appendChild(head);
+
+    const detailNode = el('pre', 'approval-detail', str(detail) || '(no detail)');
+    root.appendChild(detailNode);
+
+    const actions = el('div', 'approval-actions');
+    const rememberLabel = el('label', 'remember');
+    const remember = el('input');
+    remember.type = 'checkbox';
+    rememberLabel.appendChild(remember);
+    rememberLabel.appendChild(el('span', null, 'always allow'));
+    const stateEl = el('span', 'approval-state', 'waiting for an answer');
+    const deny = el('button', 'btn danger', 'Deny');
+    deny.type = 'button';
+    const approve = el('button', 'btn primary', 'Approve');
+    approve.type = 'button';
+    actions.appendChild(rememberLabel);
+    actions.appendChild(deny);
+    actions.appendChild(approve);
+    actions.appendChild(stateEl);
+    root.appendChild(actions);
+
+    const rec = {
+      id: id, root: root, approve: approve, deny: deny,
+      remember: remember, stateEl: stateEl, resolved: false,
+      at: Date.now()
+    };
+
+    rec.settle = function (allow, label, cls) {
+      rec.resolved = true;
+      rec.root.classList.remove('pending');
+      rec.root.classList.add(allow ? 'approved' : 'denied');
+      rec.approve.disabled = true;
+      rec.deny.disabled = true;
+      rec.remember.disabled = true;
+      rec.stateEl.textContent = label;
+      rec.stateEl.className = 'approval-state ' + cls;
+      refreshLive();
+      updateJump();
+      setBusy(state.busy);
+    };
+
+    rec.answer = function (allow) {
+      if (rec.resolved) { return; }
+      const useRemember = allow && rec.remember.checked;
+      rec.settle(allow, allow ? (useRemember ? 'Approved (always allow)' : 'Approved') : 'Denied',
+        allow ? 'ok' : 'bad');
+      answerApproval(id, allow, useRemember);
+    };
+
+    approve.addEventListener('click', function () { rec.answer(true); });
+    deny.addEventListener('click', function () { rec.answer(false); });
+
+    state.approvals.set(id, rec);
+    appendToTranscript(root);
+    return rec;
+  }
+
+  /* Requests the server says are still outstanding for the conversation on screen.
+   *
+   * This is what makes an approval survive looking away. The request is blocked in memory on the
+   * server, not written to the conversation, so replaying the history cannot bring it back — and
+   * without this the prompt vanished when the user switched away, leaving abort as the only way out
+   * of a turn that was still perfectly answerable. */
+  function syncApprovals(waiting) {
+    if (!Array.isArray(waiting)) { return; }
+    const shown = new Set();
+    waiting.forEach(function (entry) {
+      const id = str(entry.id);
+      if (id === '') { return; }
+      shown.add(id);
+      const existing = approvalRecord(id);
+      if (!existing || existing.resolved) {
+        renderApproval(id, entry.title, entry.detail);
+      }
+    });
+    // A record this page is holding that the server no longer knows about was answered elsewhere, or
+    // timed out: it is closed here rather than left as a card that can never be answered.
+    state.approvals.forEach(function (rec, id) {
+      if (!rec.resolved && !shown.has(id)) {
+        rec.settle(false, 'No longer waiting (answered elsewhere or timed out)', 'bad');
+      }
+    });
   }
 
   function onApprovalClosed(ev) {
@@ -988,7 +1929,8 @@
     const block = state.block;
     const finalText = str(ev && ev.finalText);
     if (block && !hasContent(block.answer) && finalText && block.root.parentNode === dom.transcript) {
-      assistantNode(block, 'text').appendChild(document.createTextNode(finalText));
+      queueMarkdown(block, finalText);
+      flushText();
     }
     state.block = null;
     const aborted = !!(ev && ev.aborted);
@@ -996,7 +1938,9 @@
     setBusy(false);
     setLive('idle');
     dom.input.focus();
+    reorderSessionsAfterTurn();
   }
+
 
   // ------------------------------------------------------------- dispatch
 
@@ -1009,7 +1953,7 @@
     switch (str(ev.type)) {
       case 'status': applyStatus(ev); break;
       case 'user': appendUser(str(ev.text)); break;
-      case 'text': queueText(assistantNode(assistantBlock(), 'text'), str(ev.delta)); break;
+      case 'text': queueMarkdown(assistantBlock(), str(ev.delta)); break;
       case 'reasoning': queueText(assistantNode(assistantBlock(), 'reasoning'), str(ev.delta)); break;
       case 'tool': breakBlock(); onTool(ev); break;
       case 'approval': breakBlock(); onApproval(ev); break;
@@ -1028,6 +1972,7 @@
   }
 
   function handleMessage(msg) {
+    state.lastEventAt = Date.now();
     // Live frames that arrive while a history snapshot is being rendered are
     // held back and replayed after it, so the snapshot is always the base and
     // nothing is lost or interleaved out of order.
@@ -1048,12 +1993,53 @@
     try { ev = JSON.parse(msg.data); } catch (err) { return; }
     if (!ev || typeof ev !== 'object') { return; }
 
+    // The high-water mark advances for every event, including the ones this
+    // page does not render: it is a position in one shared stream, and skipping
+    // it for another conversation's turn would make the next reconnect replay
+    // frames already delivered.
+    if (hasId) { state.lastEventId = idNum; }
+
+    // One stream carries every conversation on the server, so an event is
+    // rendered only when it belongs to the transcript on screen. A turn running
+    // in another session is exactly what the user is allowed to leave running:
+    // its prose must not appear here, and its `done` must not unstick this
+    // page's composer or claim this conversation just answered.
+    const owner = str(ev.sessionId);
+    if (owner && owner !== state.sessionId) {
+      noteForeignTurn(ev);
+      return;
+    }
+
     try {
       dispatch(ev);
     } catch (err) {
       appendError('UI error handling ' + str(ev.type) + ': ' + (err && err.message ? err.message : err));
     }
-    if (hasId) { state.lastEventId = idNum; }
+  }
+
+  /* A turn in another conversation, seen from here. It is not rendered — the
+   * transcript belongs to one session — but three things about it are worth
+   * acting on: the page is told which sessions are working, the tree marks the
+   * rows so the user can find the turn again, and a finished turn refreshes the
+   * list (that conversation's title and position just changed). */
+  function noteForeignTurn(ev) {
+    const owner = str(ev.sessionId);
+    switch (str(ev.type)) {
+      case 'user':
+      case 'text':
+      case 'reasoning':
+      case 'tool':
+      case 'notice':
+        markRunning(owner, true);
+        break;
+      case 'done':
+      case 'error':
+        markRunning(owner, false);
+        reorderSessionsAfterTurn();
+        break;
+      default:
+        break;
+    }
   }
 
   // ------------------------------------------------------------------ sse
@@ -1075,6 +2061,7 @@
 
     source.onopen = function () {
       hideConnPill();
+      state.lastEventAt = Date.now();
       const placeholder = dom.transcript.querySelector('.placeholder');
       if (placeholder) { placeholder.textContent = placeholderText(); }
       if (state.everOpen) {
@@ -1099,6 +2086,25 @@
     };
 
     source.onmessage = handleMessage;
+  }
+
+  /* How long a stream may stay silent before the page stops trusting its own
+   * idea of "a turn is running". A quiet server and a dead connection look
+   * identical from here, and the cost of guessing wrong is a composer that never
+   * comes back. */
+  const STALE_EVENT_MS = 20000;
+
+  function streamLooksStale() {
+    return Date.now() - state.lastEventAt > STALE_EVENT_MS;
+  }
+
+  /* Re-reads the server's truth and, if the stream is gone, reopens it. Called
+   * when the page comes back to the front — the moment a throttled tab's
+   * timers start running again — and before a message is swallowed on the
+   * strength of a stale `busy`. */
+  function resync() {
+    if (!state.source || state.source.readyState !== EventSource.OPEN) { connect(); }
+    refreshStatus();
   }
 
   // ----------------------------------------------------------------- theme
@@ -1132,13 +2138,23 @@
   }
 
   /* index.html resolves the same thing inline before the first paint; doing it
-   * again here is idempotent and keeps one function as the source of truth. */
+   * again here is idempotent and keeps one function as the source of truth.
+   *
+   * Two attributes, one decision: `data-theme` on <html> is what this page's own
+   * rules and the pre-paint script read, and `data-ds-dark-theme` on <body> is
+   * what the vendored DeepSeek Harness token sheet reads. They are set together
+   * here and nowhere else. */
   function applyTheme() {
     const theme = visibleTheme(themePref);
     const root = document.documentElement;
     root.setAttribute('data-theme', theme);
     root.setAttribute('data-theme-pref', themePref);
     root.style.colorScheme = theme;
+    if (theme === 'dark') {
+      document.body.setAttribute('data-ds-dark-theme', '');
+    } else {
+      document.body.removeAttribute('data-ds-dark-theme');
+    }
     dom.themeIcon.textContent = THEME_ICON[themePref];
     dom.themeLabel.textContent = THEME_LABEL[themePref];
     dom.btnTheme.title = 'Theme: ' + THEME_LABEL[themePref]
@@ -1163,6 +2179,94 @@
     systemTheme.addEventListener('change', function () {
       if (themePref === 'system') { applyTheme(); }
     });
+  }
+
+  // ----------------------------------------------------------- wallpaper
+
+  /* The pictures the server offers, rotated behind the page. The list comes from
+   * the server's directory; the choice and the position come from this browser,
+   * and a server with no pictures hides the control instead of offering a button
+   * that does nothing.
+   *
+   * A rotation is a cut, not a fade: the next picture is fetched while the
+   * current one is on screen, so switching never shows an empty frame. */
+  const WALLPAPER_KEY = 'ccj.wallpaper';
+  const WALLPAPER_INDEX_KEY = 'ccj.wallpaper.index';
+  const WALLPAPER_EVERY_MS = 5 * 60 * 1000;
+
+  const wallpapers = { names: [], index: 0, on: false };
+
+  function wallpaperVisible() {
+    return wallpapers.on && wallpapers.names.length > 0;
+  }
+
+  function wallpaperUrl(name) {
+    return '/wallpaper/' + encodeURIComponent(name);
+  }
+
+  function paintWallpaper() {
+    if (!wallpaperVisible()) {
+      document.body.classList.remove('wallpaper');
+      document.body.style.removeProperty('--ccj-wallpaper');
+      return;
+    }
+    document.body.classList.add('wallpaper');
+    document.body.style.setProperty(
+      '--ccj-wallpaper', 'url("' + wallpaperUrl(wallpapers.names[wallpapers.index]) + '")');
+    if (wallpapers.names.length > 1) {
+      // Warm the next one up: a rotation should never show an empty frame.
+      const next = new Image();
+      next.src = wallpaperUrl(wallpapers.names[(wallpapers.index + 1) % wallpapers.names.length]);
+    }
+  }
+
+  function setWallpaper(on) {
+    wallpapers.on = !!on && wallpapers.names.length > 0;
+    writeStored(WALLPAPER_KEY, wallpapers.on ? 'on' : 'off');
+    dom.btnWallpaper.setAttribute('aria-pressed', wallpapers.on ? 'true' : 'false');
+    dom.btnWallpaper.classList.toggle('on', wallpapers.on);
+    paintWallpaper();
+  }
+
+  function nextWallpaper() {
+    if (wallpapers.names.length === 0) { return; }
+    wallpapers.index = (wallpapers.index + 1) % wallpapers.names.length;
+    writeStored(WALLPAPER_INDEX_KEY, String(wallpapers.index));
+    paintWallpaper();
+  }
+
+  async function initWallpaper() {
+    let names = [];
+    try {
+      const body = await request('/api/wallpapers');
+      if (body && Array.isArray(body.wallpapers)) {
+        names = body.wallpapers.filter(function (name) { return typeof name === 'string'; });
+      }
+    } catch (err) {
+      names = [];   // no directory, no control; that is not an error worth showing
+    }
+    wallpapers.names = names;
+    if (names.length === 0) { return; }
+
+    const stored = Math.floor(Number(readStored(WALLPAPER_INDEX_KEY)));
+    wallpapers.index = isFinite(stored) && stored >= 0 && stored < names.length ? stored : 0;
+    // On until this browser says otherwise: a directory of pictures is a decision somebody
+    // already made, and the switch is one click away in the header.
+    wallpapers.on = readStored(WALLPAPER_KEY) !== 'off';
+
+    dom.btnWallpaper.hidden = false;
+    dom.btnWallpaper.setAttribute('aria-pressed', wallpapers.on ? 'true' : 'false');
+    dom.btnWallpaper.classList.toggle('on', wallpapers.on);
+    dom.btnWallpaper.addEventListener('click', function (event) {
+      // Shift-click is the manual step: rotation is the point, so a plain click
+      // is the switch and this is how to see the next one now.
+      if (event.shiftKey) { nextWallpaper(); return; }
+      setWallpaper(!wallpapers.on);
+    });
+    paintWallpaper();
+    setInterval(function () {
+      if (wallpaperVisible()) { nextWallpaper(); }
+    }, WALLPAPER_EVERY_MS);
   }
 
   // -------------------------------------------------------------- sidebar
@@ -1234,7 +2338,11 @@
   }
 
   function workspaceItems() {
-    const list = tree.payload && Array.isArray(tree.payload.workspaces) ? tree.payload.workspaces : [];
+    return workspaceItemsOf(tree.payload);
+  }
+
+  function workspaceItemsOf(payload) {
+    const list = payload && Array.isArray(payload.workspaces) ? payload.workspaces : [];
     return list.filter(function (item) { return !!item && typeof item === 'object'; });
   }
 
@@ -1338,31 +2446,74 @@
     deleteAllControl.reset();
   }
 
-  /* One session: a preview line and its age, and the same two-step delete the
-   * dialogs used, so the gesture did not change when the list moved. */
-  function sessionRow(name, item, index, activeId) {
+  /* One session: what was asked, when, and the same two-step delete the dialogs
+   * used, so the gesture did not change when the list moved.
+   *
+   * The row is read, not scanned: the first user message is the label, because a
+   * list of `20260912-030245-7b27` says nothing about which task a session was.
+   * A session with nothing asked yet has no title to show, so it falls back to
+   * its id — the same string the chip in the header carries.
+   *
+   * Clicking *anywhere* on the row opens it. The delete controls sit inside the
+   * li and not inside the button, so the gap between them would otherwise be a
+   * dead zone that looks exactly like the rest of the row; `rowOpensOn` gives
+   * that area the same destination, while leaving room for a modifier. */
+  function sessionRow(name, item, index, activeId, stamp) {
     const id = str(item.id);
     const current = id !== '' && id === activeId;
-    const li = el('li', 'session-row' + (current ? ' current' : ''));
+    // The row's own truth about running: the server's list says which sessions
+    // are working, and `paintRunningRows` merges in what this page learned from
+    // the stream (a turn started or aborted since that list was fetched).
+    const running = !!item.running;
+    const li = el('li', 'session-row' + (current ? ' current' : '') + (running ? ' running' : ''));
     if (current) { li.setAttribute('aria-current', 'true'); }
 
     const btn = el('button', 'session-item');
     btn.type = 'button';
     btn.dataset.focusKey = 's:' + name + ':' + id;
     btn.title = id + (current ? ' — the session on screen' : '')
+      + (running ? '\nthis session is running a turn' : '')
       + '\n' + str(name) + ' · ' + timeLabel(item.lastModified);
-    btn.appendChild(el('span', 'session-id', clip(id, 30)));
-    const preview = firstLine(str(item.preview));
-    if (preview) { btn.appendChild(el('span', 'session-preview', clip(preview, 200))); }
-    const meta = el('span', 'session-meta');
-    const count = Number(item.messageCount);
-    const messages = isFinite(count) ? count : 0;
-    meta.appendChild(el('span', null, relativeTime(item.lastModified)));
-    meta.appendChild(el('span', null, messages === 1 ? '1 message' : messages + ' messages'));
-    btn.appendChild(meta);
+    const label = firstLine(str(item.title)) || firstLine(str(item.preview));
+    const name_ = el('span', 'session-name');
+    if (stamp) { name_.appendChild(el('span', 'session-id', stamp)); }
+    const titleNode = el('span', 'session-title', clip(label || id, 200));
+    // The id the row stands for, read back by the running mark: the tree is
+    // re-rendered from the server's list, and the mark has to be able to find
+    // the row again without re-fetching anything.
+    titleNode.dataset.sessionId = id;
+    name_.appendChild(titleNode);
+    if (running) {
+      // A dot, not a spinner: the turn is happening in another conversation, and
+      // the mark is what leads the user back to it rather than a decoration.
+      const mark = el('span', 'session-running');
+      mark.title = 'Running a turn — open it to watch, or stop it with the ×';
+      mark.setAttribute('aria-label', 'running');
+      name_.appendChild(mark);
+    }
+    btn.appendChild(name_);
     btn.addEventListener('click', function () { openWorkspaceSession(name, id, btn); });
 
+    // The button is what gets disabled while the resume is in flight, so the
+    // click that lands on the row's empty strip reports the same control.
+    rowOpensOn(li, function () { openWorkspaceSession(name, id, btn); });
+
     const actions = el('span', 'session-actions');
+    if (running) {
+      // Stopping the turn is the one action worth having on a row the user is
+      // not looking at: without it a background turn could only be stopped by
+      // opening it first.
+      const stop = el('button', 'session-stop');
+      stop.type = 'button';
+      stop.textContent = '■';
+      stop.title = 'Stop the turn running in ' + id;
+      stop.dataset.focusKey = 'stop:' + name + ':' + id;
+      stop.addEventListener('click', function (event) {
+        event.stopPropagation();
+        stopSession(id, name);
+      });
+      actions.appendChild(stop);
+    }
     const remove = deleteControl(actions, 'Delete', function (control) {
       deleteTreeSession(name, id, index, control, btn);
     });
@@ -1374,6 +2525,26 @@
     li.appendChild(btn);
     li.appendChild(actions);
     return li;
+  }
+
+  /* The whole row is the target: a click anywhere on the li that the row's own
+   * controls did not already answer opens the session. That is what turns the
+   * strip between the title and Delete — visually part of the row, previously
+   * inert — into a hit. The delete controls are buttons, so a click on them
+   * arrives with a target that is not the li itself and is left alone; a
+   * modified click (a new tab, a text selection) is not a plain open either.
+   */
+  function rowOpensOn(host, open) {
+    host.addEventListener('click', function (event) {
+      if (event.target !== host) { return; }
+      if (event.defaultPrevented) { return; }
+      if (event.button !== 0) { return; }
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) { return; }
+      const selection = typeof window !== 'undefined' && window.getSelection
+        ? window.getSelection() : null;
+      if (selection && str(selection.toString()) !== '') { return; }
+      open(event);
+    });
   }
 
   /* The sessions of one node, or the reason there are none to show yet. The
@@ -1392,11 +2563,33 @@
         'No saved sessions — a session gets a file once it has messages.'));
     } else {
       const activeId = activeSessionId();
-      cached.items.forEach(function (item, index) {
-        list.appendChild(sessionRow(name, item, index, activeId));
+      const items = cached.items;
+      // Only rows that would read the same get a stamp; a list where nothing
+      // collides is titles all the way down, which is the point of the change.
+      const stamps = repeatedStamps(items);
+      items.forEach(function (item, index) {
+        list.appendChild(sessionRow(name, item, index, activeId, stamps.get(str(item.id))));
       });
     }
     return list;
+  }
+
+  /* Session id → stamp, for the ids whose title another row in the same list
+   * already shows. Keyed by id, so duplicate titles are answered in one pass. */
+  function repeatedStamps(items) {
+    const seen = new Map();
+    const stamps = new Map();
+    items.forEach(function (item) {
+      const id = str(item.id);
+      const key = firstLine(str(item.title)) || firstLine(str(item.preview)) || id;
+      if (seen.has(key)) {
+        stamps.set(id, idStamp(id));
+        stamps.set(seen.get(key), idStamp(seen.get(key)));
+      } else {
+        seen.set(key, id);
+      }
+    });
+    return stamps;
   }
 
   /* A workspace is a folder: its one control selects the node and folds its
@@ -1468,6 +2661,12 @@
   function renderTree(key) {
     const keep = key === undefined ? focusKey() : str(key);
     tree.deletes = [deleteAllControl];
+    // The tree is rebuilt from the server's answer, which takes the scroll
+    // position with it — and the rebuild now also happens on its own, when a
+    // turn ends. Reading one workspace's history while another's is long must
+    // not snap the sidebar back to the top, so the position is carried across
+    // the rebuild the same way focus is.
+    const scrolled = treeScroll();
     dom.wsTree.textContent = '';
     if (!tree.payload) {
       dom.wsTree.appendChild(el('li', 'ws-note ' + (tree.error ? 'err' : 'muted'),
@@ -1480,9 +2679,23 @@
       return;
     }
     items.forEach(function (item, index) { dom.wsTree.appendChild(nodeElement(item, index)); });
+    treeScroll(scrolled);
     // The control the keyboard was on may be gone (a deleted row, a forgotten
     // workspace); the selected node is where it lands instead.
     if (keep && !focusByKey(keep)) { focusByKey('ws:' + tree.selected); }
+  }
+
+  /* The sidebar body scrolls, not the tree inside it: the notes and the action
+   * row are part of the same column. Reading the position from the container
+   * that owns it is what makes it survive a rebuild. */
+  function treeScroll(to) {
+    const body = dom.wsTree.parentNode;
+    if (!body) { return 0; }
+    if (to === undefined) { return body.scrollTop || 0; }
+    // Only restore a position there is room for: a shorter list must not be
+    // left scrolled past its own end, which shows a blank pane.
+    body.scrollTop = Math.min(to, Math.max(0, body.scrollHeight - body.clientHeight));
+    return body.scrollTop;
   }
 
   /* The server owns the list, so every render starts from its answer. `keep`
@@ -1556,6 +2769,35 @@
   function invalidateSessions(name) {
     if (name === undefined || name === null || name === '') { tree.sessions.clear(); }
     else { tree.sessions.delete(str(name)); }
+  }
+
+  /* A turn just ended, so the session it ran in has moved: the server orders the
+   * list by each file's modification time, and the turn wrote to that file. The
+   * page is still holding the list it fetched before the turn, which is why a
+   * session used again did not rise, and a session whose first message was this
+   * turn was not on the list at all. Re-asking is what puts the conversation you
+   * just had at the top.
+   *
+   * Only the active workspace is re-read — nothing was appended in another one,
+   * so its order cannot have changed — and a failure leaves the last order on
+   * screen: a background refresh must never replace rows with an error, because
+   * the conversation next to it is already correct.
+   */
+  async function reorderSessionsAfterTurn() {
+    const active = workspaceName();
+    if (active === '') { return; }
+    try {
+      if (tree.expanded.has(active)) {
+        const res = await request('/api/sessions?workspace=' + encodeURIComponent(active));
+        tree.sessions.set(active, { status: 'ready', items: sessionsIn(res), error: '' });
+        renderTree();
+      } else {
+        invalidateSessions(active);   // nothing on screen to reorder, but the cache is stale
+      }
+      await loadWorkspaces({ keep: true });
+    } catch (err) {
+      // The last order stays; the next action that re-reads the list will fix it.
+    }
   }
 
   function toggleNode(name) {
@@ -1809,25 +3051,23 @@
   // ------------------------------------------- sidebar: adding a workspace
 
   function clearWorkspaceErrors() {
-    [dom.wsNameError, dom.wsPathError].forEach(function (node) {
-      node.textContent = '';
-      node.hidden = true;
-    });
+    dom.wsPathError.textContent = '';
+    dom.wsPathError.hidden = true;
     dom.wsBrowseHint.textContent = '';
     dom.wsBrowseHint.hidden = true;
   }
 
-  /* One 400 message per refusal, and the field it belongs to is decided here:
-   * a bad or duplicate name lands under Name (the registry is keyed by name),
-   * an unusable directory under Path, anything else above the tree. */
+  /* One 400 message per refusal, decided here: with the form open, an unusable
+   * directory belongs under the path field; with the form closed — a pick the
+   * server refused — there is no field on screen, so the message goes above the
+   * tree, where the note about the add would have been. */
   function showWorkspaceError(message) {
     const text = str(message) || 'Workspace request failed.';
-    if (/path|director|folder|\bdir\b|absolute|usable|permission|denied|creat/i.test(text)) {
+    const underField = !dom.workspaceAddForm.hidden
+      && /path|director|folder|\bdir\b|absolute|usable|permission|denied|creat|exist/i.test(text);
+    if (underField) {
       fieldError(dom.wsPathError, text);
       dom.wsNewPath.focus();
-    } else if (/name|duplicate|already|exist|taken|invalid|reserved|blank/i.test(text)) {
-      fieldError(dom.wsNameError, text);
-      dom.wsNewName.focus();
     } else {
       sidebarError(text);
     }
@@ -1835,69 +3075,99 @@
 
   function setAddFormOpen(open) {
     dom.workspaceAddForm.hidden = !open;
-    dom.workspaceAddToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    dom.workspaceAdd.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (!open) { dom.wsNewPath.value = ''; }
   }
 
   /* The chooser runs on the machine that serves the page, so this request *is*
    * the desktop dialog: it blocks until the user answers, or the server gives
-   * up after two minutes and reports a cancel. Either way the field is the
-   * fallback — a 400 (no desktop, no chooser) is shown next to it and stays
-   * typed-in-able. */
-  async function browseWorkspacePath() {
+   * up after two minutes and reports a cancel. `picked` is called with the path
+   * only when a folder really came back, so cancelling is not an error and not
+   * an add. A 400 (no desktop, no chooser) is shown next to the field, which
+   * keeps working as the fallback. */
+  async function pickWorkspaceFolder(picked) {
     clearWorkspaceErrors();
+    dom.workspacePick.disabled = true;
     dom.wsBrowse.disabled = true;
-    dom.wsBrowse.textContent = 'Waiting…';
-    dom.wsBrowseHint.textContent = 'A folder chooser was opened on the desktop — choose a folder in that window.';
+    const label = dom.workspacePick.textContent;
+    dom.workspacePick.textContent = 'Waiting…';
+    dom.wsBrowseHint.textContent =
+      'A folder chooser was opened on the desktop — choose a folder in that window.';
     dom.wsBrowseHint.hidden = false;
     try {
       const res = await request('/api/workspaces/browse', { method: 'POST' });
       if (res && typeof res === 'object' && res.path && !res.cancelled) {
-        dom.wsNewPath.value = str(res.path);
         dom.wsBrowseHint.textContent = '';
         dom.wsBrowseHint.hidden = true;
-        dom.wsNewPath.focus();
+        picked(str(res.path));
       } else {
-        dom.wsBrowseHint.textContent = 'No folder chosen — the chooser was dismissed. Type the path instead.';
+        dom.wsBrowseHint.textContent = 'No folder chosen — the chooser was dismissed.';
       }
     } catch (err) {
       dom.wsBrowseHint.hidden = true;
       fieldError(dom.wsPathError, str(err && err.message) || 'Could not open a folder chooser.');
-      dom.wsNewPath.focus();
     }
+    dom.workspacePick.disabled = false;
     dom.wsBrowse.disabled = false;
-    dom.wsBrowse.textContent = 'Browse…';
+    dom.workspacePick.textContent = label;
   }
 
-  async function addWorkspace() {
+  /* The name is the folder's, so there is nothing to ask for: the request carries
+   * the directory and the server derives the name (and a free suffix when that
+   * name is taken). */
+  async function addWorkspace(path) {
     clearWorkspaceErrors();
-    const name = dom.wsNewName.value.trim();
-    const path = dom.wsNewPath.value.trim();
-    if (!name) {
-      fieldError(dom.wsNameError, 'Enter a workspace name.');
-      dom.wsNewName.focus();
-      return;
-    }
-    if (!path) {
-      fieldError(dom.wsPathError, 'Enter a directory.');
+    const directory = str(path).trim();
+    if (!directory) {
+      fieldError(dom.wsPathError, 'Enter a directory, or choose a folder.');
       dom.wsNewPath.focus();
       return;
     }
     dom.workspaceSave.disabled = true;
     try {
-      const res = await postJSON('/api/workspaces', { name: name, path: path });
-      dom.wsNewName.value = '';
-      dom.wsNewPath.value = '';
+      const res = await postJSON('/api/workspaces', { path: directory });
+      const added = addedWorkspace(res, directory);
       setAddFormOpen(false);
       // Adding is not switching: the new node is opened so its (empty) list is
       // visible, and the page stays in the workspace it was working in.
-      tree.expanded.add(name);
-      saveExpanded();
-      sidebarNote('Workspace ' + name + ' added — press Use to work there.');
-      acceptWorkspaces(res, { selected: name, focusKey: 'ws:' + name });
+      if (added) {
+        tree.expanded.add(added);
+        saveExpanded();
+        sidebarNote('Workspace ' + added + ' added — press Use to work there.');
+      } else {
+        sidebarNote('Workspace added — press Use to work there.');
+      }
+      acceptWorkspaces(res, added ? { selected: added, focusKey: 'ws:' + added } : undefined);
     } catch (err) {
       showWorkspaceError(err.message);
     }
     dom.workspaceSave.disabled = false;
+  }
+
+  /* Which entry the server just created: the one holding the directory that was
+   * asked for. The name is the server's to choose, so it is read back rather
+   * than guessed from the path. */
+  function addedWorkspace(payload, directory) {
+    const wanted = str(directory).replace(/\/+$/, '');
+    let found = '';
+    workspaceItemsOf(payload).forEach(function (item) {
+      if (!found && str(item.path).replace(/\/+$/, '') === wanted) { found = str(item.name); }
+    });
+    return found;
+  }
+
+  /* The gesture a click on "Add workspace" is: the desktop's own chooser, and the
+   * workspace appears as soon as a folder is chosen. A machine whose chooser
+   * cannot run reports that under the path field, so the form is opened then —
+   * typing a path stays one click away instead of hidden behind a refusal. */
+  async function addWorkspaceByPicking() {
+    await pickWorkspaceFolder(function (path) { addWorkspace(path); });
+    if (!dom.wsPathError.hidden) { openAddForm(); }
+  }
+
+  function openAddForm() {
+    setAddFormOpen(true);
+    dom.wsNewPath.focus();
   }
 
   /* Forgetting is not deleting: the registry entry goes, the session files
@@ -2564,13 +3834,40 @@
    * treats a base URL that differs from the provider's default as an explicit
    * override, so a previous provider's URL left in the field would silently win
    * over the definition just selected. */
+  /* Whether the server says a key is saved for this provider. Names are matched the way the server
+   * matches them, and the list carries names only — a key never reaches the page. */
+  function providerHasSavedKey(name) {
+    const wanted = str(name).trim().toLowerCase();
+    return wanted !== '' && state.rememberedProviders.some(function (entry) {
+      return str(entry).trim().toLowerCase() === wanted;
+    });
+  }
+
   function settingsProviderChanged(name) {
     renderProviderHint();
     renderModelHint();
     const info = providerInfo(name);
     if (!info) { return; }
     if (str(info.baseUrl)) { dom.cfgBaseUrl.value = str(info.baseUrl); }
-    dom.cfgApiKeyEnv.value = str(info.kind) === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY';
+    // The variable comes from the definition when it names one: a relay that reads its key from
+    // MYRELAY_KEY must not be told to read OPENAI_API_KEY, which is another provider's key.
+    dom.cfgApiKeyEnv.value = str(info.apiKeyEnv)
+      || (str(info.kind) === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY');
+    // Keys are saved per provider, so whether this one has one is a question the server answers
+    // (by name, never the key): "saved" here and "sent" by the server are the same fact, and a form
+    // that says "saved" for a key that will not be sent is how the wrong one gets written down.
+    if (str(name).toLowerCase() !== str(state.keyProvider).toLowerCase()) {
+      dom.cfgApiKey.value = '';
+      const remembered = providerHasSavedKey(name);
+      dom.cfgApiKey.placeholder = remembered ? KEY_PLACEHOLDER.config : KEY_PLACEHOLDER.none;
+      dom.cfgApiKeyHint.textContent = remembered
+        ? 'A key is saved for ' + str(name) + '. Leave this empty to keep it.'
+        : 'No key saved for this provider — paste one to switch to it.';
+      dom.cfgApiKeyHint.hidden = false;
+      // Clearing is offered only where there is something to clear, and it clears this provider's.
+      dom.cfgClearKey.checked = false;
+      dom.cfgClearKeyWrap.hidden = !remembered;
+    }
     const models = Array.isArray(info.models) ? info.models.map(str) : [];
     if (models.length && models.indexOf(settingsPicker.selection.model) < 0) {
       // The provider's first model is the sane default; nothing is sent until Save.
@@ -2849,16 +4146,27 @@
     renderProviderHint();
     renderModelHint();
 
-    dom.cfgBaseUrl.value = str(cfg.baseUrl);
-    dom.cfgApiKeyEnv.value = str(cfg.apiKeyEnv) || 'OPENAI_API_KEY';
-    dom.cfgMaxSteps.value = cfg.maxSteps === null || cfg.maxSteps === undefined || !isFinite(Number(cfg.maxSteps))
-      ? '' : String(cfg.maxSteps);
+    // An endpoint that was entered for another provider is not this one's: a custom provider uses
+    // its definition's, so showing the stored value would offer to save the wrong address under
+    // this provider's name. The catalogue already knows what this provider's own endpoint is.
+    const info = providerInfo(current);
+    const storedIsOurs = cfg.usesStoredSettings !== false;
+    dom.cfgBaseUrl.value = storedIsOurs ? str(cfg.baseUrl) : str(info && info.baseUrl);
+    dom.cfgApiKeyEnv.value =
+      (storedIsOurs ? str(cfg.apiKeyEnv) : str(info && info.apiKeyEnv)) || 'OPENAI_API_KEY';
     dom.cfgTemperature.value =
       cfg.temperature === null || cfg.temperature === undefined ? '' : str(cfg.temperature);
+    fillLanguageOptions(cfg);
 
     const source = str(cfg.apiKeySource);
     dom.cfgApiKey.value = '';
     dom.cfgApiKey.disabled = false;
+    // Which provider this key field is about, and which providers have a key saved at all — per
+    // provider, so switching to one that was used before shows as saved rather than empty.
+    state.keyProvider = current;
+    state.rememberedProviders = Array.isArray(cfg.rememberedProviders)
+      ? cfg.rememberedProviders.map(str).filter(Boolean)
+      : [];
     dom.cfgApiKey.placeholder = KEY_PLACEHOLDER[source] || KEY_PLACEHOLDER.none;
     if (source === 'env') {
       dom.cfgApiKeyHint.textContent =
@@ -2888,6 +4196,35 @@
     setProviderFormOpen(false);
   }
 
+  /* The languages the server offers, with "auto" first: the list belongs to the
+   * server because the sentence it appends to the prompt is the server's, and a
+   * page that invented its own list would offer choices nothing acts on. Rebuilt
+   * only when the list changed, so opening Settings never resets a selection the
+   * user is in the middle of making. */
+  function fillLanguageOptions(cfg) {
+    const offered = Array.isArray(cfg.languages) ? cfg.languages : [];
+    const wanted = str(cfg.language) || 'auto';
+    const signature = wanted + '|' + offered.map(function (item) { return str(item.value); }).join(',');
+    if (dom.cfgLanguage.dataset.signature !== signature) {
+      dom.cfgLanguage.textContent = '';
+      const auto = document.createElement('option');
+      auto.value = 'auto';
+      auto.textContent = 'Auto — whatever the model picks';
+      dom.cfgLanguage.appendChild(auto);
+      offered.forEach(function (item) {
+        const value = str(item.value);
+        if (!value || value === 'auto') { return; }
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = str(item.label) || value;
+        dom.cfgLanguage.appendChild(option);
+      });
+      dom.cfgLanguage.dataset.signature = signature;
+    }
+    dom.cfgLanguage.value = wanted;
+    if (dom.cfgLanguage.value !== wanted) { dom.cfgLanguage.value = 'auto'; }
+  }
+
   /* Only the fields this form manages are sent; apiKey is omitted when the
    * field is empty so the stored key survives an unrelated change. */
   function settingsPayload() {
@@ -2897,7 +4234,8 @@
       model: chosen.model,
       baseUrl: dom.cfgBaseUrl.value.trim(),
       apiKeyEnv: dom.cfgApiKeyEnv.value.trim() || 'OPENAI_API_KEY',
-      reasoning: chosen.reasoning || 'default'
+      reasoning: chosen.reasoning || 'default',
+      language: dom.cfgLanguage.value || 'auto'
     };
     const clearing = dom.cfgClearKey.checked;
     if (clearing) {
@@ -2905,8 +4243,6 @@
     } else if (dom.cfgApiKey.value) {
       payload.apiKey = dom.cfgApiKey.value;
     }
-    const steps = numField(dom.cfgMaxSteps);
-    if (steps !== undefined) { payload.maxSteps = Math.max(1, Math.round(steps)); }
     const temperature = numField(dom.cfgTemperature);
     if (temperature !== undefined) { payload.temperature = temperature; }
     return payload;
@@ -3045,24 +4381,42 @@
   // ------------------------------------------------------------ composer
 
   async function sendMessage() {
-    if (state.busy) { return; }
+    if (state.busy) {
+      // The page's idea of "busy" can outlive the turn it came from: a stream
+      // that died, a throttled timer, a server that restarted. Swallowing the
+      // message silently would be the worst answer, so the server is asked
+      // before anything is dropped.
+      if (!streamLooksStale()) { return; }
+      const status = await request('/api/status').catch(function () { return null; });
+      if (!status || status.busy) {
+        if (status) { applyStatus(status); }
+        return;
+      }
+      applyStatus(status);
+    }
     const text = dom.input.value.trim();
     if (!text) { return; }
     dom.input.value = '';
     state.stick = true;
     scrollToBottom();
+    // Set before the request, not after it. A fast turn can finish — and have its
+    // `done` rendered from the event stream — before this response arrives, and
+    // setting the flag afterwards leaves the composer stuck on a turn that is
+    // already over. The stream is the authority and corrects this either way.
+    setBusy(true);
     try {
       await postJSON('/api/message', { text: text });
-      setBusy(true);
     } catch (err) {
       if (err.status === 409) {
         // 409 means "a turn is already running" or, on a fresh install, "no
-        // model configured". Only the first one makes the page busy — the
-        // second must leave the composer usable so the user can retry.
+        // model configured". Whether a turn is running is the server's fact,
+        // not this page's guess: a refusal that collided with the end of the
+        // previous turn must not leave the composer disabled.
         appendError(err.message);
-        setBusy(state.configured === false ? false : true);
+        refreshStatus();
       } else {
         appendError('send failed: ' + err.message);
+        setBusy(false);
       }
       dom.input.value = text;
     }
@@ -3072,6 +4426,18 @@
   dom.composer.addEventListener('submit', function (event) {
     event.preventDefault();
     sendMessage();
+  });
+
+  /* A background tab has its timers throttled, so a stream that died while the
+   * page was hidden may never have been retried. Coming back to the front is the
+   * one moment that can be noticed cheaply, and it is also the moment the user
+   * is about to type again. */
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') { resync(); }
+  });
+
+  window.addEventListener('focus', function () {
+    if (streamLooksStale()) { resync(); }
   });
 
   dom.input.addEventListener('keydown', function (event) {
@@ -3106,16 +4472,34 @@
   deleteAllControl.idle.dataset.focusKey = 'delall';
   deleteAllControl.idle.title = 'Delete every session in the selected workspace';
 
-  dom.workspaceAddToggle.addEventListener('click', function () {
-    const open = dom.workspaceAddForm.hidden;
-    setAddFormOpen(open);
-    if (open) { dom.wsNewName.focus(); }
+  /* Add workspace is the chooser, not a form: the click opens the desktop's own
+   * dialog, and the folder's name is the workspace's. The trigger opens the form
+   * instead on a machine where the chooser cannot run, which is why it is a
+   * toggle as well — both gestures stay one click from the sidebar. */
+  dom.workspaceAdd.addEventListener('click', function () {
+    if (!dom.workspaceAddForm.hidden) {
+      setAddFormOpen(false);
+      return;
+    }
+    addWorkspaceByPicking();
   });
   dom.workspaceAddForm.addEventListener('submit', function (event) {
     event.preventDefault();
-    addWorkspace();
+    addWorkspace(dom.wsNewPath.value);
   });
-  dom.wsBrowse.addEventListener('click', browseWorkspacePath);
+  /* Browse is the same chooser on its own: it fills the field rather than
+   * adding, because a typed path is edited before it is sent. */
+  dom.wsBrowse.addEventListener('click', function () {
+    pickWorkspaceFolder(function (path) {
+      dom.wsNewPath.value = str(path);
+      dom.wsNewPath.focus();
+    });
+  });
+  dom.workspacePick.addEventListener('click', function () {
+    pickWorkspaceFolder(function (path) {
+      addWorkspace(path);
+    });
+  });
 
   dom.btnSettings.addEventListener('click', function () { openSettings(); });
   dom.settingsClose.addEventListener('click', closeSettings);
@@ -3145,8 +4529,7 @@
   /* Escape closes what is open, innermost first: an open picker, then the
    * settings dialog, then the Add-workspace form, then an armed delete. The
    * sidebar itself is a region, not a popup — it is closed with its own
-   * toggle, on purpose. */
-  function cancelArmedDeletes() {
+   * toggle, on purpose. */  function cancelArmedDeletes() {
     let armed = false;
     tree.deletes.forEach(function (control) {
       if (control.armed && control.idle.isConnected) {
@@ -3165,7 +4548,7 @@
     else if (!dom.settingsOverlay.hidden) { closeSettings(); }
     else if (!dom.workspaceAddForm.hidden) {
       setAddFormOpen(false);
-      dom.workspaceAddToggle.focus();
+      dom.workspaceAdd.focus();
     } else { cancelArmedDeletes(); }
   });
 
@@ -3220,6 +4603,7 @@
 
   async function init() {
     initTheme();
+    initWallpaper();
     initSidebar();
     initPickers();
     paintAuto();

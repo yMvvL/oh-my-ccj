@@ -36,6 +36,11 @@ public final class GrepTool implements Tool {
   }
 
   @Override
+  public boolean readOnly() {
+    return true;
+  }
+
+  @Override
   public String description() {
     return "Search file contents with a Java regular expression. Returns path:line:text matches. "
         + "Skips binary files, files over 2 MiB, target/, .git/, node_modules/ and .idea/.";
@@ -108,9 +113,19 @@ public final class GrepTool implements Tool {
     }
 
     List<String> hits = new ArrayList<>();
+    List<String> unreadable = new ArrayList<>();
     long[] matched = new long[1];
     if (Files.isRegularFile(base)) {
-      search(base, ToolSupport.display(ctx, base), regex, filter, null, maxResults, hits, matched);
+      search(
+          base,
+          ToolSupport.display(ctx, base),
+          regex,
+          filter,
+          null,
+          maxResults,
+          hits,
+          matched,
+          unreadable);
     } else if (Files.isDirectory(base)) {
       PathMatcher fileFilter = filter;
       ToolSupport.walkFiles(
@@ -124,14 +139,19 @@ public final class GrepTool implements Tool {
                   ToolSupport.slashed(relative),
                   maxResults,
                   hits,
-                  matched));
+                  matched,
+                  unreadable));
     } else {
       return ToolResult.error("path is neither a file nor a directory: " + ToolSupport.display(ctx, base));
     }
 
+    String skipped =
+        unreadable.isEmpty()
+            ? ""
+            : " (" + unreadable.size() + " file(s) could not be read)";
     if (matched[0] == 0) {
       return ToolResult.ok(
-          "no matches for /" + pattern + "/ under " + ToolSupport.display(ctx, base));
+          "no matches for /" + pattern + "/ under " + ToolSupport.display(ctx, base) + skipped);
     }
 
     StringBuilder out = new StringBuilder();
@@ -150,6 +170,15 @@ public final class GrepTool implements Tool {
     if (omitted > 0) {
       out.append("... ").append(omitted).append(" more matches omitted ...\n");
     }
+    if (!unreadable.isEmpty()) {
+      // Naming a few of them is enough to act on; all of them would bury the matches.
+      out.append("... ")
+          .append(unreadable.size())
+          .append(" file(s) could not be read: ")
+          .append(String.join(", ", unreadable.subList(0, Math.min(3, unreadable.size()))))
+          .append(unreadable.size() > 3 ? ", …" : "")
+          .append('\n');
+    }
     return ToolResult.ok(out.toString());
   }
 
@@ -161,19 +190,31 @@ public final class GrepTool implements Tool {
       String relative,
       int maxResults,
       List<String> hits,
-      long[] matched)
-      throws IOException {
+      long[] matched,
+      List<String> unreadable) {
     if (filter != null && !matchesFilter(filter, relative, file)) {
-      return;
-    }
-    if (Files.size(file) > MAX_FILE_BYTES || ToolSupport.isBinaryFile(file)) {
       return;
     }
     List<String> lines;
     try {
+      if (Files.size(file) > MAX_FILE_BYTES || ToolSupport.isBinaryFile(file)) {
+        return;
+      }
       lines = Files.readAllLines(file, StandardCharsets.UTF_8);
     } catch (CharacterCodingException e) {
       return;
+    } catch (IOException e) {
+      // One unreadable file — a permission bit, a file that vanished mid-walk, a block device —
+      // must not throw away every match found so far. It is named in the result instead.
+      unreadable.add(label);
+      return;
+    }
+    for (String line : lines) {
+      if (line.indexOf('\0') >= 0) {
+        // The 8 KiB head probe cannot see a NUL that lives further in; a line that carries one is
+        // not text, and quoting it would put raw bytes in the conversation.
+        return;
+      }
     }
     for (int i = 0; i < lines.size(); i++) {
       String line = lines.get(i);

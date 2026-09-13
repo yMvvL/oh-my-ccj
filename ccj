@@ -1,22 +1,69 @@
 #!/usr/bin/env bash
 # Launcher for the packaged CLI. Resolves symlinks (so it works from anywhere on PATH) and rebuilds
 # the jar when it is missing or older than the sources.
+#
+# It is also what makes self-modification survivable. The agent can edit this project's sources and
+# run `mvn package`, but writing over the jar the running JVM is executing from kills that process
+# partway through the build. So a build goes to a scratch jar and is moved into place with `mv`:
+# same filesystem, so it is an atomic rename, and the running process keeps the inode it already
+# opened. The process that did the rebuild then exits with RESTART_EXIT and this script starts it
+# again on the new code.
 set -euo pipefail
 
 self="$(readlink -f "${BASH_SOURCE[0]}")"
 here="$(cd "$(dirname "$self")" && pwd)"
 jar="$here/target/ccj.jar"
 
+# The status a rebuilt process exits with, meaning "start me again". It has to survive the
+# intermediate `mvn` process, so it cannot be one of the codes the CLI itself returns: 0 success,
+# 1 runtime failure, 2 usage error.
+readonly RESTART_EXIT=75
+
 build=0
 if [[ ! -f "$jar" ]]; then
   build=1
-elif [[ -d "$here/src/main" ]] && [[ -n "$(find "$here/src/main" -name '*.java' -newer "$jar" -print -quit)" ]]; then
+elif [[ -d "$here/src/main" ]] && [[ -n "$(find "$here/src/main" "$here/pom.xml" -type f -newer "$jar" -print -quit 2>/dev/null || true)" ]]; then
+  # Everything the build consumes, not just the sources: the page lives in src/main/resources, and
+  # a build reads the pom. A rebuild keyed on `*.java` alone would serve a stale page and a stale
+  # classpath for exactly the edits this project makes most.
   build=1
 fi
 
 if (( build )); then
   echo "oh-my-ccj: building target/ccj.jar" >&2
-  (cd "$here" && mvn -q -DskipTests package) >&2
+  # Built to a scratch name and renamed in, for the same reason the restart tool does it that way:
+  # this build must not truncate the jar another ccj process may be running from.
+  (cd "$here" && mvn -q -DskipTests -Djar.name=ccj-next package) >&2
+  mv -f "$here/target/ccj-next.jar" "$jar"
 fi
 
-exec java -jar "$jar" "$@"
+# A restart repeat is a loop, and repeating it can never do anything: a run that ends in a restart
+# has already installed the jar it wanted, so the fresh process would be running exactly the code the
+# exit came from. That makes a one-shot run a genuine dead end — re-issuing `-p` would redo the work
+# — and means the only honest answer is to hand the new jar an interactive front end, where the
+# session and the intent are still present.
+restarts=0
+while :; do
+  set +e
+  java -jar "$jar" "$@"
+  status=$?
+  set -e
+  if (( status != RESTART_EXIT )); then
+    exit "$status"
+  fi
+  restarts=$(( restarts + 1 ))
+  echo "oh-my-ccj: restarting on the rebuilt jar (#$restarts)" >&2
+  if (( restarts >= 2 )); then
+    echo "oh-my-ccj: a run ending in a restart is already running the code it installed;" >&2
+    echo "          stopping here rather than restarting the same run again." >&2
+    exit "$RESTART_EXIT"
+  fi
+  one_shot=0
+  for arg in "$@"; do
+    case "$arg" in -p|--print|-p=*|--print=*) one_shot=1 ;; esac
+  done
+  if (( one_shot )); then
+    echo "oh-my-ccj: the new jar is installed; this one-shot prompt is not run again." >&2
+    exit 0
+  fi
+done

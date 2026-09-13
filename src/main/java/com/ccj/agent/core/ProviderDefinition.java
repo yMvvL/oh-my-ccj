@@ -23,6 +23,13 @@ public record ProviderDefinition(
   private static final List<String> ENDPOINT_SUFFIXES =
       List.of("/chat/completions", "/v1/messages", "/messages");
 
+  /**
+   * A provider name is an identifier and nothing else — it is never a directory — so it keeps the
+   * strict character set, unlike a workspace name, which is a folder's own.
+   */
+  private static final java.util.regex.Pattern NAME =
+      java.util.regex.Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,39}");
+
   public ProviderDefinition {
     name = name == null ? "" : name.strip();
     kind = kind == null || kind.isBlank() ? OPENAI : kind.strip().toLowerCase();
@@ -40,19 +47,23 @@ public record ProviderDefinition(
    * learn the rule — so the prefix is what is kept.
    */
   public static String normaliseBaseUrl(String baseUrl) {
-    String value = baseUrl;
+    String value = baseUrl == null ? "" : baseUrl.strip();
     boolean changed = true;
     while (changed) {
       changed = false;
+      // Trailing slashes go first: ".../chat/completions/" does not end with "/chat/completions",
+      // so stripping the suffix first would leave the endpoint path behind and the provider would
+      // append its own to it, twice over.
+      while (value.endsWith("/")) {
+        value = value.substring(0, value.length() - 1);
+        changed = true;
+      }
       for (String suffix : ENDPOINT_SUFFIXES) {
         if (value.toLowerCase().endsWith(suffix)) {
           value = value.substring(0, value.length() - suffix.length());
           changed = true;
         }
       }
-    }
-    while (value.endsWith("/")) {
-      value = value.substring(0, value.length() - 1);
     }
     return value;
   }
@@ -66,7 +77,7 @@ public record ProviderDefinition(
     if (name.isBlank()) {
       throw new IllegalArgumentException("a provider definition needs a name");
     }
-    if (!Workspace.validName(name)) {
+    if (!NAME.matcher(name.strip()).matches()) {
       throw new IllegalArgumentException(
           "a provider name must be 1-40 characters of letters, digits, dot, dash or underscore");
     }

@@ -4,8 +4,8 @@ import com.ccj.agent.core.Message;
 import com.ccj.agent.core.Session;
 import com.ccj.agent.core.UsageTotals;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
@@ -40,7 +40,7 @@ public final class FileSession implements Session {
   private final String id;
   private final Path file;
   private final List<Message> history;
-  private Writer writer;
+  private OutputStream writer;
   private UsageTotals totals = UsageTotals.empty();
 
   public FileSession(String id, Path file, List<Message> history) {
@@ -157,14 +157,7 @@ public final class FileSession implements Session {
   @Override
   public void totals(UsageTotals updated) {
     this.totals = updated == null ? UsageTotals.empty() : updated;
-    try {
-      Writer out = writer();
-      out.write(MessageCodec.totalsToJson(this.totals));
-      out.write('\n');
-      out.flush();
-    } catch (IOException e) {
-      throw new UncheckedIOException("cannot append usage to session file " + file, e);
-    }
+    writeLine(MessageCodec.totalsToJson(this.totals));
   }
 
   @Override
@@ -184,14 +177,7 @@ public final class FileSession implements Session {
   @Override
   public void append(Message message) {
     history.add(message);
-    try {
-      Writer out = writer();
-      out.write(MessageCodec.toJson(message));
-      out.write('\n');
-      out.flush();
-    } catch (IOException e) {
-      throw new UncheckedIOException("cannot append to session file " + file, e);
-    }
+    writeLine(MessageCodec.toJson(message));
   }
 
   /** Empties the conversation on disk and in memory; the session id survives. */
@@ -227,13 +213,32 @@ public final class FileSession implements Session {
     }
   }
 
-  private Writer writer() throws IOException {
+  /**
+   * Appends one line with a single {@code write} call.
+   *
+   * <p>The buffered alternative splits a line longer than its buffer across several system calls,
+   * and a listing that happens to read the file in between (<code>GET /api/sessions</code> while a
+   * turn is running) sees half a JSON object and fails on it. One write per line keeps a reader
+   * from ever observing a line that is still being written; the flush keeps the durability promise
+   * that a killed process loses nothing it was already handed.
+   */
+  private void writeLine(String line) {
+    byte[] bytes = (line + "\n").getBytes(StandardCharsets.UTF_8);
+    try {
+      OutputStream out = writer();
+      out.write(bytes);
+      out.flush();
+    } catch (IOException e) {
+      throw new UncheckedIOException("cannot append to session file " + file, e);
+    }
+  }
+
+  private OutputStream writer() throws IOException {
     if (writer == null) {
       Files.createDirectories(file.getParent());
       writer =
-          Files.newBufferedWriter(
+          Files.newOutputStream(
               file,
-              StandardCharsets.UTF_8,
               StandardOpenOption.CREATE,
               StandardOpenOption.WRITE,
               StandardOpenOption.APPEND);

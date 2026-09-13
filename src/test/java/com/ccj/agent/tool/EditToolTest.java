@@ -108,6 +108,27 @@ class EditToolTest {
   }
 
   @Test
+  void aTrailingNewlineChangeIsNotReportedAsNoChange() throws Exception {
+    // The line diff cannot see a trailing newline, and answering "(no change)" for a write that
+    // does rewrite the file is the one thing an approval preview must never say.
+    Files.writeString(dir.resolve("f.txt"), "a\nb");
+    StringBuilder detail = new StringBuilder();
+    Approver capture =
+        (title, text) -> {
+          detail.append(text);
+          return false;
+        };
+
+    new EditTool()
+        .execute(
+            "{\"path\":\"f.txt\",\"old_string\":\"b\",\"new_string\":\"b\\n\"}",
+            new ToolContext(dir, capture, 4096));
+
+    assertTrue(detail.toString().contains("newline"), detail.toString());
+    assertFalse(detail.toString().contains("(no change)"), detail.toString());
+  }
+
+  @Test
   void denialKeepsTheOriginalContent() throws Exception {
     Files.writeString(dir.resolve("f.txt"), "keep me\n");
 

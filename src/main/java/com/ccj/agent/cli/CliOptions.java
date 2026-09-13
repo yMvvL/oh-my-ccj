@@ -1,6 +1,7 @@
 package com.ccj.agent.cli;
 
 import com.ccj.agent.core.Config;
+import java.util.Map;
 
 /**
  * Command line flags, parsed by hand.
@@ -17,9 +18,10 @@ public record CliOptions(
     String baseUrl,
     String apiKey,
     String apiKeyEnv,
-    Integer maxSteps,
     Double temperature,
     Integer maxTokens,
+    Integer maxContextTokens,
+    String reasoning,
     boolean yolo,
     String resume,
     boolean continueSession,
@@ -28,6 +30,7 @@ public record CliOptions(
     String config,
     String home,
     String system,
+    String language,
     String cwd,
     String workspace,
     boolean demo,
@@ -37,6 +40,7 @@ public record CliOptions(
     Integer port,
     String host,
     String webToken,
+    String wallpapers,
     boolean help,
     boolean version) {
 
@@ -59,10 +63,14 @@ public record CliOptions(
         apiKeyEnv,
         temperature,
         maxTokens,
-        maxSteps,
         yolo ? Boolean.TRUE : null,
         null,
-        system, null);
+        system,
+        language,
+        reasoning,
+        maxContextTokens,
+        null,
+        Map.of());
   }
 
   public static CliOptions parse(String[] args) {
@@ -72,9 +80,10 @@ public record CliOptions(
     String baseUrl = null;
     String apiKey = null;
     String apiKeyEnv = null;
-    Integer maxSteps = null;
     Double temperature = null;
     Integer maxTokens = null;
+    Integer maxContextTokens = null;
+    String reasoning = null;
     boolean yolo = false;
     String resume = null;
     boolean continueSession = false;
@@ -83,6 +92,7 @@ public record CliOptions(
     String config = null;
     String home = null;
     String system = null;
+    String language = null;
     String cwd = null;
     String workspace = null;
     boolean demo = false;
@@ -92,6 +102,7 @@ public record CliOptions(
     Integer port = null;
     String host = null;
     String webToken = null;
+    String wallpapers = null;
     boolean open = false;
     boolean help = false;
     boolean version = false;
@@ -161,6 +172,10 @@ public record CliOptions(
           webToken = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
+        case "--wallpapers" -> {
+          wallpapers = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
         case "-p", "--print" -> {
           print = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
@@ -185,12 +200,16 @@ public record CliOptions(
           apiKeyEnv = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
-        case "--max-steps" -> {
-          maxSteps = integer(name, take(args, i, name, inline));
-          i += inline == null ? 2 : 1;
-        }
         case "--max-tokens" -> {
           maxTokens = integer(name, take(args, i, name, inline));
+          i += inline == null ? 2 : 1;
+        }
+        case "--max-context-tokens" -> {
+          maxContextTokens = integer(name, take(args, i, name, inline));
+          i += inline == null ? 2 : 1;
+        }
+        case "--reasoning" -> {
+          reasoning = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
         case "--temperature" -> {
@@ -211,6 +230,10 @@ public record CliOptions(
         }
         case "--system" -> {
           system = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
+        case "--language" -> {
+          language = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
         case "--workspace" -> {
@@ -236,9 +259,10 @@ public record CliOptions(
         baseUrl,
         apiKey,
         apiKeyEnv,
-        maxSteps,
         temperature,
         maxTokens,
+        maxContextTokens,
+        reasoning,
         yolo,
         resume,
         continueSession,
@@ -247,6 +271,7 @@ public record CliOptions(
         config,
         home,
         system,
+        language,
         cwd,
         workspace,
         demo,
@@ -256,6 +281,7 @@ public record CliOptions(
         port,
         host,
         webToken,
+        wallpapers,
         help,
         version);
   }
@@ -283,8 +309,13 @@ public record CliOptions(
               --api-key-env <var>  environment variable holding the API key
               --temperature <n>    sampling temperature
               --max-tokens <n>     response token cap
-              --max-steps <n>      model turns per user input (default 25)
+              --max-context-tokens <n>
+                                   prompt budget: above it, old tool results are elided and older
+                                   exchanges dropped before the request is sent
+              --reasoning <level>  how much the model should think: low, high or max
               --system <text>      system prompt for this run
+              --language <name>    think and answer in this language, whatever the user writes in
+                                   ("auto" leaves it to the model); see the list in Settings
 
         Sessions:
               --resume <id>        reopen a session by id
@@ -296,6 +327,8 @@ public record CliOptions(
               --port <n>           web UI port (default 6767)
               --host <addr>        bind address (default 127.0.0.1; anything else needs --web-token)
               --web-token <token>  require this token from every web request
+              --wallpapers <dir>   pictures the page rotates as its background
+                                   (default: ~/Pictures/ccj-backgrounds, or CCJ_WALLPAPERS)
 
         Runtime:
               --config <file>      config file (default: <home>/config.json)

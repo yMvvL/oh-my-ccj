@@ -135,6 +135,41 @@ final class ToolSupport {
     return bytes;
   }
 
+  /**
+   * The longest prefix of {@code text} that fits in {@code maxBytes} UTF-8 bytes, cut only on a code
+   * point boundary so no half character is ever handed back.
+   */
+  static String truncateUtf8(String text, int maxBytes) {
+    int bytes = 0;
+    int i = 0;
+    while (i < text.length()) {
+      char c = text.charAt(i);
+      int width;
+      int chars;
+      if (c < 0x80) {
+        width = 1;
+        chars = 1;
+      } else if (c < 0x800) {
+        width = 2;
+        chars = 1;
+      } else if (Character.isHighSurrogate(c)
+          && i + 1 < text.length()
+          && Character.isLowSurrogate(text.charAt(i + 1))) {
+        width = 4;
+        chars = 2;
+      } else {
+        width = 3;
+        chars = 1;
+      }
+      if (bytes + width > maxBytes) {
+        break;
+      }
+      bytes += width;
+      i += chars;
+    }
+    return text.substring(0, i);
+  }
+
   /** Lines as {@code wc -l} would disagree with: a trailing newline does not add a line. */
   static int lineCount(String text) {
     if (text.isEmpty()) {

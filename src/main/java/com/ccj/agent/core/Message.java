@@ -24,10 +24,17 @@ public sealed interface Message {
   }
 
   /** Either prose, or tool calls, or both. An assistant turn with no tool calls ends the loop. */
-  record Assistant(String text, List<ToolCall> toolCalls) implements Message {
+  record Assistant(String text, List<ToolCall> toolCalls, List<Thinking> thinking)
+      implements Message {
     public Assistant {
       text = text == null ? "" : text;
       toolCalls = toolCalls == null ? List.of() : List.copyOf(toolCalls);
+      thinking = thinking == null ? List.of() : List.copyOf(thinking);
+    }
+
+    /** A turn that did not think, which is every turn but Anthropic with a reasoning tier. */
+    public Assistant(String text, List<ToolCall> toolCalls) {
+      this(text, toolCalls, List.of());
     }
 
     public static Assistant text(String text) {
@@ -36,6 +43,35 @@ public sealed interface Message {
 
     public boolean hasToolCalls() {
       return !toolCalls.isEmpty();
+    }
+  }
+
+  /**
+   * One thinking block of an assistant turn, kept exactly as the API emitted it.
+   *
+   * <p>Anthropic's Messages API requires these back when the request enables extended thinking: a
+   * {@code thinking} block with the signature that proves the model produced it, or the opaque
+   * payload of a {@code redacted_thinking} block. {@code text}/{@code signature} are empty for a
+   * redacted block and {@code data} is empty for a normal one, so no other message kind has to know
+   * which shape it is carrying.
+   */
+  record Thinking(String text, String signature, String data) {
+    public Thinking {
+      text = text == null ? "" : text;
+      signature = signature == null ? "" : signature;
+      data = data == null ? "" : data;
+    }
+
+    public static Thinking of(String text, String signature) {
+      return new Thinking(text, signature, "");
+    }
+
+    public static Thinking redacted(String data) {
+      return new Thinking("", "", data);
+    }
+
+    public boolean redacted() {
+      return !data.isEmpty();
     }
   }
 

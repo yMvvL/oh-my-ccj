@@ -25,54 +25,39 @@
   root.style.colorScheme = theme;
 })();
 </script>
+<link rel="stylesheet" href="/theme.css">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<script>
+/* The token sheets key dark off `body[data-ds-dark-theme]`; the script above resolved the
+ * theme onto <html> before the first paint, and this repeats the answer on the element they
+ * read. It runs before the page below it is parsed, so nothing paints in the wrong palette. */
+(function () {
+  if (document.documentElement.getAttribute('data-theme') === 'dark') {
+    document.body.setAttribute('data-ds-dark-theme', '');
+  }
+})();
+</script>
 <div id="app">
 
-  <header id="topbar">
-    <div class="brand">
-      <span class="brand-mark">ccj</span>
-      <span id="conn-pill" class="conn-pill" hidden>reconnecting…</span>
-    </div>
-
-    <div class="meta" id="meta">
-      <span class="chip" id="chip-provider" title="provider">provider</span>
-      <span class="chip" id="chip-model" title="model">model</span>
-      <span class="chip chip-session" id="chip-session" title="session">no session</span>
-    </div>
-
-    <div class="live" id="live" data-state="idle">
-      <span class="live-dot" aria-hidden="true"></span>
-      <span id="live-text">idle</span>
-    </div>
-
-    <div class="actions">
-      <button type="button" class="btn" id="btn-new">New session</button>
-      <button type="button" class="btn toggle" id="btn-auto" aria-pressed="false">
-        <span class="switch" aria-hidden="true"></span>
-        <span>Approve all</span>
-        <span class="toggle-state" id="auto-state">off</span>
-      </button>
-      <button type="button" class="btn" id="btn-settings" aria-haspopup="dialog">Settings</button>
-      <button type="button" class="btn danger" id="btn-abort" disabled>Abort</button>
-      <button type="button" class="btn ghost" id="btn-sidebar" aria-expanded="true" aria-controls="sidebar" title="Toggle the workspace sidebar">Workspaces</button>
-      <button type="button" class="btn ghost" id="btn-side" aria-expanded="true" aria-controls="side" title="Toggle side panel">Panel</button>
-      <button type="button" class="btn theme-btn" id="btn-theme" aria-label="Theme: System. Switch to Light." title="Theme">
-        <span class="theme-icon" id="theme-icon" aria-hidden="true">◐</span>
-        <span class="theme-label" id="theme-label">System</span>
-      </button>
-    </div>
-  </header>
-
-  <div id="layout">
+  <div id="layout" class="frame">
     <aside id="sidebar" class="sidebar" aria-labelledby="sidebar-title">
-      <header class="sidebar-head">
-        <h2 id="sidebar-title">Workspaces</h2>
-        <button type="button" class="btn ghost sm" id="sidebar-collapse"
-                aria-expanded="true" aria-controls="sidebar"
-                title="Collapse the workspace sidebar">Collapse</button>
-      </header>
+      <!-- The harness's sidebar opens with its wordmark row and a New session
+           button under it; everything else in the column is the browser. -->
+      <div class="side-logo-row">
+        <span class="brand-mark">ccj</span>
+        <span id="conn-pill" class="conn-pill" hidden>reconnecting…</span>
+        <button type="button" class="icon-btn" id="sidebar-collapse" aria-expanded="true"
+                aria-controls="sidebar" title="Collapse the workspace sidebar">
+          <span aria-hidden="true">‹</span>
+          <span class="sr-only">Collapse the workspace sidebar</span>
+        </button>
+      </div>
+
+      <button type="button" class="new-session" id="btn-new">New session</button>
+
+      <h2 class="sr-only" id="sidebar-title">Workspaces</h2>
 
       <div class="sidebar-body" id="sidebar-body">
         <p class="err sidebar-alert" id="sidebar-alert" role="alert" hidden></p>
@@ -84,16 +69,11 @@
 
         <div class="ws-actions">
           <span class="delete-control" id="ws-delete-all-host"></span>
-          <button type="button" class="btn sm" id="workspace-add-toggle" aria-expanded="false"
-                  aria-controls="workspace-add-form">Add workspace…</button>
+          <button type="button" class="btn sm" id="workspace-add" aria-expanded="false"
+                  aria-controls="sidebar-note sidebar-alert">Add workspace</button>
         </div>
 
         <form class="workspace-add-form" id="workspace-add-form" autocomplete="off" hidden>
-          <div class="field">
-            <label for="ws-new-name">Name</label>
-            <input type="text" id="ws-new-name" spellcheck="false" placeholder="api">
-            <span class="field-error" id="ws-name-error" hidden></span>
-          </div>
           <div class="field">
             <label for="ws-new-path">Path</label>
             <div class="field-with-action">
@@ -103,23 +83,72 @@
             <span class="field-hint" id="ws-browse-hint" hidden></span>
             <span class="field-error" id="ws-path-error" hidden></span>
           </div>
-          <p class="field-hint">A workspace is a working directory plus its own sessions. The directory is created if it does not exist.</p>
+          <p class="field-hint">The folder's own name becomes the workspace's; when that name is
+            taken, the next free one is used. The directory is created if it does not exist.</p>
           <div class="workspace-add-actions">
-            <button type="submit" class="btn primary" id="workspace-save">Save</button>
+            <button type="submit" class="btn primary" id="workspace-save">Add</button>
+            <button type="button" class="btn ghost" id="workspace-pick">Choose folder…</button>
           </div>
         </form>
       </div>
     </aside>
 
     <main id="main">
+      <!-- The harness's conversation header: one hairline-separated row holding
+           where you are on the left and what you can do on the right. -->
+      <header class="header" id="chat-head">
+        <div class="title-row">
+          <div class="meta" id="meta">
+            <span class="chip chip-session" id="chip-session" title="session">no session</span>
+            <span class="chip" id="chip-provider" title="provider">provider</span>
+            <span class="chip" id="chip-model" title="model">model</span>
+          </div>
+
+          <div class="live" id="live" data-state="idle">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span id="live-text">idle</span>
+          </div>
+
+          <div class="actions">
+            <button type="button" class="btn toggle sm" id="btn-auto" aria-pressed="false">
+              <span class="switch" aria-hidden="true"></span>
+              <span class="btn-label">Approve all</span>
+              <span class="toggle-state" id="auto-state">off</span>
+            </button>
+            <div class="view-toggles" role="group" aria-label="Panels">
+              <button type="button" class="btn ghost sm" id="btn-sidebar" aria-expanded="true" aria-controls="sidebar" title="Toggle the workspace sidebar">
+                <span class="btn-glyph" aria-hidden="true">▤</span><span class="btn-label">Workspaces</span></button>
+              <button type="button" class="btn ghost sm" id="btn-side" aria-expanded="true" aria-controls="side" title="Toggle the side panel">
+                <span class="btn-glyph" aria-hidden="true">▥</span><span class="btn-label">Panel</span></button>
+            </div>
+            <button type="button" class="btn sm" id="btn-settings" aria-haspopup="dialog" title="Settings">
+              <span class="btn-glyph" aria-hidden="true">⚙</span><span class="btn-label">Settings</span></button>
+            <button type="button" class="btn ghost sm" id="btn-wallpaper" aria-pressed="false" hidden
+                    title="Wallpaper — rotate the background every few minutes (shift-click for the next one)">
+              <span class="btn-glyph" aria-hidden="true">❖</span><span class="btn-label">Wallpaper</span>
+            </button>
+            <button type="button" class="btn ghost sm theme-btn" id="btn-theme" aria-label="Theme: System. Switch to Light." title="Theme">
+              <span class="theme-icon" id="theme-icon" aria-hidden="true">◐</span>
+              <span class="theme-label" id="theme-label">System</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
       <div id="transcript" class="transcript" aria-live="polite" aria-relevant="additions text">
         <p class="muted placeholder">Connecting to ccj…</p>
       </div>
 
       <form id="composer" class="composer" autocomplete="off">
-        <!-- Provider, model and effort, directly above the message box: the
-             same column as the input, so it reads as part of the composer.
-             The panel opens upward and never covers what it belongs to. -->
+        <button type="button" id="jump" class="jump" hidden>jump to latest</button>
+        <div class="composer-card">
+        <label class="sr-only" for="input">Message</label>
+        <textarea id="input" rows="2" spellcheck="false"
+                  placeholder="Message the agent — Enter sends, Shift+Enter for a new line"></textarea>
+        <div class="composer-row">
+          <!-- Provider, model and effort sit in the composer's own footer row, next
+               to the send control, the way the harness composes it. The panel is
+               anchored to the card and opens upward over the message box. -->
         <div class="picker" id="composer-picker" data-picker="composer">
           <button type="button" class="picker-trigger" id="picker-trigger" data-role="trigger"
                   aria-haspopup="true" aria-expanded="false" aria-controls="picker-panel"
@@ -162,14 +191,11 @@
             <p class="picker-error err" id="picker-error" data-role="error" role="alert" hidden></p>
           </div>
         </div>
-
-        <button type="button" id="jump" class="jump" hidden>jump to latest</button>
-        <label class="sr-only" for="input">Message</label>
-        <textarea id="input" rows="3" spellcheck="false"
-                  placeholder="Message the agent — Enter sends, Shift+Enter adds a newline"></textarea>
-        <div class="composer-row">
           <span class="hint" id="composer-hint"></span>
+          <button type="button" class="btn danger" id="btn-abort" hidden
+                  title="Stop the running turn at the next safe point">Abort</button>
           <button type="submit" id="send" class="btn primary">Send</button>
+        </div>
         </div>
       </form>
     </main>
@@ -197,6 +223,7 @@
               <tr id="u-errors-row"><th scope="row">tool errors</th><td id="u-errors">—</td></tr>
               <tr><th scope="row">tool calls</th><td id="u-tools">—</td></tr>
               <tr><th scope="row">elapsed</th><td id="u-elapsed">—</td></tr>
+              <tr><th scope="row">context (est.)</th><td id="u-context">—</td></tr>
             </tbody>
           </table>
         </div>
@@ -299,12 +326,15 @@
 
         <div class="field-row">
           <div class="field">
-            <label for="cfg-maxsteps">Max steps</label>
-            <input type="number" id="cfg-maxsteps" min="1" step="1" placeholder="25">
-          </div>
-          <div class="field">
             <label for="cfg-temperature">Temperature</label>
             <input type="number" id="cfg-temperature" min="0" max="2" step="any" placeholder="default">
+          </div>
+          <div class="field">
+            <label for="cfg-language">Thinking language</label>
+            <select id="cfg-language"></select>
+            <span class="field-hint" id="cfg-language-hint">The agent answers in this language
+              whatever you write in. It asks the model to think in it too, which works on some
+              models and not others — the answer always follows, the reasoning may not.</span>
           </div>
         </div>
 

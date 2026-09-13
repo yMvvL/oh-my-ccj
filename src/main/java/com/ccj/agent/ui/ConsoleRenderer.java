@@ -119,8 +119,10 @@ public final class ConsoleRenderer implements AgentListener {
     }
     ensureNewline();
     boolean failed = result.error();
-    String line =
-        (failed ? "✖ " : "✔ ") + call.name() + " (" + elapsedMillis + " ms)";
+    // A negative timing is a call that was interrupted before it ran: it has no duration, and "0 ms"
+    // would read as a measurement.
+    String timing = elapsedMillis < 0 ? "(not run)" : "(" + elapsedMillis + " ms)";
+    String line = (failed ? "✖ " : "✔ ") + call.name() + " " + timing;
     out.println(Ansi.style(failed ? "31" : "32", line, color));
     printResultBody(result.content());
     out.flush();

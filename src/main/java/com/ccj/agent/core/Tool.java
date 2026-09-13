@@ -18,6 +18,15 @@ public interface Tool {
 
   ToolResult execute(String argumentsJson, ToolContext ctx) throws Exception;
 
+  /**
+   * True for a tool that only reads: it changes nothing, never asks for approval, and is therefore
+   * safe to run at the same time as another one. The loop uses this to decide what may overlap —
+   * an agent reading six files in one turn should not pay for six round trips.
+   */
+  default boolean readOnly() {
+    return false;
+  }
+
   default ToolSpec spec() {
     return new ToolSpec(name(), description(), parametersJson());
   }

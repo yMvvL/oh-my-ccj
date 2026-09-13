@@ -1,13 +1,16 @@
 package com.ccj.agent.web;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
 import com.ccj.agent.core.Message;
+import com.ccj.agent.core.ProjectPrompt;
 import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.session.FileSession;
@@ -21,6 +24,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -92,8 +96,16 @@ class WebApiTest {
   }
 
   private void start(String token) throws IOException {
+    start(token, new Wallpapers(null));
+  }
+
+  /** A server whose wallpaper directory is a directory of the test's own choosing. */
+  private void start(String token, Wallpapers wallpapers) throws IOException {
+    if (api != null) {
+      api.close();
+    }
     hub = hub(provider, testConfig());
-    api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), token);
+    api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), token, wallpapers);
     origin = "http://127.0.0.1:" + api.port();
   }
 
@@ -105,7 +117,7 @@ class WebApiTest {
 
   private static Config testConfig() {
     return new Config(
-            "openai", "mock-model", "http://mock.invalid/v1", "sk-test", null, null, null, 6, null,
+            "openai", "mock-model", "http://mock.invalid/v1", "sk-test", null, null, null, null,
             0, null, null)
         .resolved();
   }
@@ -165,6 +177,43 @@ class WebApiTest {
   }
 
   @Test
+  void theWallpaperEndpointsListAndServeWhatTheDirectoryHolds() throws Exception {
+    Path pictures = Files.createDirectories(tmp.resolve("pictures"));
+    byte[] png =
+        new byte[] {
+          (byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0, 0, 0, 0, 0
+        };
+    Files.write(pictures.resolve("2.png"), png);
+    Files.write(pictures.resolve("1.png"), png);
+    start(null, new Wallpapers(pictures));
+
+    String listed = body("/api/wallpapers");
+    assertTrue(listed.contains("\"1.png\""), listed);
+    assertTrue(listed.indexOf("1.png") < listed.indexOf("2.png"), "listed in reading order: " + listed);
+
+    HttpResponse<byte[]> image =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/wallpaper/1.png")).GET().build(),
+            HttpResponse.BodyHandlers.ofByteArray());
+    assertEquals(200, image.statusCode());
+    assertEquals("image/png", image.headers().firstValue("content-type").orElse(""));
+    assertArrayEquals(png, image.body(), "the bytes are the file's own");
+
+    assertEquals(404, get("/wallpaper/../config.json").statusCode(), "a traversal is not a name");
+    assertEquals(404, get("/wallpaper/nope.png").statusCode(), "and nor is a file that is not there");
+  }
+
+  @Test
+  void aServerWithNoWallpaperDirectoryOffersNone() throws Exception {
+    // The page hides its control on an empty list, so "no directory" has to be an empty list rather
+    // than an error it would then have to interpret.
+    start(null, new Wallpapers(tmp.resolve("nothing-here")));
+
+    assertEquals("{\"wallpapers\":[]}", body("/api/wallpapers"));
+    assertEquals(404, get("/wallpaper/1.png").statusCode());
+  }
+
+  @Test
   void statusDescribesTheModelSessionAndTools() throws Exception {
     JsonNode status = json("/api/status");
 
@@ -174,7 +223,7 @@ class WebApiTest {
     assertEquals(cwd.toString(), status.path("cwd").asText());
     assertFalse(status.path("sessionId").asText().isBlank());
     assertFalse(status.path("busy").asBoolean(), "nothing should be running yet");
-    assertEquals(6, status.path("tools").size(), "all six tools must be advertised");
+    assertEquals(7, status.path("tools").size(), "every standard tool must be advertised");
     assertEquals("read", status.path("tools").get(0).path("name").asText());
   }
 
@@ -184,7 +233,7 @@ class WebApiTest {
       JsonNode status = sse.await("status", 3000);
 
       assertEquals("openai", status.path("provider").asText());
-      assertEquals(6, status.path("tools").size());
+      assertEquals(7, status.path("tools").size());
       assertFalse(status.path("busy").asBoolean());
     }
   }
@@ -293,6 +342,199 @@ class WebApiTest {
   }
 
   @Test
+  void anotherSessionRunsWhileOneIsStillBusy() throws Exception {
+    // The whole point of the change: a turn in session b must not lock the server, or "start a task
+    // in another conversation" is a sentence about nothing. A *second* turn in the *same* session is
+    // still refused — one writer per conversation is what keeps a transcript from being two of them.
+    // b is held at an approval, which is the realistic way a turn occupies the server for a while.
+    provider.reply(
+        new Message.Assistant(
+            "", List.of(new Message.ToolCall("call_b", "bash", "{\"command\":\"echo b\"}"))));
+    provider.reply(Message.Assistant.text("a finished"));
+    provider.reply(Message.Assistant.text("b finished"));
+    try (Sse sse = watch()) {
+      assertEquals(202, post("/api/message", "{\"text\":\"b: first\"}").statusCode());
+      String b = json("/api/status").path("sessionId").asText();
+      assertFalse(b.isEmpty(), "the running session must be identifiable");
+      JsonNode approval = sse.awaitInSession(b, "approval", 1, 5000);
+
+      assertTrue(json("/api/status").path("busy").asBoolean(), "b is running");
+      assertEquals(
+          409,
+          post("/api/message", "{\"text\":\"b: second\"}").statusCode(),
+          "the same session still takes one turn at a time");
+
+      // Open another conversation and deploy a task in it, while b is still waiting for a human.
+      String a = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
+      assertNotEquals(b, a);
+      assertFalse(
+          json("/api/status").path("busy").asBoolean(),
+          "the session being looked at is idle even though b is running");
+      assertTrue(
+          json("/api/status").path("running").toString().contains(b),
+          "and the status names the session that is running");
+
+      assertEquals(
+          202,
+          post("/api/message", "{\"text\":\"a: hello\"}").statusCode(),
+          "a turn in another session must be accepted");
+      assertEquals("a finished", sse.awaitInSession(a, "done", 1, 5000).path("finalText").asText());
+
+      // b was never disturbed: its approval is still pending, and answering it finishes b.
+      post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
+      assertEquals("b finished", sse.awaitInSession(b, "done", 1, 5000).path("finalText").asText());
+    }
+  }
+
+  @Test
+  void everyEventSaysWhichSessionItBelongsTo() throws Exception {
+    // One stream carries every conversation, so an event that does not name its session is an event
+    // one page would render into another conversation's transcript.
+    provider.reply(Message.Assistant.text("ok"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"hello\"}");
+      sse.await("done", 5000);
+      assertFalse(
+          sse.anyEventWithoutSession(),
+          "every event must carry a sessionId: " + sse.snapshot());
+      assertEquals(1, sse.ofType("user").size(), sse.snapshot().toString());
+      assertFalse(sse.ofType("user").get(0).path("sessionId").asText().isEmpty());
+    }
+  }
+
+  @Test
+  void anApprovalInAnotherSessionIsVisibleAndAnswerableFromHere() throws Exception {
+    // A background turn that needs a human must not wait forever because the user is looking at
+    // another conversation: the request is published with its session, and answering it works from
+    // anywhere.
+    provider.reply(
+        new Message.Assistant(
+            "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
+    provider.reply(Message.Assistant.text("ran it"));
+    try (Sse sse = watch()) {
+      assertEquals(202, post("/api/message", "{\"text\":\"start the long job\"}").statusCode());
+      String b = json("/api/status").path("sessionId").asText();
+
+      String a = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
+      assertNotEquals(b, a);
+
+      JsonNode approval = sse.awaitInSession(b, "approval", 1, 5000);
+      assertEquals(b, approval.path("sessionId").asText(), "the request names its session");
+      assertEquals("bash", approval.path("title").asText());
+
+      post(
+          "/api/approval",
+          "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
+      assertEquals("ran it", sse.awaitInSession(b, "done", 1, 5000).path("finalText").asText());
+    }
+  }
+
+  @Test
+  void whatTouchesOneConversationIsRefusedOnlyWhileThatOneRuns() throws Exception {
+    // Which operations care about concurrency is a decision, not a habit. Showing a conversation
+    // changes nothing and is always allowed — including the one that is working, which is the whole
+    // point of leaving a turn running. Operations that would pull the ground out from under a turn —
+    // deleting its file, changing the model — wait for it.
+    provider.reply(
+        new Message.Assistant(
+            "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
+    provider.reply(Message.Assistant.text("finished"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"b: long job\"}");
+      String b = json("/api/status").path("sessionId").asText();
+      JsonNode approval = sse.awaitInSession(b, "approval", 1, 5000);
+
+      // Looking at the busy conversation is fine, and so is looking at it repeatedly.
+      assertEquals(
+          200,
+          post("/api/session", "{\"action\":\"resume\",\"id\":\"" + b + "\"}").statusCode(),
+          "the running conversation can be displayed");
+      // Its file cannot be deleted, though: that would pull the transcript out from under the turn.
+      assertEquals(
+          409,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create(origin + "/api/session?id=" + b))
+                      .DELETE()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode(),
+          "nor deleted while it is being written");
+
+      // The settings are the ground under every conversation, so they stay refused.
+      assertEquals(
+          409,
+          post("/api/config", "{\"model\":\"other-model\"}").statusCode(),
+          "changing the model under a running turn is what has to wait");
+
+      // Switching *away* from it is how the user keeps working, so that is allowed.
+      String a = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
+      assertNotEquals(b, a, "a new conversation can be started beside a running one");
+
+      post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
+      sse.awaitInSession(b, "done", 1, 5000);
+    }
+  }
+
+  @Test
+  void anAbortStopsTheSessionOnScreenAndLeavesTheOtherAlone() throws Exception {
+    // Abort is per conversation: stopping the job you are looking at must not stop the other one.
+    provider.reply(
+        new Message.Assistant(
+            "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
+    provider.reply(Message.Assistant.text("finished"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"b: long job\"}");
+      String b = json("/api/status").path("sessionId").asText();
+      sse.awaitInSession(b, "approval", 1, 5000);
+
+      String a = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
+      assertNotEquals(b, a);
+
+      // The session on screen is a, and a is not running: there is nothing to abort here.
+      assertFalse(
+          postJson("/api/abort", "{}").path("aborted").asBoolean(),
+          "abort acts on the conversation on screen, which is idle");
+
+      JsonNode aborted = postJson("/api/abort?id=" + b, "{}");
+      assertTrue(aborted.path("aborted").asBoolean(), "the running session can still be stopped");
+      JsonNode stopped = sse.awaitInSession(b, "done", 1, 5000);
+      assertTrue(stopped.path("aborted").asBoolean(), "and it ends as aborted: " + stopped);
+    }
+  }
+
+  @Test
+  void theSidebarCanTellWhichSessionsAreRunning() throws Exception {
+    // Without this the page cannot mark the row the user started and switched away from.
+    provider.reply(
+        new Message.Assistant(
+            "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
+    provider.reply(Message.Assistant.text("finished"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"b: long job\"}");
+      String b = json("/api/status").path("sessionId").asText();
+      sse.awaitInSession(b, "approval", 1, 5000);
+
+      JsonNode list = json("/api/sessions").path("sessions");
+      assertEquals(1, list.size(), list.toString());
+      assertEquals(b, list.get(0).path("id").asText());
+      assertTrue(list.get(0).path("running").asBoolean(), list.toString());
+
+      String a = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
+      assertNotEquals(b, a);
+      assertTrue(
+          json("/api/sessions").path("sessions").get(0).path("running").asBoolean(),
+          "switching away does not stop it");
+
+      postJson("/api/abort?id=" + b, "{}");
+      sse.awaitInSession(b, "done", 1, 5000);
+      assertFalse(
+          json("/api/sessions").path("sessions").get(0).path("running").asBoolean(),
+          "a finished turn stops being running");
+    }
+  }
+
+  @Test
   void sessionsCanBeListedAndSwitched() throws Exception {
     provider.reply(Message.Assistant.text("ok"));
     String first;
@@ -305,6 +547,8 @@ class WebApiTest {
     JsonNode list = json("/api/sessions").path("sessions");
     assertEquals(1, list.size(), list.toString());
     assertEquals("remember me", list.get(0).path("preview").asText());
+    assertEquals("remember me", list.get(0).path("title").asText(),
+        "the sidebar labels a session by what was asked, not by its timestamp id");
     assertEquals(first, list.get(0).path("id").asText());
 
     JsonNode created = postJson("/api/session", "{\"action\":\"new\"}");
@@ -313,6 +557,305 @@ class WebApiTest {
     JsonNode resumed = postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + first + "\"}");
     assertEquals(first, resumed.path("sessionId").asText());
     assertEquals(2, resumed.path("messageCount").asInt(), "history must be replayed from disk");
+  }
+
+  @Test
+  void aRunningConversationCanStillBeOpened() throws Exception {
+    // Reported bug: with a turn running in a, clicking a in the sidebar bounced. Switching which
+    // conversation is *displayed* changes nothing about the turn that is running — the point of
+    // leaving a job running is being able to look at it.
+    provider.reply(
+        new Message.Assistant(
+            "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
+    provider.reply(Message.Assistant.text("finished"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"a: long job\"}");
+      String a = json("/api/status").path("sessionId").asText();
+      sse.awaitInSession(a, "approval", 1, 5000);
+
+      // Look away…
+      String b = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
+      assertNotEquals(a, b);
+      // …and back at the one that is working.
+      JsonNode back = postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + a + "\"}");
+      assertEquals(a, back.path("sessionId").asText(), "the running session is the one to look at");
+      assertTrue(back.path("busy").asBoolean(), "and it is still shown as running");
+
+      postJson("/api/abort?id=" + a, "{}");
+      sse.awaitInSession(a, "done", 1, 5000);
+      // The turn's result landed in a's own file, once: opening a again must not have started a
+      // second writer on it.
+      List<String> lines = Files.readAllLines(sessions.resolve(a + ".jsonl"));
+      assertTrue(lines.stream().anyMatch(line -> line.contains("tool_result")), lines.toString());
+    }
+  }
+
+  @Test
+  void openingARunningSessionAgainDoesNotOpenASecondWriter() throws Exception {
+    // The reason the old check existed. It has to be answered by reusing the file the turn is
+    // writing, not by refusing to show the conversation: two FileSessions appending to one JSONL is
+    // exactly the corruption the per-session rule is for.
+    provider.reply(
+        new Message.Assistant(
+            "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
+    provider.reply(Message.Assistant.text("a finished"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"a: long job\"}");
+      String a = json("/api/status").path("sessionId").asText();
+      sse.awaitInSession(a, "approval", 1, 5000);
+
+      // A second conversation that exists on disk, to switch to and away from.
+      String b = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
+      assertNotEquals(a, b);
+      assertEquals(202, post("/api/message", "{\"text\":\"b: hello\"}").statusCode());
+      sse.awaitInSession(b, "done", 1, 5000);
+
+      // Going back and forth is what a user does while waiting, and each return to a must be the
+      // same file its turn is using rather than a second writer on it.
+      for (int i = 0; i < 3; i++) {
+        assertEquals(
+            a,
+            postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + a + "\"}")
+                .path("sessionId")
+                .asText());
+        assertEquals(
+            b,
+            postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + b + "\"}")
+                .path("sessionId")
+                .asText());
+      }
+
+      postJson("/api/abort?id=" + a, "{}");
+      sse.awaitInSession(a, "done", 1, 5000);
+      // Every line is still one whole JSON object: a second writer would have interleaved bytes.
+      for (String line : Files.readAllLines(sessions.resolve(a + ".jsonl"))) {
+        assertFalse(line.isBlank(), "no torn lines");
+        Json.parse(line);
+      }
+    }
+  }
+
+  @Test
+  void anotherWorkspacesConversationCanBeOpenedWhileATurnRuns() throws Exception {
+    // Reported bug: a turn in one workspace blocked opening a conversation in another. A turn owns
+    // its working directory and its own session file from the moment it starts, so looking at a
+    // different workspace while it runs cannot disturb it.
+    Path other = Files.createDirectories(tmp.resolve("other-ws"));
+
+    provider.reply(
+        new Message.Assistant(
+            "",
+            List.of(
+                new Message.ToolCall(
+                    "call_1", "bash", "{\"command\":\"touch made-by-a.txt\"}"))));
+    provider.reply(Message.Assistant.text("c finished"));
+    provider.reply(Message.Assistant.text("a finished"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"a: long job\"}");
+      String a = json("/api/status").path("sessionId").asText();
+      JsonNode approval = sse.awaitInSession(a, "approval", 1, 5000);
+
+      // Registering the workspace is a registry entry, and it must be possible while a is running —
+      // otherwise the second workspace is unreachable exactly when the user wants to go there.
+      postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + other + "\"}");
+
+      // Switch to it: a change of namespace, not of what is running.
+      JsonNode switched = postJson("/api/workspace", "{\"name\":\"other\"}");
+      assertEquals("other", switched.path("workspace").path("name").asText());
+      String c = switched.path("sessionId").asText();
+      assertNotEquals(a, c, "a fresh session there");
+
+      // …and it is usable while the first workspace's turn keeps running.
+      assertEquals(202, post("/api/message", "{\"text\":\"c: in the other workspace\"}").statusCode());
+      assertEquals("c finished", sse.awaitInSession(c, "done", 1, 5000).path("finalText").asText());
+      assertTrue(
+          json("/api/status").path("running").toString().contains(a),
+          "the turn in the first workspace is untouched: " + json("/api/status"));
+
+      // The turn in a still runs in the directory it started in, not in the one now on screen: the
+      // command writes a file, and the file has to land in the first workspace.
+      post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
+      assertEquals("a finished", sse.awaitInSession(a, "done", 1, 5000).path("finalText").asText());
+      assertTrue(
+          Files.exists(cwd.resolve("made-by-a.txt")),
+          "a's tool ran in a's own workspace, which is where it was started: " + cwd);
+      assertFalse(
+          Files.exists(other.resolve("made-by-a.txt")),
+          "and not in the workspace that is merely on screen now");
+    }
+  }
+
+
+  @Test
+  void eachConversationsOwnRulesFollowItsWorkingDirectory() throws Exception {
+    // The rules come from the directory the conversation's tools run in, which in the web UI is a
+    // property of the *session*, not of the server: a page can hold one conversation in a project and
+    // another in a sibling, and each request must carry its own project's rules.
+    Files.writeString(
+        cwd.resolve(ProjectPrompt.FILE_NAME), "Rule for the first workspace: run `make check`.\n");
+    Path other = Files.createDirectories(tmp.resolve("second-ws"));
+    Files.writeString(
+        other.resolve(ProjectPrompt.FILE_NAME), "Rule for the second workspace: use tabs.\n");
+
+    provider.reply(Message.Assistant.text("first answer"));
+    provider.reply(Message.Assistant.text("second answer"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"hello in the first\"}");
+      sse.await("done", 5000);
+      String firstPrompt = lastSystemPrompt(0);
+      assertTrue(firstPrompt.contains("run `make check`"), firstPrompt);
+      assertFalse(firstPrompt.contains("use tabs"), firstPrompt);
+
+      postJson("/api/workspaces", "{\"name\":\"second\",\"path\":\"" + other + "\"}");
+      JsonNode switched = postJson("/api/workspace", "{\"name\":\"second\"}");
+      post("/api/message", "{\"text\":\"hello in the second\"}");
+      sse.awaitInSession(switched.path("sessionId").asText(), "done", 1, 5000);
+
+      String secondPrompt = lastSystemPrompt(1);
+      assertTrue(secondPrompt.contains("use tabs"), secondPrompt);
+      assertFalse(
+          secondPrompt.contains("run `make check`"),
+          "and not the other workspace's rule: " + secondPrompt);
+    }
+  }
+
+  /** The system prompt of the nth request the mock provider received. */
+  private String lastSystemPrompt(int index) {
+    List<Provider.Request> seen = provider.requests();
+    assertTrue(seen.size() > index, "only " + seen.size() + " requests so far");
+    String system = seen.get(index).system();
+    assertTrue(system != null, "every request must carry a system prompt");
+    return system;
+  }
+
+  @Test
+  void aReplayedConversationKeepsItsReasoning() throws Exception {
+    // Reported bug: switch away from a conversation while it is thinking, switch back, and the
+    // reasoning is gone — because historyJson replayed only prose and tool calls. The reasoning is in
+    // the session file, so a replay that drops it is a replay of a different conversation.
+    provider.reply(Message.Assistant.text("answered"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"think about it\"}");
+      sse.await("done", 5000);
+      String session = json("/api/status").path("sessionId").asText();
+
+      // The reasoning arrives on the stream and is persisted with the assistant turn.
+      provider.emitReasoning("considering the problem");
+      post("/api/message", "{\"text\":\"and again\"}");
+      sse.awaitAtLeast("done", 2, 5000);
+      String file = Files.readString(sessions.resolve(session + ".jsonl"));
+      assertTrue(file.contains("considering the problem"), "the reasoning is on disk:\n" + file);
+
+      // So replaying that conversation must show it again.
+      JsonNode history = json("/api/history");
+      assertEquals(session, history.path("sessionId").asText());
+      List<String> reasoning = new ArrayList<>();
+      history.path("events").forEach(event -> {
+        if ("reasoning".equals(event.path("type").asText())) {
+          reasoning.add(event.path("delta").asText());
+        }
+      });
+      assertEquals(List.of("considering the problem"), reasoning,
+          "a replay must carry the reasoning, or switching away and back loses it: "
+              + history.path("events"));
+    }
+  }
+
+  @Test
+  void aRedactedReasoningBlockIsNotReplayedAsText() throws Exception {
+    // A redacted block's payload is opaque and must go back to the *model* unchanged; showing it as
+    // prose would put a wall of base64 in the transcript, which is worse than showing nothing.
+    provider.reply(Message.Assistant.text("done"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"go\"}");
+      sse.await("done", 5000);
+      String session = json("/api/status").path("sessionId").asText();
+      // Write one by hand: only Anthropic produces these, and this test is about the projection.
+      Files.writeString(
+          sessions.resolve(session + ".jsonl"),
+          Files.readString(sessions.resolve(session + ".jsonl"))
+              + com.ccj.agent.session.MessageCodec.toJson(
+                  new Message.Assistant(
+                      "",
+                      List.of(),
+                      List.of(Message.Thinking.redacted("b3BhcXVlLXBheWxvYWQ="))))
+              + "\n");
+
+      JsonNode history = json("/api/history");
+      history.path("events").forEach(event ->
+          assertFalse(
+              event.path("delta").asText().contains("b3BhcXVl"),
+              "the opaque payload must not be rendered as prose: " + event));
+    }
+  }
+
+  @Test
+  void aPendingApprovalSurvivesLeavingAndComingBack() throws Exception {
+    // Reported bug: a turn waiting for approval lost its prompt as soon as the user looked at
+    // another conversation, leaving only abort. The approval is a request blocked in memory, not a
+    // message, so replaying the history does not bring it back — it has to be visible in the status
+    // of the conversation that is waiting, and the page has to render it again on the way in.
+    provider.reply(
+        new Message.Assistant(
+            "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
+    provider.reply(Message.Assistant.text("ran it"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"a: run it\"}");
+      String a = json("/api/status").path("sessionId").asText();
+      JsonNode approval = sse.awaitInSession(a, "approval", 1, 5000);
+      String approvalId = approval.path("id").asText();
+
+      // Looking away and back: the request is still outstanding, so the page must be told about it.
+      String b = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
+      assertNotEquals(a, b);
+      JsonNode back = postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + a + "\"}");
+      assertEquals(a, back.path("sessionId").asText());
+
+      // The status of the conversation that is waiting names the pending request, with everything the
+      // prompt needs to be drawn again.
+      JsonNode pending = back.path("approvals");
+      assertTrue(pending.isArray(), back.toString());
+      assertEquals(1, pending.size(), "the outstanding request is reported: " + back);
+      assertEquals(approvalId, pending.get(0).path("id").asText());
+      assertEquals("bash", pending.get(0).path("title").asText());
+      assertTrue(pending.get(0).path("detail").asText().contains("echo hi"), pending.toString());
+
+      // And answering it still works from the other conversation.
+      post("/api/approval", "{\"id\":\"" + approvalId + "\",\"allow\":true}");
+      assertEquals("ran it", sse.awaitInSession(a, "done", 1, 5000).path("finalText").asText());
+      assertEquals(
+          0,
+          json("/api/status").path("approvals").size(),
+          "a resolved request is no longer pending");
+    }
+  }
+
+  @Test
+  void anApprovalBelongsToOneConversationOnly() throws Exception {
+    // Two turns can be waiting at once. Each page must be offered only its own conversation's
+    // requests, or answering the one on screen would resolve the other's.
+    provider.reply(
+        new Message.Assistant(
+            "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
+    provider.reply(Message.Assistant.text("a ran it"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"a: run it\"}");
+      String a = json("/api/status").path("sessionId").asText();
+      JsonNode approval = sse.awaitInSession(a, "approval", 1, 5000);
+
+      // A fresh conversation has no pending request of its own.
+      String b = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
+      assertEquals(
+          0,
+          json("/api/status").path("approvals").size(),
+          "b has nothing pending; a's request is not b's: " + json("/api/status"));
+      // a is still waiting, and still says so.
+      postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + a + "\"}");
+      assertEquals(1, json("/api/status").path("approvals").size());
+
+      post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
+      sse.awaitInSession(a, "done", 1, 5000);
+    }
   }
 
   @Test
@@ -392,7 +935,7 @@ class WebApiTest {
     JsonNode saved =
         postJson(
             "/api/config",
-            "{\"provider\":\"anthropic\",\"model\":\"claude-test\",\"baseUrl\":\"http://relay.invalid\",\"apiKey\":\"sk-written\",\"maxSteps\":9}");
+            "{\"provider\":\"anthropic\",\"model\":\"claude-test\",\"baseUrl\":\"http://relay.invalid\",\"apiKey\":\"sk-written\",\"maxTokens\":900}");
 
     assertEquals("claude-test", saved.path("model").asText());
     assertEquals("anthropic", saved.path("provider").asText());
@@ -403,7 +946,7 @@ class WebApiTest {
     assertEquals("anthropic", file.path("provider").asText());
     assertEquals("claude-test", file.path("model").asText());
     assertEquals("sk-written", file.path("apiKey").asText());
-    assertEquals(9, file.path("maxSteps").asInt());
+    assertEquals(900, file.path("maxTokens").asInt());
     assertEquals("keep me", file.path("systemPrompt").asText(), "unmanaged keys must survive");
     assertEquals(4096, file.path("outputLimitBytes").asInt());
     assertEquals(
@@ -439,9 +982,10 @@ class WebApiTest {
 
   @Test
   void outOfRangeValuesAreRejected() throws Exception {
-    assertEquals(400, post("/api/config", "{\"maxSteps\":0}").statusCode());
     assertEquals(400, post("/api/config", "{\"temperature\":9}").statusCode());
-    assertEquals(400, post("/api/config", "{\"maxSteps\":\"lots\"}").statusCode());
+    assertEquals(400, post("/api/config", "{\"temperature\":-1}").statusCode());
+    assertEquals(400, post("/api/config", "{\"temperature\":\"warm\"}").statusCode());
+    assertEquals(400, post("/api/config", "{\"maxTokens\":\"lots\"}").statusCode());
     assertFalse(Files.exists(configFile));
   }
 
@@ -752,10 +1296,59 @@ class WebApiTest {
 
   @Test
   void aBadWorkspaceIsRejectedWithAReason() throws Exception {
-    assertEquals(400, post("/api/workspaces", "{\"name\":\"has space\",\"path\":\"/tmp\"}").statusCode());
+    assertEquals(400, post("/api/workspaces", "{\"name\":\"a/b\",\"path\":\"/tmp\"}").statusCode());
     assertEquals(400, post("/api/workspaces", "{\"name\":\"ws\",\"path\":\"/tmp\"}").statusCode());
     assertEquals(400, post("/api/workspaces", "{\"name\":\"ok\"}").statusCode());
     assertEquals(400, post("/api/workspace", "{\"name\":\"nope\"}").statusCode());
+  }
+
+  @Test
+  void aPathWithoutANameIsAddedUnderTheFoldersOwnName() throws Exception {
+    Path picked = Files.createDirectories(tmp.resolve("picked-thing"));
+
+    JsonNode added = postJson("/api/workspaces", "{\"path\":\"" + picked + "\"}");
+
+    assertEquals(2, added.path("workspaces").size(), added.toString());
+    JsonNode entry = added.path("workspaces").get(1);
+    assertEquals("picked-thing", entry.path("name").asText());
+    assertEquals(picked.toString(), entry.path("path").asText());
+    assertEquals("ws", added.path("active").asText(), "picking a folder does not switch");
+  }
+
+  @Test
+  void pickingTheSameDirectoryTwiceIsRefusedWithTheWorkspaceThatOwnsIt() throws Exception {
+    Path project = Files.createDirectories(tmp.resolve("twice"));
+
+    assertEquals("twice", postJson("/api/workspaces", "{\"path\":\"" + project + "\"}").path("workspaces").get(1).path("name").asText());
+
+    // Same directory, different spelling: normalising is what makes this a refusal and not a second
+    // entry with a competitor's session history.
+    HttpResponse<String> refusal =
+        post("/api/workspaces", "{\"path\":\"" + project.resolve(".") + "\"}");
+
+    assertEquals(400, refusal.statusCode(), refusal.body());
+    assertTrue(refusal.body().contains("twice"), refusal.body());
+    assertEquals(2, json("/api/workspaces").path("workspaces").size());
+  }
+
+  @Test
+  void aPathIsRequiredAndAnUnusableFolderNameIsRefused() throws Exception {
+    HttpResponse<String> noPath = post("/api/workspaces", "{\"path\":\"\"}");
+    assertEquals(400, noPath.statusCode(), noPath.body());
+    assertTrue(noPath.body().contains("directory"), noPath.body());
+
+    // A folder named "my project" is added, not refused — but one whose name cannot be a single path
+    // segment (a leading dash would read as a flag) comes back with the reason.
+    Path spaced = Files.createDirectories(tmp.resolve("my project"));
+    assertEquals(
+        "my project",
+        postJson("/api/workspaces", "{\"path\":\"" + spaced + "\"}")
+            .path("workspaces").get(1).path("name").asText());
+
+    Path odd = Files.createDirectories(tmp.resolve("-dashed"));
+    HttpResponse<String> oddName = post("/api/workspaces", "{\"path\":\"" + odd + "\"}");
+    assertEquals(400, oddName.statusCode(), oddName.body());
+    assertTrue(oddName.body().contains("path separator"), oddName.body());
   }
 
   // ------------------------------------------------------------------ deletion and the chooser
@@ -963,6 +1556,117 @@ class WebApiTest {
   }
 
   @Test
+  void switchingProviderKeepsTheEndpointAndKeyUnderTheProviderItIsLeaving() throws Exception {
+    // What the composer picker posts: provider and model, nothing else. The stored baseUrl and key
+    // belong to the provider being left, so using them for the new one is how a session that says
+    // "myrelay" ends up sending its traffic to the previous provider's address with the previous
+    // provider's key — on the previous provider's bill. They are kept under the name they belong to
+    // instead of being left in the active pair, which is what lets switching back be free.
+    postJson(
+        "/api/config",
+        "{\"provider\":\"openai\",\"model\":\"m\",\"baseUrl\":\"https://previous.example.com/v1\",\"apiKey\":\"sk-previous\"}");
+    assertEquals("config", json("/api/config").path("apiKeySource").asText());
+
+    postJson(
+        "/api/providers",
+        "{\"name\":\"myrelay\",\"kind\":\"openai\",\"baseUrl\":\"https://relay.example.com/v1\"}");
+    JsonNode switched = postJson("/api/config", "{\"provider\":\"myrelay\",\"model\":\"m\"}");
+
+    assertEquals("myrelay", switched.path("provider").asText());
+    JsonNode stored = Json.parse(Files.readString(configFile));
+    assertNull(
+        stored.path("apiKey").isTextual() ? stored.path("apiKey").asText() : null,
+        "nothing of the old pair may stay in the active fields: " + stored);
+    assertFalse(
+        stored.path("baseUrl").asText("").contains("previous.example.com"),
+        "the endpoint being left must not stay in the active pair either: " + stored);
+    assertEquals(
+        "https://relay.example.com/v1",
+        switched.path("baseUrl").asText(),
+        "the endpoint reported must be the one the request will use, which is the definition's");
+    assertEquals(
+        "none",
+        json("/api/config").path("apiKeySource").asText(),
+        "the form must not report a key that would not be sent");
+    assertEquals(
+        "sk-previous",
+        stored.path("remembered").path("openai").path("apiKey").asText(),
+        "it is kept under the provider it was entered for: " + stored);
+  }
+
+  @Test
+  void aKeyIsRememberedPerProviderSoSwitchingBackRestoresIt() throws Exception {
+    postJson(
+        "/api/providers",
+        "{\"name\":\"myrelay\",\"kind\":\"openai\",\"baseUrl\":\"https://relay.example.com/v1\"}");
+    postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"gpt-x\",\"apiKey\":\"sk-openai\"}");
+    postJson("/api/config", "{\"provider\":\"myrelay\",\"model\":\"m\"}");
+    postJson("/api/config", "{\"apiKey\":\"sk-relay\"}");
+
+    JsonNode cfg = json("/api/config");
+    assertEquals(
+        List.of("openai", "myrelay"),
+        strings(cfg.path("rememberedProviders")),
+        "every provider with a saved key — openai's is remembered, myrelay's is in effect right now."
+            + " Names only, never a key");
+    assertEquals("config", cfg.path("apiKeySource").asText());
+
+    // Back to openai: its own endpoint and key come back without pasting anything.
+    JsonNode back = postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"gpt-x\"}");
+    assertEquals("openai", back.path("provider").asText());
+    JsonNode stored = Json.parse(Files.readString(configFile));
+    assertEquals("sk-openai", stored.path("apiKey").asText(), "back on its own key: " + stored);
+    assertFalse(
+        stored.path("baseUrl").asText("").contains("relay.example.com"),
+        "and not on the endpoint it was switched away from: " + stored);
+    assertEquals(
+        "sk-relay",
+        stored.path("remembered").path("myrelay").path("apiKey").asText(),
+        "and myrelay's key waits for the way back: " + stored);
+  }
+
+  @Test
+  void clearingAKeyForgetsItForThatProviderOnly() throws Exception {
+    postJson(
+        "/api/providers",
+        "{\"name\":\"myrelay\",\"kind\":\"openai\",\"baseUrl\":\"https://relay.example.com/v1\"}");
+    postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"gpt-x\",\"apiKey\":\"sk-openai\"}");
+    postJson("/api/config", "{\"provider\":\"myrelay\",\"model\":\"m\",\"apiKey\":\"sk-relay\"}");
+
+    postJson("/api/config", "{\"clearApiKey\":true}");
+
+    assertEquals("none", json("/api/config").path("apiKeySource").asText());
+    JsonNode stored = Json.parse(Files.readString(configFile));
+    assertFalse(
+        stored.path("remembered").has("myrelay"), "a forgotten key must not come back: " + stored);
+    assertEquals(
+        "sk-openai",
+        stored.path("remembered").path("openai").path("apiKey").asText(),
+        "the other provider's key is none of this one's business: " + stored);
+  }
+
+  @Test
+  void aKeySavedForTheActiveProviderSaysSoAndSurvivesAnUnrelatedSave() throws Exception {
+    postJson(
+        "/api/providers",
+        "{\"name\":\"myrelay\",\"kind\":\"openai\",\"baseUrl\":\"https://relay.example.com/v1\"}");
+    postJson("/api/config", "{\"provider\":\"myrelay\",\"model\":\"m\"}");
+    postJson("/api/config", "{\"apiKey\":\"sk-mine\"}");
+
+    assertEquals("config", json("/api/config").path("apiKeySource").asText());
+    assertTrue(json("/api/config").path("usesStoredSettings").asBoolean());
+    assertEquals(
+        "myrelay",
+        Json.parse(Files.readString(configFile)).path("settingsFor").asText(),
+        "the file records whose endpoint and key these are");
+
+    // A later save that says nothing about the key keeps it: it is this provider's.
+    postJson("/api/config", "{\"reasoning\":\"high\"}");
+    assertEquals("config", json("/api/config").path("apiKeySource").asText());
+    assertTrue(Files.readString(configFile).contains("sk-mine"));
+  }
+
+  @Test
   void removingTheProviderInUseWorksAndSaysWhatItMeans() throws Exception {
     postJson(
         "/api/providers",
@@ -1024,6 +1728,51 @@ class WebApiTest {
     HttpResponse<String> bad = post("/api/config", "{\"reasoning\":\"turbo\"}");
     assertEquals(400, bad.statusCode(), bad.body());
     assertTrue(bad.body().contains("low, high, max"), bad.body());
+  }
+
+  @Test
+  void theThinkingLanguageIsOfferedSavedAndPutInThePrompt() throws Exception {
+    JsonNode fresh = json("/api/config");
+    assertEquals("auto", fresh.path("language").asText(), "no choice means the prompt says nothing");
+    List<String> offered = languages(fresh);
+    assertTrue(offered.contains("Simplified Chinese"), offered.toString());
+    assertEquals(offered.get(0), "Simplified Chinese", "the list is in the order the form shows it");
+
+    // POST answers with the status payload, so the form's own value is read back from GET — which is
+    // also the round trip the setting has to survive.
+    postJson("/api/config", "{\"language\":\"Simplified Chinese\"}");
+    assertEquals("Simplified Chinese", json("/api/config").path("language").asText());
+
+    // The point of the setting: the prompt the model is handed asks for it, by name, including the
+    // thinking stream. Checked on the request the loop actually sent.
+    provider.reply(Message.Assistant.text("好的"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"say hi\"}");
+      sse.await("done", 5000);
+    }
+    // The prompt names the language the way it names itself — 简体中文, not "Simplified Chinese" — so
+    // the sentence reads as an instruction about a language rather than a label from a form.
+    var sent = lastBuilt.requests().get(lastBuilt.requests().size() - 1);
+    assertTrue(sent.system().contains("think in 简体中文"), sent.system());
+    assertTrue(
+        sent.system().contains("always reason and reply in 简体中文"),
+        "the answer is asked for in the same sentence as the thinking: " + sent.system());
+
+    // Clearing it back to auto removes the sentence rather than leaving a stale one behind.
+    postJson("/api/config", "{\"language\":\"auto\"}");
+    assertEquals("auto", json("/api/config").path("language").asText());
+    assertFalse(
+        com.ccj.agent.core.Prompts.DEFAULT_SYSTEM.contains("always reason and reply"),
+        "auto adds nothing to the prompt");
+  }
+
+  @Test
+  void aLanguageTheBuildDoesNotListIsStillKept() throws Exception {
+    // The list is a convenience, not a gate: a model can follow a name this build never heard of, and
+    // refusing one would be the form deciding what somebody is allowed to think in.
+    postJson("/api/config", "{\"language\":\"Klingon\"}");
+
+    assertEquals("Klingon", json("/api/config").path("language").asText());
   }
 
   @Test
@@ -1289,6 +2038,116 @@ class WebApiTest {
         "and must not come back as a phantom built-in");
   }
 
+  @Test
+  void removingTheLastProviderLeavesTheListEmptyInsteadOfRestoringThemAll() throws Exception {
+    // The bug: the store could not tell "never narrowed" from "I removed everything", so deleting
+    // the final provider read as "no opinion" and the entire catalogue reappeared.
+    for (String name : providerNames(json("/api/models"))) {
+      assertEquals(
+          200,
+          client.send(
+                  HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=" + name))
+                      .DELETE()
+                      .build(),
+              HttpResponse.BodyHandlers.ofString())
+              .statusCode(),
+          "deleting " + name);
+    }
+
+    JsonNode emptied = json("/api/models");
+    assertTrue(providerNames(emptied).isEmpty(), "the list stays empty: " + emptied);
+    assertFalse(emptied.path("builtIns").isEmpty(), "and every built-in is still offered as a way back");
+
+    // Nothing is remembered as hidden: adding one back is an ordinary add.
+    JsonNode restored =
+        Json.parse(
+            client.send(
+                    HttpRequest.newBuilder(URI.create(origin + "/api/providers"))
+                        .header("Content-Type", "application/json")
+                        .PUT(HttpRequest.BodyPublishers.ofString("{\"name\":\"anthropic\"}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString())
+                .body());
+    assertEquals(List.of("anthropic"), providerNames(restored), restored.toString());
+  }
+
+  @Test
+  void aTokenlessServerRefusesRequestsAddressedToAnotherHost() throws Exception {
+    // A tokenless server is reachable from any page the user visits; the Host header is what keeps
+    // a name that resolves to 127.0.0.1 (DNS rebinding) from being treated as this server.
+    try (Socket socket = new Socket("127.0.0.1", api.port())) {
+      socket
+          .getOutputStream()
+          .write(
+              "GET /api/status HTTP/1.1\r\nHost: rebind.example\r\nConnection: close\r\n\r\n"
+                  .getBytes(StandardCharsets.UTF_8));
+      String response =
+          new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      assertTrue(response.startsWith("HTTP/1.1 403"), response);
+    }
+
+    try (Socket socket = new Socket("127.0.0.1", api.port())) {
+      socket
+          .getOutputStream()
+          .write(
+              ("GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:" + api.port() + "\r\nConnection: close\r\n\r\n")
+                  .getBytes(StandardCharsets.UTF_8));
+      String response =
+          new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      assertTrue(response.startsWith("HTTP/1.1 200"), response);
+    }
+  }
+
+  @Test
+  void aRequestBodyTooLargeToBeASettingsFormIsRefused() throws Exception {
+    HttpResponse<String> response =
+        post("/api/config", "{\"system\":\"" + "x".repeat(1024 * 1024 + 64) + "\"}");
+
+    assertEquals(413, response.statusCode(), response.body());
+    assertTrue(response.body().contains("larger than"), response.body());
+  }
+
+  @Test
+  void usageReportsAContextEstimate() throws Exception {
+    JsonNode usage = json("/api/status").path("usage");
+    assertTrue(usage.has("contextTokens"), usage.toString());
+    assertTrue(usage.path("contextLimit").asInt() >= 0, usage.toString());
+    // What a session spent is a token count, not a price: ccj does not carry a
+    // rate table, so a money field would be a number the user cannot check.
+    assertFalse(usage.has("costUsd"), usage.toString());
+    assertFalse(usage.has("priceAsOf"), usage.toString());
+  }
+
+  @Test
+  void aTurnIsOverBeforeTheDoneEventAnnouncesIt() throws Exception {
+    // A page reacts to `done` by letting the user send again. If the server were still busy at that
+    // moment, the next message would be refused with 409 — and the composer would stay disabled
+    // until something else happened to publish a status. So the status a client sees immediately
+    // before `done` must already say the turn is over.
+    List<AgentHub.Event> seen = new CopyOnWriteArrayList<>();
+    hub.subscribe(seen::add);
+    provider.reply(new Message.Assistant("all done", List.of()));
+
+    hub.submit("hello");
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline
+        && seen.stream().noneMatch(event -> event.type().equals("done"))) {
+      Thread.sleep(10);
+    }
+
+    int done = -1;
+    for (int i = 0; i < seen.size(); i++) {
+      if (seen.get(i).type().equals("done")) {
+        done = i;
+        break;
+      }
+    }
+    assertTrue(done > 0, "the turn must finish: " + seen.stream().map(AgentHub.Event::type).toList());
+    AgentHub.Event before = seen.get(done - 1);
+    assertEquals("status", before.type(), "the state is settled before the turn says it is");
+    assertFalse(before.payload().path("busy").asBoolean(true), before.payload().toString());
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private static Message.Assistant call(String name, String field, String value) {
@@ -1375,6 +2234,12 @@ class WebApiTest {
     throw new AssertionError("no entry matched in " + array);
   }
 
+  private static List<String> languages(JsonNode config) {
+    List<String> values = new ArrayList<>();
+    config.path("languages").forEach(entry -> values.add(entry.path("value").asText()));
+    return values;
+  }
+
   private static List<String> levels(JsonNode config) {
     List<String> levels = new ArrayList<>();
     config.path("reasoningLevels").forEach(level -> levels.add(level.asText()));
@@ -1395,6 +2260,14 @@ class WebApiTest {
 
   private static JsonNode providerOf(JsonNode catalog, String name) {
     return lastWhere(catalog.path("providers"), entry -> entry.path("name").asText().equals(name));
+  }
+
+  private static List<String> strings(JsonNode array) {
+    List<String> out = new ArrayList<>();
+    if (array != null && array.isArray()) {
+      array.forEach(entry -> out.add(entry.asText()));
+    }
+    return out;
   }
 
   private static List<String> modelsOf(JsonNode provider) {
@@ -1515,6 +2388,49 @@ class WebApiTest {
       return raw().stream().map(SseEvent::payload).toList();
     }
 
+    /** The events that belong to one session, which is what one page renders. */
+    List<JsonNode> forSession(String sessionId) {
+      List<JsonNode> matches = new ArrayList<>();
+      for (JsonNode event : snapshot()) {
+        if (sessionId.equals(event.path("sessionId").asText())) {
+          matches.add(event);
+        }
+      }
+      return matches;
+    }
+
+    /** Waits until {@code sessionId} has at least {@code count} events of {@code type}. */
+    JsonNode awaitInSession(String sessionId, String type, int count, long millis)
+        throws InterruptedException {
+      long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+      while (System.nanoTime() < deadline) {
+        List<JsonNode> seen =
+            forSession(sessionId).stream()
+                .filter(event -> type.equals(event.path("type").asText()))
+                .toList();
+        if (seen.size() >= count) {
+          return seen.get(seen.size() - 1);
+        }
+        Thread.sleep(10);
+      }
+      throw new AssertionError(
+          "fewer than "
+              + count
+              + " '"
+              + type
+              + "' events for session "
+              + sessionId
+              + " within "
+              + millis
+              + "ms; saw "
+              + snapshot());
+    }
+
+    /** True when any event was published without saying which session it belongs to. */
+    boolean anyEventWithoutSession() {
+      return snapshot().stream().anyMatch(event -> event.path("sessionId").asText().isEmpty());
+    }
+
     @Override
     public void close() {
       try {
@@ -1533,9 +2449,22 @@ class WebApiTest {
     private final List<Provider.Request> requests = new CopyOnWriteArrayList<>();
     private volatile CountDownLatch gate;
     private int[] usage;
+    /** Reasoning the next turn should emit and carry, or null for a turn that does not think. */
+    private String reasoning;
 
     MockProvider(String name) {
       this.name = name;
+    }
+
+    /**
+     * Makes the coming turns think out loud.
+     *
+     * <p>Both halves matter: the deltas go to the listener (so the page renders them live) and the
+     * same text goes into the returned turn (so it is persisted, which is what a later replay reads).
+     */
+    MockProvider emitReasoning(String text) {
+      this.reasoning = text;
+      return this;
     }
 
     MockProvider reply(Message.Assistant assistant) {
@@ -1582,6 +2511,15 @@ class WebApiTest {
           script.isEmpty()
               ? Message.Assistant.text("(no scripted reply left)")
               : script.poll();
+      String thinking = reasoning;
+      if (thinking != null && !thinking.isEmpty()) {
+        listener.accept(new Event.ReasoningDelta(thinking));
+        next =
+            new Message.Assistant(
+                next.text(),
+                next.toolCalls(),
+                List.of(Message.Thinking.of(thinking, "sig-" + thinking.length())));
+      }
       if (!next.text().isEmpty()) {
         listener.accept(new Event.TextDelta(next.text()));
       }

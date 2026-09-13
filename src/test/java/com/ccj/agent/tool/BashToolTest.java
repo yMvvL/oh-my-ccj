@@ -55,6 +55,61 @@ class BashToolTest {
   }
 
   @Test
+  void commandsThatReadStdinSeeTheEndOfItInsteadOfHanging() throws Exception {
+    // The bug: the child's stdin pipe was never closed, so `cat` with no arguments waited for input
+    // that could not come and the call only returned when the timeout killed it.
+    long started = System.nanoTime();
+
+    ToolResult result =
+        new BashTool()
+            .execute(
+                "{\"command\":\"cat; echo done\",\"timeout_seconds\":10}",
+                new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
+    assertFalse(result.error(), result.content());
+    assertTrue(result.content().contains("done"), result.content());
+    assertTrue(elapsedMillis < 5_000, "it must not wait for input: " + elapsedMillis + "ms");
+  }
+
+  @Test
+  void aCharacterCutInHalfByTheOutputBudgetIsDroppedRatherThanMangled() throws Exception {
+    // 59 bytes of head, a three-byte character, then enough tail to fill the budget: the character
+    // straddles the head's cut, and half of it must not become a replacement glyph.
+    String command = "printf 'a%.0s' {1..59}; printf '中'; printf 'b%.0s' {1..200}";
+
+    ToolResult result =
+        new BashTool()
+            .execute(
+                "{\"command\":\"" + command + "\"}",
+                new ToolContext(dir, Approver.ALWAYS, 100));
+
+    assertFalse(result.error(), result.content());
+    assertFalse(result.content().contains("\uFFFD"), result.content());
+    assertTrue(
+        result.content().contains("a".repeat(59) + "\n... omitted"),
+        "the head keeps every whole byte: " + result.content());
+    assertTrue(result.content().endsWith("b".repeat(40)), result.content());
+  }
+
+  @Test
+  void outputThatFitsIsDecodedAsOneBuffer() throws Exception {
+    // Nothing is dropped, so the two buffers are contiguous: a character straddling their boundary
+    // must survive intact instead of being lost between two decodes.
+    String command = "printf 'a%.0s' {1..59}; printf '中'; printf 'b%.0s' {1..38}";
+
+    ToolResult result =
+        new BashTool()
+            .execute(
+                "{\"command\":\"" + command + "\"}",
+                new ToolContext(dir, Approver.ALWAYS, 100));
+
+    assertFalse(result.error(), result.content());
+    assertTrue(result.content().contains("中"), result.content());
+    assertFalse(result.content().contains("omitted"), result.content());
+  }
+
+  @Test
   void truncatesChattyOutputWithAnOmissionMarker() throws Exception {
     ToolResult result =
         new BashTool()

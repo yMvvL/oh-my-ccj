@@ -80,6 +80,39 @@ class MessageCodecTest {
   }
 
   @Test
+  void thinkingBlocksSurviveTheRoundTripAndCostNothingWhenAbsent() {
+    // Extended thinking has to be handed back to the API verbatim, which means the session file is
+    // where a signature has to survive: a lost signature is a turn the API refuses.
+    Message.Assistant thinking =
+        new Message.Assistant(
+            "answer",
+            List.of(new Message.ToolCall("call_1", "read", "{}")),
+            List.of(
+                Message.Thinking.of("weighing the options", "sig-abc"),
+                Message.Thinking.redacted("opaque")));
+
+    Message decoded = MessageCodec.fromJson(MessageCodec.toJson(thinking));
+
+    assertEquals(thinking, decoded);
+    assertEquals(2, ((Message.Assistant) decoded).thinking().size());
+    assertTrue(((Message.Assistant) decoded).thinking().get(1).redacted());
+
+    // A turn without thinking is written exactly as it was before thinking existed.
+    Message.Assistant plain = new Message.Assistant("answer", List.of());
+    assertEquals(
+        "{\"type\":\"assistant\",\"text\":\"answer\",\"tool_calls\":[]}",
+        MessageCodec.toJson(plain));
+
+    // And an empty block — a stream cut before it carried anything — is dropped rather than kept as
+    // something the API would reject.
+    Message.Assistant empty =
+        (Message.Assistant)
+            MessageCodec.fromJson(
+                "{\"type\":\"assistant\",\"text\":\"x\",\"tool_calls\":[],\"thinking\":[{\"text\":\"\"}]}");
+    assertTrue(empty.thinking().isEmpty());
+  }
+
+  @Test
   void malformedFieldsAreRejected() {
     assertThrows(
         IllegalArgumentException.class, () -> MessageCodec.fromJson("{\"type\":\"user\"}"));

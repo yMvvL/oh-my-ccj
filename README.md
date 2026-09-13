@@ -2,7 +2,7 @@
 
 A coding agent runtime written from scratch in plain Java 21. No agent framework, no HTTP client
 library, no CLI library — `java.net.http` for transport, `com.sun.net.httpserver` for the web UI and
-the test doubles, 7.4k lines of hand-written Java plus a 2.7k-line vanilla page, 184 tests.
+the test doubles, 11.1k lines of hand-written Java plus a 7.1k-line vanilla page, 345 tests.
 
 `ccj` streams a conversation with a model, lets the model call tools that touch your filesystem,
 feeds the results back, and repeats until the model answers. It is a small, readable implementation
@@ -48,11 +48,12 @@ ln -sfn "$PWD/ccj" ~/.local/bin/ccj           # ~/.local/bin is on PATH by defau
 cd ~/some/other/project && ccj -p "explain this repo"
 ```
 
-The launcher runs `java -jar target/ccj.jar` and rebuilds when a file under `src/main` is newer than
-the jar, so the symlink can never run stale code. Tools resolve relative paths against the directory
-you started `ccj` in (`-C` overrides it); sessions live under `~/.oh-my-ccj` and are shared across
-projects (`--home` isolates them). The key lives in the environment or the config file — `ccj`
-is a small program, not a service.
+The launcher runs `java -jar target/ccj.jar` and rebuilds when any file under `src/main` — the page
+included, not just the sources — or `pom.xml` is newer than the jar, so the symlink cannot run stale
+code. Tools resolve relative paths against the active workspace, which is the directory you started
+`ccj` in until you pick another one (`-C` overrides it for one run, and the session says so);
+sessions live under `~/.oh-my-ccj` and are shared across projects (`--home` isolates them). The key
+lives in the environment or the config file — `ccj` is a small program, not a service.
 
 ### Try it without an API key
 
@@ -77,15 +78,22 @@ ccj --repl                # the terminal front end instead
 
 The page streams the assistant's prose, shows every tool call as a card with its arguments, timing and
 output, and renders an approval request as a blocking card with Approve / Deny — because that is
-exactly what it is: the loop thread is parked until someone answers, and a timeout denies. Sessions
-are the same JSONL files the CLI uses, so a conversation started in the terminal can be resumed in
-the browser and vice versa. `--port` moves it, `--host` binds another interface, and binding
+exactly what it is: the loop thread is parked until someone answers, and a timeout denies. Answers
+arrive as markdown and are rendered as markdown (headings, lists, tables, fenced code, links) while
+they stream. Sessions are the same JSONL files the CLI uses, so a conversation started in the
+terminal can be resumed in the browser and vice versa. `--port` moves it, `--host` binds another
+interface, and binding
 anything but loopback **requires** `--web-token` — the UI can run shell commands, so an unauthenticated
 network bind is a remote code execution surface. With a token, the printed URL carries it and the
-server stores it in an HttpOnly cookie, so the browser never needs token plumbing.
+server stores it in an HttpOnly cookie, so the browser never needs token plumbing. Without a token
+the server also insists on a loopback `Host` header: any page you open can POST to `127.0.0.1`
+without a preflight, and DNS rebinding would let it read the answers, so a request addressed to
+another name is refused rather than served.
 
-Model settings — provider, model, base URL, API key, step and temperature limits — live in the UI
-itself (`Settings`), and `Test connection` sends one tiny request to check them before saving. The
+Model settings — provider, model, base URL, API key and temperature — live in the UI itself
+(`Settings`), and `Test connection` sends one tiny request to check them before saving. The effort
+tier is picked above the message box instead. The context budget is deliberately not in the form: it
+is `--max-context-tokens`, `CCJ_MAX_CONTEXT_TOKENS` or `"maxContextTokens"` in the config file. The
 key is never sent back to the browser, only whether one exists and where it comes from. See
 [docs/WEBUI.md](docs/WEBUI.md).
 
@@ -95,17 +103,24 @@ key is never sent back to the browser, only whether one exists and where it come
 |---|---|
 | Providers | Any OpenAI-compatible endpoint (`/chat/completions`, SSE) and Anthropic (`/v1/messages`, SSE). Streaming with incremental tool-call assembly, retry with backoff on 408/429/5xx. |
 | Custom providers | Define your own provider in the settings panel or over HTTP: a name, a protocol, an endpoint, an optional key variable and the models it serves. A relay, a gateway, a local vLLM or your own API router is a definition, not a release. The model list of **any** provider — built-ins included — is editable and persisted, so a hand-typed model is a remembered choice rather than a one-off. Providers you do not use can be removed from the picker outright: your own definitions are deleted and the compiled-in aliases leave the list (the list becomes explicit, and adding one back is an ordinary add). |
-| Tools | `read`, `write`, `edit`, `bash`, `glob`, `grep` — each with a hand-written JSON Schema and self-describing errors. |
-| Loop | One model turn at a time; every requested tool runs, its result goes back, and the model is asked again. Bounded by `--max-steps`. |
+| Endpoint and key | They belong to the provider they were entered for, and the config file keeps one pair per provider: the one in effect plus a `remembered` entry for each other provider you have configured. Switching provider loads that provider's pair instead of passing the old one on, so a session cannot end up billing the provider it just left — and switching back does not ask you to paste the key again. |
+| Tools | `read`, `write`, `edit`, `bash`, `glob`, `grep` — each with a hand-written JSON Schema and self-describing errors. `bash` runs the command with its stdin already closed, so `cat`, `sort` or a script's `read` sees end-of-input instead of waiting for a terminal that is not there. The read-only three declare themselves as such, and a run of them in one turn executes concurrently. |
+| Loop | One model turn at a time per conversation; every requested tool runs, its result goes back, and the model is asked again. No step ceiling — a turn ends when the model answers or when you abort it, because a cap cannot tell a model stuck in a rut from one working through a long task. Abort is real: a running shell command is killed rather than waited out. |
+| Context budget | `--max-context-tokens` (or `CCJ_MAX_CONTEXT_TOKENS`, or the config file) caps what one request carries, in estimated tokens. Over it, old tool output is elided first, then whole older exchanges are dropped — never splitting an assistant turn from the results of the calls it made — and if the exchange being answered still does not fit, its largest result is cut short with an explicit marker. The session file keeps everything; only the request is a projection, and the transcript says what was trimmed. |
+| Context | The side panel reports the estimated prompt size against the budget (`--max-context-tokens`), so you can see a session about to be trimmed before the transcript says it was. It is an estimate and labelled as such: token counting is a heuristic. No money is shown — a price is an assumption about a rate card that changes without telling ccj. |
 | Usage | Prompt/output tokens, steps, tool calls and the **cache hit rate** per session, parsed from both protocols (`prompt_tokens_details.cached_tokens`, `prompt_cache_hit_tokens`, `cache_read_input_tokens`), shown live in the side panel and in each turn's token line, and persisted with the session so resuming continues the count. |
-| Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, created on the first message (an empty session leaves no file), resumable with `--resume` / `--continue`, replayed into the transcript when the UI opens one, and deletable one at a time or all at once from the sidebar — including in a workspace you are not currently in. |
+| Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, created on the first message (an empty session leaves no file), resumable with `--resume` / `--continue`, replayed into the transcript when the UI opens one, and deletable one at a time or all at once from the sidebar — including in a workspace you are not currently in. The sidebar labels each one with the first thing you asked it, since a list of timestamp ids says nothing about which task it was. A turn that an interruption left without its tool results (`Ctrl-C` between the call and its execution, or a killed process) is repaired for the next request instead of being refused forever, and so is a turn whose answers ended up displaced by a message written in the middle of them — the answers are carried back into the turn that asked, because a `tool` message the API cannot place is a rejected request. |
 | Approval | Anything that writes or executes asks first; without a terminal it is denied, not silently allowed. |
 | Rendering | Streaming prose, tool cards with argument summaries, per-call timing, dimmed reasoning, a spinner that yields the terminal to prompts. |
+| Markdown | An answer is markdown and is rendered as such in the browser: headings, lists (nested, with task boxes), fenced code with its language, tables with alignment, quotes, inline code, emphasis and links — parsed from the streaming deltas, so a half-arrived answer is readable and the blocks above the one still being written are never re-drawn. Raw HTML in an answer is shown as text, images are not fetched, and a link's scheme is filtered. |
 | Themes | Light/dark/system, remembered per browser, applied before the first paint. |
+| Thinking language | One setting in Settings, kept in `config.json` (or `--language` / `CCJ_LANGUAGE` for a run). The answer always comes back in the chosen language, whatever language you wrote in, and the prompt asks for the *thinking* in it too — which some models honour and some do not; the settings hint says so rather than promising it. `auto` says nothing at all. |
 | Effort tiers | A picker above the message box: provider → model → `default`/`low`/`high`/`max`, translated per protocol (`reasoning_effort` for OpenAI-shaped APIs, extended-thinking budgets for Anthropic). `default` sends nothing, so ordinary models are unaffected. |
-| Folder picker | "Add workspace" can open the desktop's own folder chooser (`zenity`, `kdialog` or Swing) because a browser cannot hand back an absolute path; typing one always works too. |
-| Workspaces | A VS Code-style sidebar: every workspace is a folder that expands to its own sessions, with lazy loading, per-row delete and per-node remove. Named directories with their own session history — the workspace `ccj` starts in keeps the original sessions directory, added ones get their own under `<home>/workspaces/<name>/`. Switching changes the working directory *and* the history in one move, and reading a folded folder never moves the session you are in. |
+| Folder picker | "Add workspace" *is* the folder picker: one click opens the desktop's own chooser (`zenity`, `kdialog` or Swing) and the folder that comes back becomes the workspace under its own name, with a suffix if that name is taken. A machine with no chooser falls back to the form the same click opens, so typing a path — or browsing to one with the same chooser — always works. |
+| Workspaces | A VS Code-style sidebar: every workspace is a folder that expands to its own sessions, with lazy loading, per-row delete and per-node remove. A row is labelled by the first thing it was asked and is one click target end to end, and a finished turn re-reads the list so the conversation you just had is at the top. Named directories with their own session history — the workspace `ccj` starts in keeps the original sessions directory, added ones get their own under `<home>/workspaces/<name>/`. Switching changes the working directory *and* the history in one move, the active workspace is where the tools run no matter where the process was started, and reading a folded folder never moves the session you are in. |
 | Web UI | `ccj` serves the same loop as a single page: streaming transcript, tool cards, blocking approval prompts, session switching, and a settings panel that configures the model at runtime. No framework, no build step. |
+| Several conversations at once | A turn running in one session does not lock the server: start a second task in another conversation while the first is still working, and the sidebar marks the sessions that are running (■ stops one from anywhere, without opening it). What each session still takes is *one* turn at a time — two writers on one transcript is how it gets corrupted — and the operations that change what every conversation is built on (the model, the config file, the workspace) wait until nothing is running. Payloads of messages carry their session id, so a delta from a background turn can never be rendered into the transcript you are reading. |
+| Self-bootstrap | The agent can rebuild this project and install the result: `mvn -q -DskipTests -Djar.name=ccj-next package` writes a scratch jar without touching the one in use (truncating a jar a JVM is executing is how the process dies mid-build), then `restart` renames it into place and the launcher starts the new code — **on the conversation you were on**: the ending process writes that session id down and the next one opens it, so a restart no longer hands you an empty transcript. See [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md). |
 
 ## Usage
 
@@ -131,18 +146,25 @@ Model:
           --api-key-env <var>  environment variable holding the API key
           --temperature <n>    sampling temperature
           --max-tokens <n>     response token cap
-          --max-steps <n>      model turns per user input (default 25)
+          --max-context-tokens <n>
+                               prompt budget: above it, old tool results are elided and older
+                               exchanges dropped before the request is sent
+          --reasoning <level>  how much the model should think: low, high or max
           --system <text>      system prompt for this run
 
 Sessions:
           --resume <id>        reopen a session by id
           --continue           reopen the most recent session
           --list-sessions      print sessions and exit
+          --workspace <name>   use a workspace: its directory and its own sessions
+          --language <name>    think and answer in this language (auto: let the model decide)
 
 Web:
           --port <n>           web UI port (default 6767)
           --host <addr>        bind address (default 127.0.0.1; anything else needs --web-token)
           --web-token <token>  require this token from every web request
+          --wallpapers <dir>   pictures the page rotates as its background
+                               (default: ~/Pictures/ccj-backgrounds, or CCJ_WALLPAPERS)
 
 Runtime:
           --config <file>      config file (default: <home>/config.json)
@@ -173,7 +195,6 @@ command-line flags.
   "apiKeyEnv": "OPENAI_API_KEY",
   "temperature": 0.2,
   "maxTokens": 4096,
-  "maxSteps": 25,
   "autoApprove": false,
   "outputLimitBytes": 32768,
   "systemPrompt": "optional override"
@@ -183,8 +204,10 @@ command-line flags.
 | Environment variable | Meaning |
 |---|---|
 | `CCJ_PROVIDER`, `CCJ_MODEL`, `CCJ_BASE_URL`, `CCJ_API_KEY`, `CCJ_API_KEY_ENV` | model selection and credentials |
-| `CCJ_TEMPERATURE`, `CCJ_MAX_TOKENS`, `CCJ_MAX_STEPS`, `CCJ_OUTPUT_LIMIT_BYTES` | sampling and limits |
+| `CCJ_TEMPERATURE`, `CCJ_MAX_TOKENS`, `CCJ_OUTPUT_LIMIT_BYTES` | sampling and output limits |
+| `CCJ_REASONING`, `CCJ_MAX_CONTEXT_TOKENS` | reasoning effort, prompt budget |
 | `CCJ_AUTO_APPROVE`, `CCJ_SYSTEM_PROMPT` | approval mode and prompt override |
+| `CCJ_WALLPAPERS` | pictures the page rotates as its background |
 | `CCJ_HOME` | application home directory |
 
 `model` can be omitted for `openai` and `anthropic`: the defaults are `gpt-4o-mini` and
@@ -208,9 +231,11 @@ error output show at most `***1234`.
 | `bash` | `command`, `cwd?`, `timeout_seconds?` | `/bin/bash -lc`, stderr merged, exit code reported, output capped with head+tail |
 | `glob` | `pattern`, `path?` | relative-path globbing incl. `**`, newest first, skips `target/`, `.git/`, `node_modules/`, `.idea/` |
 | `grep` | `pattern`, `path?`, `glob?`, `ignore_case?`, `max_results?` | Java regex, skips binaries and files over 2 MiB |
+| `restart` | `built` | installs a scratch build over the jar in use and restarts on it; ends the run. See [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) |
 
 Tool failures never kill the session: bad arguments, unknown tool names, missing files and thrown
-exceptions all come back as error results the model can read and correct.
+exceptions all come back as error results the model can read and correct. `restart` is the one tool
+that ends the run on purpose — and only when it worked.
 
 ### Safety model
 
@@ -248,12 +273,45 @@ sense next to the files it was about:
 ccj --workspace api            # this run works in api's directory, with api's sessions
 ```
 
-In the browser the workspace switcher does the same thing, and adding one from there creates the
-directory if it does not exist. The registry is `~/.oh-my-ccj/workspaces.json`; the workspace you
+The active workspace is where the tools run, whichever directory `ccj` was started from — the one it
+started in is only used to pick a workspace when the registry is empty, never to move the working
+directory. `-C <dir>` is the one exception, a per-run override, and a session using it says so
+instead of letting the workspace tree imply otherwise.
+
+In the browser the workspace switcher does the same thing, and adding one from there is a single
+click: **Add workspace** opens the desktop's own folder chooser, and the folder that comes back
+becomes the workspace — its name is the folder's, with a numeric suffix if that name is taken, and a
+directory already in the list is refused rather than given a second history. The directory is created
+if it does not exist. The registry is `~/.oh-my-ccj/workspaces.json`; the workspace you
 first started `ccj` in stays mapped to the top-level `~/.oh-my-ccj/sessions`, so sessions from before
 workspaces existed are still there. Model settings are deliberately **not** per workspace — a key and
 a model belong to the account, not to a folder. Forgetting a workspace never deletes conversation
 files.
+
+## Providers, endpoints and keys
+
+`baseUrl`, `apiKey` and `apiKeyEnv` describe a *provider*, not the session, so `config.json` keeps one
+pair per provider: the fields in effect at the top level (marked with `settingsFor`) and a `remembered`
+entry for every other provider you have entered one for.
+
+```json
+{
+  "provider": "CommandCode",
+  "model": "deepseek/deepseek-v4.1-flash",
+  "apiKey": "…",
+  "settingsFor": "CommandCode",
+  "remembered": { "deepseek": { "apiKey": "…", "baseUrl": "https://api.deepseek.com" } }
+}
+```
+
+Switching provider moves the pair being left into `remembered` and takes the new provider's pair back
+out, so switching is free in both directions and a key never migrates: it is sent only to the provider
+it was entered for, with that provider's endpoint. A provider with no remembered pair is served by its
+own definition (`providers.json`) or by the built-in defaults. Clearing the key field with a provider
+selected forgets that provider's key; every other provider's is untouched. The settings form says
+"saved" per provider (`rememberedProviders` carries names only, never a key), because a form that
+promises a key it will not send is how the wrong endpoint gets written down again. The file only
+records what you chose — a defaulted endpoint or key variable is left out and re-derived on load.
 
 ## Architecture
 
@@ -278,7 +336,7 @@ mappings and the reasoning behind the design.
 ## Development
 
 ```bash
-mvn test                                  # 223 tests, no network, no API key
+mvn test                                  # 436 tests, no network, no API key
 mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
 mvn -Dtest=WebApiTest test                # HTTP + SSE + approval handshake only
 mvn -DskipTests package                   # fat jar
@@ -292,30 +350,45 @@ file on disk, session written.
 
 | Area | Tests |
 |---|---|
-| providers (SSE parsing, both wire mappings, retry policy, custom definitions, effort tiers) | 37 |
-| tools (matching, truncation, timeouts, denial paths) | 34 |
-| core (loop behaviour, config precedence, config persistence) | 26 |
-| session (codec round-trips, append/reopen, listing) | 19 |
-| CLI (argument parsing, mode selection) | 10 |
-| end-to-end (CLI → HTTP → tool → disk) | 9 |
-| web API (HTTP, SSE, approvals, token gate, settings, workspaces, deletion, models, providers) | 40 |
-| workspaces (registry rules, persistence, isolation) | 7 |
+| providers (SSE parsing, both wire mappings, retry policy, custom definitions, effort tiers, catalogue) | 75 |
+| tools (matching, truncation, timeouts, cancellation, denial paths) | 41 |
+| core (loop behaviour, tool overlap, abort reaching a streaming model call, a project's own CCJ.md rules, context budget, token estimate, config precedence, per-provider settings, interrupted-history repair, the thinking-language prompt) | 99 |
+| session (codec round-trips including thinking, append/reopen, the listing cache, the restart handover note) | 44 |
+| CLI (argument parsing, mode selection, port suggestion) | 13 |
+| end-to-end (CLI → HTTP → tool → disk, reasoning, budget, where tools run, CCJ.md reaching the request, a restart landing on the same conversation) | 25 |
+| web API (HTTP, SSE, approvals surviving a session switch, refusal by session, sessions running side by side, opening a busy session, token gate, host guard, settings, workspaces, deletion, models, providers) | 99 |
+| web rendering (the markdown, session-row and add-workspace cases, run under node) | 8 |
+| restart (the swap, its refusals, and that nothing happens without approval) | 8 |
 | folder chooser (subprocess plumbing, timeout, single-dialog guard) | 5 |
-| provider registry and catalogue | 8 |
+| workspaces (registry rules, persistence, isolation, naming a picked folder) | 11 |
 | demo provider (routing, termination) | 8 |
 
 ## Limitations
 
-- One turn at a time: no parallel tool execution, no sub-agents.
+- One conversation at a time per session: no sub-agents inside a conversation, but several
+  conversations run side by side (see the web UI row below). Only read-only tools run concurrently,
+  because they are the only ones whose overlap cannot change what the transcript means.
 - Text only: no image or file attachments on the wire.
 - No MCP, no plugins, no sandboxing — approval is the only guard, and `--yolo` removes it.
 - Bash runs as the current user with your full environment.
-- Sessions grow without bound; there is no compaction or summarisation.
+- Sessions grow without bound on disk. What does not fit the context budget is elided or dropped, not
+  summarised: a model that gets a summary of a file read twenty turns ago cannot tell which parts of
+  it were quoted and which were invented.
+- A turn has no step ceiling, so a model that gets stuck will keep calling tools until you abort it.
+  That is the trade: a long task is never cut off at a number somebody guessed, and stopping a stuck
+  one is a decision you make while watching it rather than a guess made in advance.
 - `cacheHitRate` is `n/a` unless the provider reports cache figures — a local model has no cache to
   hit and is not reported as 0%. Usage totals cover one session (they are stored beside the
   conversation, one record per turn), not a whole project or a billing period.
 - The OpenAI path targets the chat-completions API, not the newer Responses API.
 - The API key is stored in plaintext when you let the UI save it (the file is `0600`); keeping it
   in the environment instead is one dropdown away.
-- The web UI is a local console: one turn at a time, one session, no accounts. It binds loopback by
-  default and refuses a public bind without a token, because the agent can run shell commands.
+- The web UI is a local console: several conversations can work at once, but one browser page shows
+  one transcript, and there are no accounts. It binds loopback by default and refuses a public bind
+  without a token, because the agent can run shell commands.
+- Several conversations can be running in the same workspace, which means their tools can write the
+  same files with no ordering between them. That is the same exposure as two terminals in one
+  directory, and it is deliberately not serialised — the point is to start a task and keep working.
+- `abort` stops a turn between steps and before each tool call, so a turn blocked on the model's own
+  network call finishes that call before it stops. A turn waiting for an approval stops immediately,
+  in the conversation it belongs to.

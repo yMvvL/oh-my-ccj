@@ -71,11 +71,77 @@ class WorkspaceStoreTest {
   }
 
   @Test
+  void addingADirectoryNamesTheWorkspaceAfterTheFolder() throws IOException {
+    WorkspaceStore store = WorkspaceStore.open(tmp, startDir());
+    Path project = Files.createDirectories(tmp.resolve("my-project"));
+
+    Workspace added = store.add(project);
+
+    assertEquals("my-project", added.name(), "the folder names the workspace");
+    assertEquals(project, added.path());
+    assertEquals(tmp.resolve("workspaces/my-project/sessions"), added.sessionsDir());
+    assertEquals("proj", store.activeName(), "adding a picked folder does not switch");
+  }
+
+  @Test
+  void aTakenFolderNameGetsASuffixInsteadOfAnError() throws IOException {
+    WorkspaceStore store = WorkspaceStore.open(tmp, startDir());
+    Path one = Files.createDirectories(tmp.resolve("one/api"));
+    Path two = Files.createDirectories(tmp.resolve("two/api"));
+
+    assertEquals("api", store.add(one).name());
+    assertEquals("api-2", store.add(two).name(), "the second api is not refused, it is suffixed");
+    assertEquals(List.of("proj", "api", "api-2"), store.names());
+
+    // The suffix keeps names inside the 40-character ceiling rather than pushing past it.
+    Path longPath = Files.createDirectories(tmp.resolve("three/" + "n".repeat(40)));
+    assertEquals(40, store.add(longPath).name().length());
+    Path longPathTwo = Files.createDirectories(tmp.resolve("four/" + "n".repeat(40)));
+    String suffixed = store.add(longPathTwo).name();
+    assertTrue(suffixed.length() <= 40 && suffixed.endsWith("-2"), suffixed);
+    assertEquals(2, store.names().stream().filter(name -> name.startsWith("n")).count());
+  }
+
+  @Test
+  void aFolderIsNamedWhateverTheUserCalledIt() throws IOException {
+    WorkspaceStore store = WorkspaceStore.open(tmp, startDir());
+
+    // A chosen folder is a real folder, and real folders have spaces and CJK names. Refusing them
+    // would make the chooser useless for those people, so what stays out is only what would change
+    // what the name means as a path.
+    assertEquals("my project", store.add(Files.createDirectories(tmp.resolve("my project"))).name());
+    assertEquals(".config", store.add(Files.createDirectories(tmp.resolve(".config"))).name());
+    assertEquals("数学", store.add(Files.createDirectories(tmp.resolve("数学"))).name());
+    assertEquals("конспект-2026", store.add(Files.createDirectories(tmp.resolve("конспект-2026"))).name());
+    assertEquals(List.of("proj", "my project", ".config", "数学", "конспект-2026"), store.names());
+  }
+
+  @Test
+  void aNameThatWouldChangeWhatThePathMeansIsRefused() throws IOException {
+    WorkspaceStore store = WorkspaceStore.open(tmp, startDir());
+
+    // A name is a directory name and an argument: a leading dash reads as a flag, and the separators
+    // and the dot entries are the ones that would move where the sessions land. A name that only
+    // starts with a dot is a workspace like any other — it is a real folder, with a real name.
+    for (String odd : List.of("-dashed", "..", ".", "a/b")) {
+      IllegalArgumentException refused =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> store.add(odd, tmp.resolve("x")),
+              "must refuse " + odd);
+      assertTrue(refused.getMessage().contains("path separator"), refused.getMessage());
+    }
+    IllegalArgumentException empty =
+        assertThrows(IllegalArgumentException.class, () -> store.add("   ", tmp.resolve("x")));
+    assertTrue(empty.getMessage().contains("path separator"), empty.getMessage());
+  }
+
+  @Test
   void rejectsBadNamesDuplicatesAndUnusableActiveRemoval() throws IOException {
     WorkspaceStore store = WorkspaceStore.open(tmp, startDir());
     store.add("api", tmp.resolve("api"));
 
-    assertThrows(IllegalArgumentException.class, () -> store.add("has space", tmp.resolve("x")));
+    assertThrows(IllegalArgumentException.class, () -> store.add("a/b", tmp.resolve("x")));
     assertThrows(IllegalArgumentException.class, () -> store.add("", tmp.resolve("x")));
     assertThrows(IllegalArgumentException.class, () -> store.add("api", tmp.resolve("elsewhere")));
     assertThrows(IllegalArgumentException.class, () -> store.activate("nope"));
@@ -112,7 +178,7 @@ class WorkspaceStoreTest {
         {"active": "proj",
          "workspaces": [
            {"name": "proj", "path": "%s", "sessions": "sessions"},
-           {"name": "bad name", "path": "/nope"},
+           {"name": "-dashed", "path": "/nope"},
            {"name": "noPath"}
          ]}
         """

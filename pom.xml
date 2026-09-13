@@ -14,6 +14,11 @@
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
+    <!-- The jar a build writes. Overridable on purpose: `mvn package` truncates this file, and
+         truncating a jar that a JVM is executing kills that JVM. So a rebuild of this project while
+         it is running is done as `-Djar.name=ccj-next`, which never touches the live jar, and the
+         new one is renamed into place afterwards. See docs/BOOTSTRAP.md. -->
+    <jar.name>ccj</jar.name>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <jackson.version>2.18.2</jackson.version>
     <junit.version>5.11.4</junit.version>
@@ -35,7 +40,7 @@
   </dependencies>
 
   <build>
-    <finalName>ccj</finalName>
+    <finalName>${jar.name}</finalName>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -67,6 +72,7 @@
           </execution>
         </executions>
       </plugin>
+
     </plugins>
   </build>
 </project>

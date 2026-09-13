@@ -5,6 +5,7 @@ import com.ccj.agent.core.AgentOptions;
 import com.ccj.agent.core.AppPaths;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.Config;
+import com.ccj.agent.core.Prompts;
 import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolRegistry;
@@ -14,13 +15,16 @@ import com.ccj.agent.provider.ConfigModelCatalog;
 import com.ccj.agent.provider.ProviderStore;
 import com.ccj.agent.provider.Providers;
 import com.ccj.agent.session.FileSession;
+import com.ccj.agent.session.ResumePoint;
 import com.ccj.agent.session.SessionStore;
+import com.ccj.agent.tool.RestartTool;
 import com.ccj.agent.tool.Tools;
 import com.ccj.agent.ui.Ansi;
 import com.ccj.agent.ui.ConsoleRenderer;
 import com.ccj.agent.web.AgentHub;
 import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.web.HttpApi;
+import com.ccj.agent.web.Wallpapers;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -38,6 +42,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -51,7 +56,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>Failure policy: configuration and provider problems are reported on stderr and end the process
  * with 1; a bad flag is a usage error with 2; a failed turn inside the REPL is printed and the
- * session continues, because the conversation is exactly where the user wants to stay.
+ * session continues, because the conversation is exactly where the user wants to stay. One more
+ * status exists and it is not a failure: after {@code restart} installs a newly built jar, the run
+ * ends normally and reports {@link RestartTool#RESTART_EXIT}, which is how the launcher knows to
+ * start the new jar.
  */
 public final class Cli {
 
@@ -102,6 +110,11 @@ public final class Cli {
       return 0;
     }
 
+    // A restart request belongs to the run that made it. This process may run several — the test
+    // suite and any embedder call `Cli` more than once — and inheriting the last one's answer would
+    // make the next run report a restart it never asked for.
+    RestartTool.clearRequest();
+
     AppPaths paths =
         options.home() == null ? AppPaths.fromEnv(env) : new AppPaths(Path.of(options.home()));
     Path startDir = startingDir(options);
@@ -123,7 +136,12 @@ public final class Cli {
       return fail(err, e);
     }
     Path sessionsDir = workspaces.active().sessionsDir();
-    Path cwd = options.workspace() == null ? startDir : workspaces.active().path();
+    // The active workspace owns the working directory. It is what the sidebar, --workspace and the
+    // session history all point at, so the tools run there too: a run started from a different
+    // directory must not quietly work somewhere else, which is what made "the workspace is
+    // oh-my-ccj" and "the tools are running in your home" true at the same time. -C is the only
+    // override, and the status line says when it is in force.
+    Path cwd = options.cwd() == null ? workspaces.active().path() : startDir;
     Path cwdOverride = cwd.equals(workspaces.active().path()) ? null : cwd;
 
     if (options.listSessions()) {
@@ -187,7 +205,7 @@ public final class Cli {
     FileSession session = null;
     try {
       try {
-        session = openSession(options, sessionsDir);
+        session = openSession(options, sessionsDir, paths.home());
       } catch (RuntimeException e) {
         return fail(err, e);
       }
@@ -197,10 +215,15 @@ public final class Cli {
       AgentOptions agentOptions =
           new AgentOptions(
               options.demo() ? "demo" : config.model(),
-              config.systemPrompt(),
+              // The language is part of the prompt rather than a field of its own: it is one
+              // paragraph asking for one thing, and the model reads it where it reads every
+              // other rule. The working directory is passed too, so a project's own CCJ.md is read
+              // from it — the rules belong next to the code they are about.
+              Prompts.system(config.systemPrompt(), config.language(), cwd),
               config.temperature(),
               config.maxTokens(),
-              config.maxSteps(), null);
+              config.reasoning(),
+              config.maxContextTokens());
 
       if (options.demo() && options.print() == null) {
         out.println(
@@ -223,6 +246,7 @@ public final class Cli {
             session,
             env,
             providerStore,
+            paths.home(),
             out,
             err);
       }
@@ -243,7 +267,8 @@ public final class Cli {
             err);
       }
 
-      new Repl(
+      Repl repl =
+          new Repl(
               provider,
               tools,
               sessionsDir,
@@ -256,9 +281,26 @@ public final class Cli {
               renderer,
               in,
               out,
-              err)
-          .run();
-      return 0;
+              err);
+      try {
+        repl.run();
+        // A restart that ends the REPL is a finished run: the session is on disk, and the launcher
+        // is what starts the jar the restart installed.
+        if (RestartTool.restartRequested()) {
+          // The process is about to be replaced, and the new one starts on a fresh session unless
+          // it is told otherwise — so the conversation this REPL is on is written down for it. The
+          // REPL's own id is read here rather than the one it started with: /new and /resume move it.
+          ResumePoint.write(paths.home(), repl.sessionId());
+          err.println(
+              "restarting on the jar the agent installed — resuming session " + repl.sessionId());
+          err.flush();
+          return RestartTool.RESTART_EXIT;
+        }
+        return 0;
+      } finally {
+        // The REPL may have moved to another session (/new, /resume), and that one is the live one.
+        repl.closeSession();
+      }
     } finally {
       if (session != null) {
         session.close();
@@ -286,7 +328,7 @@ public final class Cli {
         newLoop(provider, tools, session, agentOptions, cwd, config, autoApprove, renderer, in, out, err);
     try {
       loop.run(prompt);
-      return 0;
+      return RestartTool.restartRequested() ? RestartTool.RESTART_EXIT : 0;
     } catch (RuntimeException e) {
       return fail(err, e);
     } finally {
@@ -352,7 +394,16 @@ public final class Cli {
     };
   }
 
-  private FileSession openSession(CliOptions options, Path sessionsDir) {
+  private FileSession openSession(CliOptions options, Path sessionsDir, Path home) {
+    // What a restart left behind: the conversation the previous process was on. It is read — and
+    // spent — before anything else, whatever this run ends up opening.
+    //
+    // It answers "where were we" once, for the process that follows the restart. Leaving it in place
+    // would drag some later start, long after and for no reason, back to a conversation the user has
+    // since moved on from.
+    Optional<String> previous = ResumePoint.read(home);
+    ResumePoint.clear(home);
+
     if (options.resume() != null) {
       return SessionStore.open(sessionsDir, options.resume());
     }
@@ -360,6 +411,17 @@ public final class Cli {
       List<SessionStore.Summary> all = SessionStore.list(sessionsDir);
       if (!all.isEmpty()) {
         return SessionStore.open(sessionsDir, all.get(0).id());
+      }
+    }
+    // Checked last, because an explicit --resume or --continue is the user telling this run where to
+    // go, and the note only remembers where the last one was.
+    if (previous.isPresent()) {
+      try {
+        return SessionStore.open(sessionsDir, previous.get());
+      } catch (RuntimeException e) {
+        // Deleted since, or it belongs to another workspace. "Open the last conversation" is not
+        // worth refusing to start over: this run begins on a fresh session instead.
+        return SessionStore.create(sessionsDir);
       }
     }
     return SessionStore.create(sessionsDir);
@@ -384,7 +446,8 @@ public final class Cli {
 
   private static Config demoConfig() {
     return new Config(
-        "demo", "demo", null, null, null, null, null, null, null, null, null, null);
+        "demo", "demo", null, null, null, null, null, null, null, null, null, null, null, null,
+        null);
   }
 
   /** The directory this run starts in: {@code -C} wins, otherwise the process directory. */
@@ -418,6 +481,7 @@ public final class Cli {
       FileSession session,
       Map<String, String> env,
       ProviderStore providerStore,
+      Path home,
       PrintStream out,
       PrintStream err) {
     String host =
@@ -448,26 +512,49 @@ public final class Cli {
             null,
             Boolean.TRUE.equals(config.autoApprove()) || options.yolo());
     AgentHub hub = new AgentHub(provider, config, tools, settings, session);
-    try (HttpApi api = HttpApi.start(hub, new InetSocketAddress(host, port), options.webToken())) {
+    Wallpapers wallpapers = Wallpapers.from(env, options.wallpapers());
+    try (HttpApi api =
+        HttpApi.start(hub, new InetSocketAddress(host, port), options.webToken(), wallpapers)) {
       out.println("oh-my-ccj " + VERSION + " — web UI: " + api.url());
       out.println(
           (provider == null
                   ? "no model configured — Settings in the UI"
-                  : "model " + agentOptions.model() + " (" + provider.name() + ")")
+                  // The configured name, not the implementation's: "openai" for a provider the user
+                  // called "CommandCode" hides which one is answering, which is how a session can
+                  // report one provider and bill another.
+                  : "model "
+                      + agentOptions.model()
+                      + " ("
+                      + (config.provider() == null ? provider.name() : config.provider())
+                      + ")")
               + " — session "
               + session.id()
-              + " — workspace "
-              + workspaces.activeName()
-              + " ("
-              + cwd
-              + ")");
+              + " — "
+              + (cwdOverride == null
+                  ? "workspace " + workspaces.activeName() + " (" + cwd + ")"
+                  : "workspace "
+                      + workspaces.activeName()
+                      + " (" + workspaces.active().path() + ") but -C puts the tools in " + cwd));
       out.println("Ctrl+C to stop");
       out.flush();
       if (!options.noOpen()) {
         openBrowser(api.url(), err);
       }
-      new CountDownLatch(1).await();
-      return 0;
+      // Serving runs until something stops it. Ctrl+C is one thing; `restart` is the other, and it
+      // cannot be a latch the hub completes, because the hub is wired after this point and the tool
+      // that decides is in the registry. Polling one boolean every 200 ms costs nothing and keeps
+      // the decision where it is made.
+      while (!RestartTool.restartRequested()) {
+        Thread.sleep(200);
+      }
+      // The new process has no idea which conversation was on screen; write it down so the front
+      // end comes back where the user left it instead of on an empty one.
+      ResumePoint.write(home, session.id());
+      err.println();
+      err.println(
+          "restarting on the jar the agent installed — resuming session " + session.id());
+      err.flush();
+      return RestartTool.RESTART_EXIT;
     } catch (IOException e) {
       err.println("error: cannot serve " + host + ":" + port + " — " + message(e));
       int free = freePortFrom(port + 1);
@@ -671,6 +758,13 @@ public final class Cli {
             continue;
           }
           turn(input);
+          if (RestartTool.restartRequested()) {
+            // The jar this process is running from is already the new one, so there is nothing left
+            // for this process to do: carrying on would keep the user typing at code that no longer
+            // exists on disk, and the launcher is what starts the jar the tool installed. The session
+            // is on disk, and the caller prints how to resume it.
+            break;
+          }
         }
       } finally {
         exiting.set(true);
@@ -736,7 +830,8 @@ public final class Cli {
                     agentOptions.system(),
                     agentOptions.temperature(),
                     agentOptions.maxTokens(),
-                    agentOptions.maxSteps(), null);
+                    agentOptions.reasoning(),
+                    agentOptions.maxContextTokens());
             rebuild();
             out.println("model set to " + argument);
           }
@@ -761,6 +856,20 @@ public final class Cli {
       session = next;
       sessionId.set(next.id());
       rebuild();
+    }
+
+    /**
+     * Closes the session the REPL finished on. {@link #useSession} already closed the one it
+     * replaced, so this is what keeps {@code /new} and {@code /resume} from leaving a second file
+     * handle open for the life of the process.
+     */
+    void closeSession() {
+      session.close();
+    }
+
+    /** The session the REPL is on now, which {@code /new} and {@code /resume} can move. */
+    String sessionId() {
+      return sessionId.get();
     }
 
     private void printHelp() {

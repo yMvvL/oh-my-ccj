@@ -44,8 +44,17 @@ public final class DiffPreview {
     if (oldText.equals(newText)) {
       return "(no change)";
     }
-    List<Op> ops = diff(lines(oldText), lines(newText));
-    return render(ops, Math.max(0, contextLines), Math.max(1, maxLines));
+    List<String> before = lines(oldText);
+    List<String> after = lines(newText);
+    if (before.equals(after)) {
+      // Identical lines, different bytes: the edit adds or removes a trailing newline. The line
+      // diff cannot see it, and answering "(no change)" for a write that does rewrite the file is
+      // the one thing an approval preview must never say.
+      return newText.length() > oldText.length()
+          ? "(a newline is added at the end of the file)"
+          : "(the newline at the end of the file is removed)";
+    }
+    return render(diff(before, after), Math.max(0, contextLines), Math.max(1, maxLines));
   }
 
   private record Op(char sign, String text) {}

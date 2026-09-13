@@ -23,15 +23,24 @@ import java.util.function.IntFunction;
  */
 final class FakeServer implements AutoCloseable {
 
-  /** A canned response: status, content type, and the body pieces written as separate chunks. */
-  record Reply(int status, String contentType, List<String> chunks) {
+  /**
+   * A canned response: status, content type, the body pieces written as separate chunks, and any
+   * extra response headers a test needs to provoke.
+   */
+  record Reply(
+      int status, String contentType, List<String> chunks, Map<String, String> headers) {
 
     static Reply sse(String script) {
-      return new Reply(200, "text/event-stream", split(script, 19));
+      return new Reply(200, "text/event-stream", split(script, 19), Map.of());
     }
 
     static Reply json(int status, String body) {
-      return new Reply(status, "application/json", List.of(body));
+      return json(status, body, Map.of());
+    }
+
+    /** A JSON reply with extra headers, e.g. a {@code Retry-After} on a 429. */
+    static Reply json(int status, String body, Map<String, String> headers) {
+      return new Reply(status, "application/json", List.of(body), Map.copyOf(headers));
     }
 
     static Reply status(int status) {
@@ -114,6 +123,7 @@ final class FakeServer implements AutoCloseable {
     headers.add(copy);
     Reply reply = responder.apply(index);
     exchange.getResponseHeaders().set("content-type", reply.contentType());
+    reply.headers().forEach((name, value) -> exchange.getResponseHeaders().set(name, value));
     exchange.sendResponseHeaders(reply.status(), 0);
     try (OutputStream out = exchange.getResponseBody()) {
       for (String chunk : reply.chunks()) {

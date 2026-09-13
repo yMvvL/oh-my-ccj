@@ -62,7 +62,7 @@ public final class OpenAiProvider implements Provider {
     HttpResponse<Stream<String>> response =
         Transport.send(http, buildRequest(request), sink);
     try (Stream<String> lines = response.body()) {
-      return consume(lines, sink);
+      return consume(response, lines, sink);
     } catch (UncheckedIOException e) {
       throw new Exception("connection lost while streaming the response: " + e.getCause(), e);
     }
@@ -182,16 +182,26 @@ public final class OpenAiProvider implements Provider {
    * Reads the stream to completion. Only deltas observed on the wire are forwarded; the assembled
    * turn comes from the same fragments, so the listener and the caller can never disagree.
    */
-  private Message.Assistant consume(Stream<String> lines, Consumer<Event> sink) {
+  private Message.Assistant consume(
+      HttpResponse<?> response, Stream<String> lines, Consumer<Event> sink) {
     StringBuilder text = new StringBuilder();
     Map<Integer, ToolCallBuffer> buffers = new TreeMap<>();
-    try (Sse sse = Sse.of(lines)) {
+    StringBuilder arrived = new StringBuilder();
+    int frames = 0;
+    try (Stream<String> peeking = lines.peek(line -> Transport.remember(arrived, line));
+        Sse sse = Sse.of(peeking)) {
       for (Sse.Event event = sse.next(); event != null; event = sse.next()) {
+        frames++;
         if (event.isDone()) {
           break;
         }
         handleChunk(Json.parse(event.data()), text, buffers, sink);
       }
+    }
+    if (frames == 0) {
+      // A body with no frames is not a turn: reporting it as an empty answer would leave the user
+      // with a silent stop and no way to see that the endpoint never spoke this protocol.
+      throw new IllegalStateException(Transport.noEvents(response, arrived.toString()));
     }
     List<Message.ToolCall> calls = new ArrayList<>(buffers.size());
     for (ToolCallBuffer buffer : buffers.values()) {
@@ -244,8 +254,7 @@ public final class OpenAiProvider implements Provider {
     }
     for (JsonNode fragment : fragments) {
       ToolCallBuffer buffer =
-          buffers.computeIfAbsent(
-              fragment.path("index").asInt(0), index -> new ToolCallBuffer());
+          buffers.computeIfAbsent(slot(fragment, buffers), index -> new ToolCallBuffer());
       JsonNode id = fragment.get("id");
       if (id != null && id.isTextual()) {
         buffer.id = id.asText();
@@ -268,14 +277,46 @@ public final class OpenAiProvider implements Provider {
     }
   }
 
+  /**
+   * The slot a fragment belongs to. The documented stream always carries {@code index}, but some
+   * compatible servers leave it out; defaulting those to zero merges two parallel calls into one
+   * corrupt call — an unknown tool with concatenated arguments, and a call the model never hears
+   * about. So a fragment that names a call starts a new slot, unless that id is already open, in
+   * which case it is the same call speaking again; a fragment with nothing but arguments continues
+   * the newest slot.
+   */
+  private static int slot(JsonNode fragment, Map<Integer, ToolCallBuffer> buffers) {
+    JsonNode index = fragment.get("index");
+    if (index != null && index.isIntegralNumber()) {
+      return index.asInt();
+    }
+    JsonNode id = fragment.get("id");
+    if (id == null || !id.isTextual() || id.asText().isEmpty()) {
+      return buffers.isEmpty() ? 0 : buffers.keySet().stream().max(Integer::compare).orElse(0);
+    }
+    for (Map.Entry<Integer, ToolCallBuffer> open : buffers.entrySet()) {
+      if (id.asText().equals(open.getValue().id)) {
+        // A server that drops `index` and forwards the whole call object it built repeats the id on
+        // every fragment. Reading that as a second call would split one call in two: one holding
+        // truncated arguments, one with no name at all.
+        return open.getKey();
+      }
+    }
+    int next = 0;
+    while (buffers.containsKey(next)) {
+      next++;
+    }
+    return next;
+  }
+
   /** Prefers the top-level usage object, then the choice-level copy some gateways send. */
   private static void emitUsage(JsonNode usage, JsonNode choiceUsage, Consumer<Event> sink) {
     JsonNode source = usage != null && usage.isObject() ? usage : choiceUsage;
     if (source == null || !source.isObject()) {
       return;
     }
-    JsonNode input = source.get("prompt_tokens");
-    JsonNode output = source.get("completion_tokens");
+    JsonNode input = number(source.get("prompt_tokens"));
+    JsonNode output = number(source.get("completion_tokens"));
     if (input == null && output == null) {
       return;
     }
@@ -284,6 +325,14 @@ public final class OpenAiProvider implements Provider {
             input == null ? 0 : input.asInt(),
             output == null ? 0 : output.asInt(),
             cachedTokens(source)));
+  }
+
+  /**
+   * A JSON number, or null when the field is absent <em>or</em> explicitly null: a null is "not
+   * reported", and counting it as zero would put a fabricated measurement in the totals.
+   */
+  private static JsonNode number(JsonNode node) {
+    return node == null || !node.isNumber() ? null : node;
   }
 
   /**

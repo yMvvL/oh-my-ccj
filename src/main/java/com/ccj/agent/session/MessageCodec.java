@@ -54,6 +54,23 @@ public final class MessageCodec {
           encoded.put("name", call.name());
           encoded.put("arguments", call.arguments());
         }
+        // Written only when there is one: a session recorded before thinking existed stays
+        // byte-identical, and the field costs nothing on every other provider.
+        if (!assistant.thinking().isEmpty()) {
+          ArrayNode blocks = node.putArray("thinking");
+          for (Message.Thinking block : assistant.thinking()) {
+            ObjectNode encoded = blocks.addObject();
+            if (!block.text().isEmpty()) {
+              encoded.put("text", block.text());
+            }
+            if (!block.signature().isEmpty()) {
+              encoded.put("signature", block.signature());
+            }
+            if (!block.data().isEmpty()) {
+              encoded.put("data", block.data());
+            }
+          }
+        }
       }
       case Message.ToolResult result -> {
         node.put("type", TYPE_TOOL_RESULT);
@@ -86,7 +103,8 @@ public final class MessageCodec {
       case TYPE_SYSTEM -> new Message.System(text(node, "text"));
       case TYPE_USER -> new Message.User(text(node, "text"));
       case TYPE_ASSISTANT ->
-          new Message.Assistant(text(node, "text"), toolCalls(node.get("tool_calls")));
+          new Message.Assistant(
+              text(node, "text"), toolCalls(node.get("tool_calls")), thinking(node.get("thinking")));
       case TYPE_TOOL_RESULT ->
           new Message.ToolResult(
               text(node, "tool_call_id"),
@@ -124,6 +142,40 @@ public final class MessageCodec {
       }
     }
     return calls;
+  }
+
+  /**
+   * Thinking blocks, or nothing when the record has none. A block that carries neither text,
+   * signature nor data is skipped rather than stored: it is a replay the API would reject.
+   */
+  private static List<Message.Thinking> thinking(JsonNode node) {
+    if (node == null || node.isNull()) {
+      return List.of();
+    }
+    if (!node.isArray()) {
+      throw new IllegalArgumentException(
+          "message field 'thinking' must be an array, got " + describe(node));
+    }
+    List<Message.Thinking> blocks = new ArrayList<>(node.size());
+    for (int i = 0; i < node.size(); i++) {
+      JsonNode item = node.get(i);
+      if (!item.isObject()) {
+        throw new IllegalArgumentException(
+            "thinking[" + i + "] must be a JSON object, got " + describe(item));
+      }
+      Message.Thinking block =
+          new Message.Thinking(
+              optionalText(item, "text"), optionalText(item, "signature"), optionalText(item, "data"));
+      if (!block.text().isEmpty() || !block.signature().isEmpty() || !block.data().isEmpty()) {
+        blocks.add(block);
+      }
+    }
+    return blocks;
+  }
+
+  private static String optionalText(JsonNode node, String field) {
+    JsonNode value = node.get(field);
+    return value == null || !value.isTextual() ? "" : value.asText();
   }
 
   private static String text(JsonNode node, String field) {

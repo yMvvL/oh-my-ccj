@@ -33,6 +33,11 @@ public final class ReadTool implements Tool {
   }
 
   @Override
+  public boolean readOnly() {
+    return true;
+  }
+
+  @Override
   public String description() {
     return "Read a UTF-8 text file and return numbered lines. Page through large files with "
         + "offset/limit; the result says where to continue.";
@@ -112,11 +117,22 @@ public final class ReadTool implements Tool {
     int bytes = 0;
     int emitted = 0;
     boolean byteCapped = false;
+    boolean lineTruncated = false;
     for (int i = 0; i < window.size(); i++) {
       String rendered = renderLine(offset + i, window.get(i));
       int length = ToolSupport.utf8Length(rendered);
       if (bytes + length > ctx.outputLimitBytes()) {
         byteCapped = true;
+        if (emitted == 0) {
+          // One line bigger than the whole budget. Skipping it would answer "resume with
+          // offset=N" for the same line every time, a page the reader can never turn, so the head
+          // of it is returned instead — bounded, and the next offset is past it.
+          String clipped = ToolSupport.truncateUtf8(rendered, ctx.outputLimitBytes());
+          body.append(clipped);
+          bytes += ToolSupport.utf8Length(clipped);
+          emitted = 1;
+          lineTruncated = true;
+        }
         break;
       }
       body.append(rendered);
@@ -128,8 +144,11 @@ public final class ReadTool implements Tool {
     if (byteCapped) {
       body.append("(output truncated at ")
           .append(ctx.outputLimitBytes())
-          .append(" bytes; ")
-          .append(label)
+          .append(" bytes; ");
+      if (lineTruncated) {
+        body.append("line ").append(last).append(" is longer than that and was cut short; ");
+      }
+      body.append(label)
           .append(" has ")
           .append(total)
           .append(" lines; resume with offset=")

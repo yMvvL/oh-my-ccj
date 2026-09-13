@@ -99,6 +99,15 @@ public final class BashTool implements Tool {
     } catch (IOException e) {
       return ToolResult.error("failed to start " + SHELL + ": " + e.getMessage());
     }
+    try {
+      // Nobody is going to type at this process: the agent has no terminal to hand it. Leaving the
+      // pipe open makes every command that reads stdin — `cat`, `sort`, a `read` in a script — wait
+      // for input that will never come until the timeout kills it. Closing it hands them EOF, which
+      // is what a command run by a script should see.
+      process.getOutputStream().close();
+    } catch (IOException e) {
+      // Already gone; the exit status is reported either way.
+    }
 
     int limit = ctx.outputLimitBytes();
     int headCapacity = Math.max(1, limit * 6 / 10);
@@ -115,24 +124,53 @@ public final class BashTool implements Tool {
                   }
                 });
 
-    boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
+    boolean finished = waitFor(process, timeout, ctx);
     if (!finished) {
-      process.descendants().forEach(ProcessHandle::destroyForcibly);
-      process.destroyForcibly();
-      process.waitFor(5, TimeUnit.SECONDS);
+      killTree(process);
     }
     pump.join(PUMP_JOIN_MILLIS);
 
     String body = capture.render(limit);
     if (!finished) {
       return ToolResult.error(
-          "exit code -1 (timed out after "
-              + timeout
-              + "s; process tree killed)\n"
+          "exit code -1 ("
+              + (ctx.isCancelled() ? "aborted by the user" : "timed out after " + timeout + "s")
+              + "; process tree killed)\n"
               + body);
     }
     String content = "exit code " + process.exitValue() + "\n" + body;
     return process.exitValue() == 0 ? ToolResult.ok(content) : ToolResult.error(content);
+  }
+
+  /** How often a running command checks whether the run was cancelled. */
+  private static final long CANCEL_POLL_MILLIS = 150;
+
+  /**
+   * Waits for the command to finish, its own timeout to expire, or the run to be cancelled — the
+   * last one is what makes "stop" mean stop instead of "wait for the ten-minute timeout".
+   */
+  private static boolean waitFor(Process process, int timeoutSeconds, ToolContext ctx)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+    while (true) {
+      if (process.waitFor(CANCEL_POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+        return true;
+      }
+      if (ctx.isCancelled() || System.nanoTime() >= deadline) {
+        return false;
+      }
+    }
+  }
+
+  /** Kills the command and everything it started, since a shell's children outlive the shell. */
+  private static void killTree(Process process) {
+    process.descendants().forEach(ProcessHandle::destroyForcibly);
+    process.destroyForcibly();
+    try {
+      process.waitFor(5, TimeUnit.SECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   /**
@@ -177,13 +215,66 @@ public final class BashTool implements Tool {
     }
 
     String render(int limit) {
-      String headText = new String(head, 0, headLength, StandardCharsets.UTF_8);
-      String tailText = new String(tailBytes(), StandardCharsets.UTF_8);
+      byte[] last = tailBytes();
       if (total <= limit) {
-        return headText + tailText;
+        // Nothing was dropped, so the two buffers are contiguous and are decoded as one array: a
+        // character straddling the boundary between them must not become two replacement glyphs.
+        byte[] whole = new byte[headLength + tailLength];
+        System.arraycopy(head, 0, whole, 0, headLength);
+        System.arraycopy(last, 0, whole, headLength, tailLength);
+        return new String(whole, StandardCharsets.UTF_8);
       }
+      // Something was omitted, so each half is decoded on its own — and a half that was cut in the
+      // middle of a character drops that partial sequence instead of rendering it as garbage.
+      int headEnd = headLength - partialTail(head, headLength);
+      int tailStart = partialHead(last, tailLength);
+      String headText = new String(head, 0, headEnd, StandardCharsets.UTF_8);
+      String tailText = new String(last, tailStart, tailLength - tailStart, StandardCharsets.UTF_8);
       long omitted = total - headLength - tailLength;
       return headText + "\n... omitted " + omitted + " bytes ...\n" + tailText;
+    }
+
+    /**
+     * Bytes at the end of a slice that are the beginning of a UTF-8 sequence whose remaining bytes
+     * are not in the slice — what a cut in the middle of a character leaves behind.
+     */
+    private static int partialTail(byte[] bytes, int length) {
+      int lead = -1;
+      for (int i = length - 1; i >= 0 && i >= length - 4; i--) {
+        int b = bytes[i] & 0xFF;
+        if ((b & 0xC0) != 0x80) {
+          lead = i;
+          break;
+        }
+      }
+      if (lead < 0) {
+        return 0;
+      }
+      int expected = sequenceLength(bytes[lead] & 0xFF);
+      int present = length - lead;
+      return expected > present ? present : 0;
+    }
+
+    /** Leading continuation bytes of a slice whose first character started before it. */
+    private static int partialHead(byte[] bytes, int length) {
+      int skip = 0;
+      while (skip < length && skip < 3 && (bytes[skip] & 0xC0) == 0x80) {
+        skip++;
+      }
+      return skip;
+    }
+
+    private static int sequenceLength(int lead) {
+      if (lead >= 0xF0) {
+        return 4;
+      }
+      if (lead >= 0xE0) {
+        return 3;
+      }
+      if (lead >= 0xC0) {
+        return 2;
+      }
+      return 1;
     }
 
     private byte[] tailBytes() {

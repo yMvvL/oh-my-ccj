@@ -113,6 +113,107 @@ class OpenAiProviderTest {
   }
 
   @Test
+  void fragmentsWithoutAnIndexStaySeparateCalls() throws Exception {
+    // Several OpenAI-compatible servers leave `index` out. Defaulting it to 0 folded every parallel
+    // call into the first one: an unknown tool whose arguments were both calls, concatenated.
+    String stream =
+        """
+        data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","function":{"name":"read","arguments":"{\\\"path\\\":\\\"a\\\"}"}}]}}]}
+
+        data: {"choices":[{"delta":{"tool_calls":[{"id":"call_b","function":{"name":"write","arguments":"{\\\"path\\\":\\\"b\\\"}"}}]}}]}
+
+        data: [DONE]
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+
+      Message.Assistant assistant =
+          provider.complete(
+              new Provider.Request(
+                  "gpt-test", null, List.of(new Message.User("hi")), List.of(), null, null, null),
+              event -> {});
+
+      assertEquals(
+          List.of(
+              new Message.ToolCall("call_a", "read", "{\"path\":\"a\"}"),
+              new Message.ToolCall("call_b", "write", "{\"path\":\"b\"}")),
+          assistant.toolCalls());
+      provider.close();
+    }
+  }
+
+  @Test
+  void aRepeatedIdWithoutAnIndexContinuesTheCallInsteadOfStartingANewOne() throws Exception {
+    // A server that omits `index` and forwards the whole call object it built repeats the id on
+    // every fragment. Reading that as a second call split one call in two: the real one kept
+    // truncated arguments, and a call with no name at all was invoked beside it.
+    String stream =
+        """
+        data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","function":{"name":"read","arguments":"{\\\"path\\\":"}}]}}]}
+
+        data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","function":{"arguments":"\\\"a\\\"}"}}]}}]}
+
+        data: [DONE]
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+
+      Message.Assistant assistant =
+          provider.complete(
+              new Provider.Request(
+                  "gpt-test", null, List.of(new Message.User("hi")), List.of(), null, null, null),
+              event -> {});
+
+      assertEquals(
+          List.of(new Message.ToolCall("call_a", "read", "{\"path\":\"a\"}")),
+          assistant.toolCalls());
+      provider.close();
+    }
+  }
+
+  @Test
+  void aTwoHundredThatIsNotAnEventStreamIsNotAnEmptyAnswer() throws Exception {
+    // A relay that fails upstream answers 200 with JSON. The frame decoder finds nothing in it, so
+    // without a word about what arrived the run ended "successfully" with an empty answer.
+    try (FakeServer server =
+        FakeServer.start(FakeServer.Reply.json(200, "{\"error\":{\"message\":\"upstream exploded\"}}"))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+
+      IllegalStateException failure =
+          assertThrows(
+              IllegalStateException.class, () -> provider.complete(request(), event -> {}));
+
+      assertTrue(failure.getMessage().contains("no events"), failure.getMessage());
+      assertTrue(failure.getMessage().contains("upstream exploded"), failure.getMessage());
+      provider.close();
+    }
+  }
+
+  @Test
+  void aNullUsageFieldIsNotZeroTokens() throws Exception {
+    String stream =
+        """
+        data: {"choices":[{"delta":{"content":"hi"}}],"usage":{"prompt_tokens":null,"completion_tokens":null}}
+
+        data: [DONE]
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      provider.complete(request(), events::add);
+
+      assertTrue(
+          events.stream().noneMatch(Provider.Event.Usage.class::isInstance),
+          "an explicitly null count is not a measurement: " + events);
+      provider.close();
+    }
+  }
+
+  @Test
   void omitsToolsAndSamplingFieldsThatWereNotRequested() throws Exception {
     try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
       OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
@@ -158,6 +259,30 @@ class OpenAiProviderTest {
       assertThrows(Exception.class, () -> provider.complete(request(), event -> {}));
 
       assertEquals(1, server.count());
+      provider.close();
+    }
+  }
+
+  @Test
+  void aThrottledEndpointDecidesHowLongToWait() throws Exception {
+    // A server that says how long to wait means it: retrying sooner is how a 429 becomes a ban.
+    try (FakeServer server =
+        FakeServer.start(
+            FakeServer.Reply.json(429, "{}", java.util.Map.of("Retry-After", "1")),
+            FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      provider.complete(request(), events::add);
+
+      List<Provider.Event.Retry> retries =
+          events.stream()
+              .filter(Provider.Event.Retry.class::isInstance)
+              .map(Provider.Event.Retry.class::cast)
+              .toList();
+      assertEquals(1, retries.size());
+      assertEquals(1000, retries.get(0).delayMillis(), "the header beats the backoff curve");
+      assertEquals(2, server.count());
       provider.close();
     }
   }

@@ -45,10 +45,11 @@ public final class ProviderStore {
   /**
    * The providers the user actually has, once they have narrowed the list.
    *
-   * <p>Empty means "no opinion: everything the agent ships plus your definitions". Once anything is
-   * removed the list becomes explicit, so a deleted provider is simply absent rather than
-   * remembered as "hidden" — the UI has nothing to explain and nothing to restore, and adding one
-   * back is an ordinary add.
+   * <p>{@code null} means "no opinion: everything the agent ships plus your definitions"; a list —
+   * including an empty one — is the whole answer. Once anything is removed the list becomes
+   * explicit, so a deleted provider is simply absent rather than remembered as "hidden" — the UI
+   * has nothing to explain and nothing to restore, and adding one back is an ordinary add. The
+   * difference between {@code null} and empty is what {@link #narrowed()} exists to report.
    */
   private java.util.List<String> shown;
 
@@ -72,16 +73,19 @@ public final class ProviderStore {
     return file;
   }
 
-  /**
-   * The list the user recorded for a provider.
-   *
-   * <p>Empty means "never recorded, use the catalogue's own list"; a present-but-empty list means
-   * "recorded as empty" — the difference is what lets a user remove the last model and have it stay
-   * removed instead of the provider's default list reappearing.
-   */
   /** The explicit list, or empty when the user has never removed a provider. */
   public synchronized List<String> shown() {
     return shown == null ? List.of() : List.copyOf(shown);
+  }
+
+  /**
+   * True once the user has narrowed the list, which {@link #shown()} cannot say: it returns an
+   * empty list both for "no opinion" and for "I removed the last one". Callers that decide what to
+   * offer have to tell those apart — otherwise removing the last provider resurrects every
+   * built-in, and adding one to an emptied list is never recorded.
+   */
+  public synchronized boolean narrowed() {
+    return shown != null;
   }
 
   public synchronized boolean isShown(String provider) {
@@ -108,6 +112,13 @@ public final class ProviderStore {
     write();
   }
 
+  /**
+   * The list the user recorded for a provider.
+   *
+   * <p>Empty means "never recorded, use the catalogue's own list"; a present-but-empty list means
+   * "recorded as empty" — the difference is what lets a user remove the last model and have it stay
+   * removed instead of the provider's default list reappearing.
+   */
   public synchronized java.util.Optional<List<String>> modelsFor(String provider) {
     if (provider == null) {
       return java.util.Optional.empty();

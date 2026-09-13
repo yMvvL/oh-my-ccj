@@ -95,12 +95,7 @@ public final class WorkspaceStore {
     return workspace;
   }
 
-  /**
-   * Registers a workspace, creating its directory (and its session directory) if needed.
-   *
-   * <p>Creating the directory is deliberate: adding a workspace for a project that does not exist
-   * yet is a normal thing to want, and an empty directory is cheap.
-   */
+  /** Registers a workspace under an explicit name, creating its directory if needed. */
   public synchronized Workspace add(String name, Path path) {
     String clean = Workspace.requireValidName(name);
     if (workspaces.containsKey(clean)) {
@@ -109,6 +104,68 @@ public final class WorkspaceStore {
     if (path == null) {
       throw new IllegalArgumentException("a workspace needs a directory");
     }
+    Path directory = usableDirectory(path);
+    Workspace workspace = new Workspace(clean, directory, sessionsDirFor(clean));
+    workspaces.put(clean, workspace);
+    if (active == null) {
+      active = clean;
+    }
+    save();
+    return workspace;
+  }
+
+  /**
+   * Registers a directory picked from a chooser, naming it after the directory itself.
+   *
+   * <p>Picking a folder says everything the registry needs: the folder is the name, and a second step
+   * that asks for a name the folder already carries is a step nobody wants. When the name is taken —
+   * the same project twice, or two directories that share a last segment — the next free suffix is
+   * used, because refusing would send the user back to type a name for something that already has one.
+   */
+  public synchronized Workspace add(Path path) {
+    if (path == null) {
+      throw new IllegalArgumentException("a workspace needs a directory");
+    }
+    Path directory = path.toAbsolutePath().normalize();
+    String base = directory.getFileName() == null ? "" : directory.getFileName().toString();
+    return addNamed(directory, base);
+  }
+
+  /**
+   * Registers {@code directory} under {@code base}, or the next free {@code base-2}, {@code base-3}…
+   *
+   * <p>The name that lands in the registry, the name its session directory is derived from and the
+   * name in the error message are decided in one place, so a suffixed workspace cannot end up with
+   * another one's history.
+   */
+  private Workspace addNamed(Path path, String base) {
+    String wanted = base.length() > 40 ? base.substring(0, 40) : base;
+    if (!Workspace.validName(wanted)) {
+      throw new IllegalArgumentException(
+          "the folder name '" + base + "' cannot be a workspace name: " + Workspace.RULE);
+    }
+    String clean = wanted;
+    for (int suffix = 2; workspaces.containsKey(clean); suffix++) {
+      String tail = "-" + suffix;
+      clean = wanted.substring(0, Math.min(wanted.length(), 40 - tail.length())) + tail;
+    }
+    Path directory = usableDirectory(path);
+    Workspace workspace = new Workspace(clean, directory, sessionsDirFor(clean));
+    workspaces.put(clean, workspace);
+    if (active == null) {
+      active = clean;
+    }
+    save();
+    return workspace;
+  }
+
+  /**
+   * The directory as it will be stored, created if it does not exist.
+   *
+   * <p>Creating it is deliberate: adding a workspace for a project that does not exist yet is a
+   * normal thing to want, and an empty directory is cheap.
+   */
+  private Path usableDirectory(Path path) {
     Path directory = path.toAbsolutePath().normalize();
     try {
       Files.createDirectories(directory);
@@ -118,13 +175,7 @@ public final class WorkspaceStore {
     if (!Files.isDirectory(directory)) {
       throw new IllegalArgumentException("not a directory: " + directory);
     }
-    Workspace workspace = new Workspace(clean, directory, sessionsDirFor(clean));
-    workspaces.put(clean, workspace);
-    if (active == null) {
-      active = clean;
-    }
-    save();
-    return workspace;
+    return directory;
   }
 
   /** Forgets a workspace. Its session files stay on disk. */
