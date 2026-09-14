@@ -325,8 +325,11 @@ public record CliOptions(
 
         Web:
               --port <n>           web UI port (default 6767)
-              --host <addr>        bind address (default 127.0.0.1; anything else needs --web-token)
+              --host <addr>        where to serve (default: 127.0.0.1 and, when this machine is on
+                                   a tailnet, its tailnet address as well; 'tailscale' means only
+                                   the tailnet address; anything but loopback needs a token)
               --web-token <token>  require this token from every web request
+                                   (or set CCJ_WEB_TOKEN; the flag wins)
               --wallpapers <dir>   pictures the page rotates as its background
                                    (default: ~/Pictures/ccj-backgrounds, or CCJ_WALLPAPERS)
 

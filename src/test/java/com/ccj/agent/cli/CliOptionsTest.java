@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ccj.agent.core.Config;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class CliOptionsTest {
@@ -35,6 +36,31 @@ class CliOptionsTest {
     assertTrue(options.yolo());
     assertTrue(options.version());
     assertEquals(512, options.maxTokens());
+  }
+
+  @Test
+  void theWebTokenComesFromTheFlagOrTheEnvironment() {
+    // The flag wins, so a one-off run can use a different token without unsetting anything; the
+    // environment is what makes a phone-to-laptop setup possible without pasting a secret into a
+    // command line, which is a thing `ps` and shell history both read back.
+    assertEquals("flag", Cli.webToken(CliOptions.parse(new String[] {"--web-token", "flag"}), Map.of()));
+    assertEquals(
+        "env", Cli.webToken(CliOptions.parse(new String[0]), Map.of(Cli.ENV_WEB_TOKEN, "env")));
+    assertEquals(
+        "flag",
+        Cli.webToken(
+            CliOptions.parse(new String[] {"--web-token=flag"}), Map.of(Cli.ENV_WEB_TOKEN, "env")));
+
+    // Blank is "not set" from either source, not an empty password: serving a network bind with a
+    // token nobody can mistype is the same as serving it with none, and that is refused.
+    assertNull(Cli.webToken(CliOptions.parse(new String[0]), Map.of()));
+    assertNull(Cli.webToken(CliOptions.parse(new String[0]), Map.of(Cli.ENV_WEB_TOKEN, "   ")));
+    assertNull(Cli.webToken(CliOptions.parse(new String[] {"--web-token", "  "}), Map.of()));
+    assertNull(Cli.webToken(CliOptions.parse(new String[0]), null));
+
+    // Surrounding space from a shell (`export CCJ_WEB_TOKEN="$(cat token)"`) is not part of it.
+    assertEquals(
+        "env", Cli.webToken(CliOptions.parse(new String[0]), Map.of(Cli.ENV_WEB_TOKEN, " env\n")));
   }
 
   @Test

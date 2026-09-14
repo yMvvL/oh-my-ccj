@@ -67,17 +67,21 @@ public final class NativeFolderChooser implements FolderChooser {
 
   @Override
   public Optional<Path> choose(String title) throws IOException {
-    if (java.awt.GraphicsEnvironment.isHeadless()) {
-      throw new IOException(NO_DESKTOP);
-    }
     if (!open.compareAndSet(false, true)) {
       throw new IOException("a folder chooser is already open");
     }
     try {
-      String label = title == null || title.isBlank() ? "Choose a folder" : title;
+      // The command override is checked before the desktop test, not after: it exists to exercise
+      // this class's subprocess plumbing without a human clicking a dialog, and a headless JVM is
+      // exactly where that is needed — the test that runs it otherwise fails wherever there is no
+      // display, which is every CI runner and every ssh session.
       if (commandOverride != null) {
         return run(commandOverride);
       }
+      if (java.awt.GraphicsEnvironment.isHeadless()) {
+        throw new IOException(NO_DESKTOP);
+      }
+      String label = title == null || title.isBlank() ? "Choose a folder" : title;
       if (onPath("zenity")) {
         return run(
             List.of("zenity", "--file-selection", "--directory", "--title=" + label));
