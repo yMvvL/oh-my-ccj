@@ -60,6 +60,7 @@ public final class TokenEstimate {
     return switch (message) {
       case Message.System system -> MESSAGE_OVERHEAD + of(system.text());
       case Message.User user -> MESSAGE_OVERHEAD + of(user.text());
+      case Message.Summary summary -> MESSAGE_OVERHEAD + of(summary.text());
       case Message.ToolResult result ->
           MESSAGE_OVERHEAD + of(result.content()) + of(result.toolName()) + of(result.toolCallId());
       case Message.Assistant assistant -> {

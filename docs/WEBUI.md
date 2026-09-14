@@ -20,6 +20,7 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `GET` | `/api/events` | SSE stream of everything the loop reports |
 | `POST` | `/api/message` | `{"text": "..."}` — start a turn in the session on screen; `409` when *that* session is already running (other conversations are unaffected) |
 | `POST` | `/api/abort` | stop the running turn at the next safe point; add `?id=<session>` to stop a turn in a conversation you are not looking at |
+| `POST` | `/api/compact` | compact the session on screen: the older turns become a summary, written to the next generation file. `409` while a turn is running or when the summary would not be smaller than what it replaces |
 | `POST` | `/api/approval` | `{"id": "...", "allow": true, "remember": false}` — answer a pending approval |
 | `POST` | `/api/auto-approve` | `{"enabled": true}` — flip the whole session to auto-approve |
 | `POST` | `/api/session` | `{"action": "new"}` or `{"action": "resume", "id": "..."}` |
@@ -178,6 +179,75 @@ While a wallpaper is on, the surfaces above it turn semi-transparent — the pag
 details pane and the composer card — and the three panes get a `backdrop-filter` blur. Tool output,
 code cards, menus and dialogs stay opaque: those are the things that get read line by line, and a
 photograph behind a stack trace is decoration fighting content.
+
+## On a phone, over a tailnet
+
+The page is one console, meant to be reachable from a phone as well as from the machine it runs on,
+and that shapes the bind, the gate and the layout.
+
+**The bind.** By default the server is bound to *named addresses*, one server each, sharing the same
+hub and the same conversation: loopback for the machine the user is sitting at, and — when this machine
+is on a tailnet — its tailnet address for their phone.
+
+```
+$ ccj
+oh-my-ccj 0.1.0 — web UI: http://127.0.0.1:6767/
+                          also on http://100.72.92.41:6767/?token=…
+```
+
+`--host tailscale` means the tailnet address *alone* (for a machine whose loopback nobody wants), and
+`--host <addr>` still means exactly one address. A wildcard is never used: binding `0.0.0.0` would put
+the port on the café wifi, the office LAN and the docker bridge, and the point of naming addresses is
+that the set of devices able to reach the port is a set the user chose. The tailnet address is found
+through the `tailscale0` interface, or by asking `tailscale ip -4` where the tailnet rides a
+differently named one; anything outside `100.64.0.0/10` is refused, and a machine without a tailnet is
+served on loopback alone rather than bound to something else.
+
+**The gate.** Two ways in, and they answer different questions:
+
+| Request | Answer |
+|---|---|
+| arrived on loopback **and** names a loopback `Host` | served — this is the machine itself, and a secret to type in order to use one's own command line is a password nobody asked for |
+| carries the token (query, `Authorization: Bearer`, or the cookie) | served, from any address |
+| anything else | `401` when the server has a token; `403` when it does not and the `Host` is not a loopback name |
+
+The `Host` half is not decoration: a tokenless server is reachable from any page the user visits, and
+DNS rebinding is what turns that into a page that can *read* the answers, so a request naming another
+host is refused. The token is what makes a network address safe; loopback is not a network. A caller
+who has proved the token is asked nothing else — the secret is the whole price of reaching this server
+from somewhere else.
+
+The token comes from `--web-token`, or `CCJ_WEB_TOKEN`, or — generated on first use — `web-token` in
+the application home, mode `0600`. The file is what makes "just run `ccj`" work without a secret on the
+command line (which `ps` and shell history read back) and without a new token every restart (which
+would log the phone out each time). It is deliberately **not** a key in `config.json`: a home directory
+gets backed up far more casually than a shell profile. `HttpApi.urls()` marks each address with the
+token only where one is needed — loopback is printed bare, so opening a browser on this machine never
+puts a secret in an address bar.
+
+Opening the tailnet URL once puts the token in the HttpOnly cookie, after which the bookmark needs
+nothing.
+
+**Narrowing it to one device** is Tailscale's job rather than the page's: the default tailnet rule
+already lets every device reach every other one, so the token is what separates "on my tailnet" from
+"mine". An access rule restricting `dst: <this-machine>:6767` to one `src` device narrows it further
+(Tailscale's own ACL syntax, applied in the admin console). `tailscale serve` in front of a loopback
+bind is the alternative when HTTPS with a real certificate is wanted — it still needs a token, for the
+reason above.
+
+**The layout** below 720px, because a phone is not a small desktop window:
+
+| Wide | Phone |
+|---|---|
+| sidebar and details are columns beside the transcript | both are sheets **over** it, one at a time, opened from the header, closed by tapping the scrim, Escape, or by choosing something in them — because picking a session is what the sheet was opened for |
+| rows revealed by hover (session and workspace actions) | revealed always, since there is no hover to reveal them |
+| 32px tree rows, 28px `.btn.sm`, 12px form fields | 42px rows, larger buttons, and 16px fields — the last one because Safari zooms the page when a focused field is under 16px |
+| `show all` is a bare 12px word | padded into a real target |
+| composer padding is fixed | `env(safe-area-inset-bottom)`, so the home bar does not sit on the send button |
+
+The scrim is one element below both sheets and below every dialog, so a dialog opened from a sheet
+still lands on top. The sheets do not survive a resize back to a wide window: they are a phone's
+layout, and the columns keep their own state.
 
 ## Custom providers
 

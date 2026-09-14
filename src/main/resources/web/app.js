@@ -116,6 +116,7 @@
     autoState: $('auto-state'),
     btnSettings: $('btn-settings'),
     btnAbort: $('btn-abort'),
+    btnCompact: $('btn-compact'),
     btnSidebar: $('btn-sidebar'),
     btnSide: $('btn-side'),
     btnTheme: $('btn-theme'),
@@ -144,8 +145,11 @@
     uErrorsRow: $('u-errors-row'),
     uErrors: $('u-errors'),
     uTools: $('u-tools'),
+    uCompactions: $('u-compact'),
+    uCompactionRow: $('u-compact-row'),
     uElapsed: $('u-elapsed'),
     uContext: $('u-context'),
+    scrim: $('scrim'),
     sidebar: $('sidebar'),
     sidebarCollapse: $('sidebar-collapse'),
     sidebarAlert: $('sidebar-alert'),
@@ -637,7 +641,7 @@
   function resetUsage() {
     state.usage = null;
     [dom.uTurns, dom.uSteps, dom.uIn, dom.uOut, dom.uCached, dom.uTools, dom.uErrors, dom.uElapsed,
-      dom.uContext]
+      dom.uContext, dom.uCompactions]
       .forEach(function (node) { setUsageCell(node, '—', false); });
     dom.uHit.textContent = '—';
     dom.uHit.classList.add('na');
@@ -667,6 +671,12 @@
     setUsageCell(dom.uOut, fmtCount(u.outputTokens), false);
     setUsageCell(dom.uCached, fmtCacheTokens(u.cachedInputTokens), false);
     setUsageCell(dom.uTools, fmtCount(u.toolCalls), false);
+    // Its own row, and only when there has been one: a compaction costs real
+    // tokens and is not a turn, so hiding it would make the token count look
+    // wrong and folding it into steps would make "steps" mean two things.
+    const compactions = Number(u.compactions);
+    dom.uCompactionRow.hidden = !(isFinite(compactions) && compactions > 0);
+    setUsageCell(dom.uCompactions, fmtCount(u.compactions), false);
     setUsageCell(dom.uElapsed, fmtDuration(u.elapsedMs), false);
     const limit = Number(u.contextLimit);
     const used = Number(u.contextTokens);
@@ -685,6 +695,48 @@
     dom.uAlert.textContent = bad
       ? errors + (errors === 1 ? ' tool call failed this session' : ' tool calls failed this session')
       : '';
+  }
+
+  /* A compaction replaced the conversation with its summary plus the newest
+   * exchanges, so the transcript is rebuilt from the server rather than edited:
+   * `loadHistory` is the one place that knows how to render a session. */
+  async function onCompacted(ev) {
+    const before = Number(ev.beforeTokens);
+    const after = Number(ev.afterTokens);
+    // The transcript is cleared first: the conversation really has changed, and `loadHistory` appends
+    // (it is written for a session *switch*, where the id changed and noteSession cleared for it). Left
+    // as-is, the kept exchanges would be drawn a second time underneath the ones already on screen.
+    clearTranscript();
+    const saved = Number(ev.savedPercent);
+    // "? → ? tokens" would be worse than saying nothing: a missing number is
+    // omitted rather than rendered as a placeholder that looks like data.
+    const detail = (isFinite(before) && isFinite(after))
+      ? ' — ' + fmtCount(before) + ' → ' + fmtCount(after) + ' tokens (estimated)'
+      : '';
+    appendNotice(
+      'Compacted: ' + fmtCount(ev.summarised) + ' earlier message(s) became a summary, '
+      + fmtCount(ev.kept) + ' kept verbatim'
+      + (isFinite(saved) ? ' (' + saved + '% of the replaced part saved)' : '')
+      + detail + '. The full conversation is still in ' + str(ev.source));
+    await loadHistory(str(state.status && state.status.sessionId));
+  }
+
+  /* The button is a request like any other: the server decides whether the
+   * conversation can be compacted, and a refusal is shown where a refusal
+   * belongs — in the transcript, not in a dialog. */
+  async function compactNow() {
+    if (state.busy) { return; }
+    // Disabled rather than relabelled: the button carries a glyph and a label
+    // node, and writing textContent would throw both away. The busy state is
+    // visible from the transcript the compaction is about to rewrite.
+    dom.btnCompact.disabled = true;
+    try {
+      await request('/api/compact', { method: 'POST' });
+      // The events carry the outcome; this only stops the button looking stuck.
+    } catch (err) {
+      appendError(str(err && err.message) || 'Compaction failed.');
+    }
+    dom.btnCompact.disabled = false;
   }
 
   function applyStatus(status) {
@@ -1403,6 +1455,40 @@
    * status.usage, so a notice never writes there. */
   function appendNotice(text) { return appendLine('ev ev-notice', text); }
 
+  /* A compaction's summary, drawn as a card of its own.
+   *
+   * It is not a notice: a notice is about something that happened at the edges, and this is what the
+   * older part of the conversation now *is*. It is collapsed by default because it is long and it is
+   * not what the reader is usually looking for — but it opens, because "did it keep what mattered"
+   * is a question only the text can answer, and the line above it says where the full conversation
+   * still is. */
+  function appendSummary(ev) {
+    const text = str(ev.text);
+    if (!text) { return null; }
+    const covers = Number(ev.covers);
+    const details = el('details', 'ev ev-summary');
+    details.open = false;
+    const summaryLine = el('summary', 'ev-summary-head');
+    summaryLine.appendChild(el('span', 'ev-summary-glyph', '⤓'));
+    summaryLine.appendChild(el('span', 'ev-summary-title', 'Compacted conversation'));
+    if (isFinite(covers) && covers > 0) {
+      summaryLine.appendChild(el('span', 'ev-summary-count',
+        fmtCount(covers) + (covers === 1 ? ' message summarised' : ' messages summarised')));
+    }
+    details.appendChild(summaryLine);
+    const body = el('div', 'ev-summary-body');
+    body.appendChild(el('div', 'ev-summary-note',
+      'This is what the earlier turns came to. The full conversation is still on disk — ask the model '
+      + 'to read it back if a detail is missing.'));
+    const rendered = el('div', 'ev-summary-text');
+    rendered.textContent = text;
+    body.appendChild(rendered);
+    details.appendChild(body);
+    dom.transcript.appendChild(details);
+    scrollToBottom();
+    return details;
+  }
+
   function assistantBlock() {
     if (state.block && state.block.root.parentNode === dom.transcript) { return state.block; }
     const root = el('div', 'ev ev-assistant');
@@ -1959,7 +2045,15 @@
       case 'approval': breakBlock(); onApproval(ev); break;
       case 'approval-closed': onApprovalClosed(ev); break;
       case 'notice': breakBlock(); appendNotice(str(ev.text)); break;
+      case 'summary': breakBlock(); appendSummary(ev); break;
       case 'usage': renderUsage(ev); break;
+      case 'compacted':
+        // The transcript on screen is now a different conversation, so it is
+        // re-read rather than patched: the summary and the kept exchanges are the
+        // server's to describe, and guessing at the splice is how a page ends up
+        // showing history that never existed.
+        onCompacted(ev);
+        break;
       case 'done': onDone(ev); break;
       case 'error':
         flushText();
@@ -2389,6 +2483,36 @@
 
   // ----------------------------------------------------- sidebar: collapse
 
+  /* Below 720px both panels are sheets over the transcript rather than columns
+   * beside it, and the scrim is what makes "tap outside" mean something. A
+   * sheet is never left open behind a wider window: the layouts are different
+   * enough that the state does not carry across. */
+  const SHEET_WIDTH = '(max-width: 720px)';
+
+  function sheetsAreSheets() { return window.matchMedia(SHEET_WIDTH).matches; }
+
+  function paintScrim() {
+    dom.scrim.hidden = !(dom.sidebar.classList.contains('open') || dom.side.classList.contains('open'));
+  }
+
+  function closeSheets() {
+    if (!dom.sidebar.classList.contains('open') && !dom.side.classList.contains('open')) {
+      return;
+    }
+    dom.sidebar.classList.remove('open');
+    dom.side.classList.remove('open');
+    dom.btnSide.setAttribute('aria-expanded', 'false');
+    dom.btnSidebar.setAttribute('aria-expanded', 'false');
+    paintScrim();
+  }
+
+  /* Choosing something in a sheet is what the sheet was opened for, so it goes
+   * away by itself: leaving it up would hide the conversation it was used to
+   * choose. Nothing on a wide window: the panels there are columns. */
+  function closeSheetsWhenNarrow() {
+    if (sheetsAreSheets()) { closeSheets(); }
+  }
+
   /* Below 900px the transcript needs the width more than the tree does, so a
    * narrow window starts collapsed; a stored choice still wins on a wide one. */
   function initialSidebarCollapsed() {
@@ -2404,7 +2528,21 @@
     writeStored(SIDEBAR_KEY, collapsed ? '1' : '0');
   }
 
+  /* One control, two layouts: a column that folds away on a wide window, a sheet
+   * that comes and goes on a phone. The two classes are kept exclusive so the
+   * state is readable from either one. */
   function toggleSidebar() {
+    if (sheetsAreSheets()) {
+      const open = !dom.sidebar.classList.contains('open');
+      dom.sidebar.classList.toggle('open', open);
+      dom.sidebar.classList.toggle('collapsed', !open);
+      // One sheet at a time: the details pane is the other one.
+      if (open) { dom.side.classList.remove('open'); }
+      dom.btnSidebar.setAttribute('aria-expanded', open ? 'true' : 'false');
+      dom.sidebarCollapse.setAttribute('aria-expanded', open ? 'true' : 'false');
+      paintScrim();
+      return;
+    }
     setSidebarCollapsed(!dom.sidebar.classList.contains('collapsed'));
   }
 
@@ -2412,6 +2550,8 @@
     setSidebarCollapsed(initialSidebarCollapsed());
     dom.btnSidebar.addEventListener('click', toggleSidebar);
     dom.sidebarCollapse.addEventListener('click', toggleSidebar);
+    dom.scrim.addEventListener('click', closeSheets);
+    paintScrim();
   }
 
   // --------------------------------------------------------- sidebar: tree
@@ -2848,7 +2988,10 @@
   /* `Use` is the only control that moves the page, and what it costs is on its
    * tooltip: a switch starts a new session in the target workspace. */
   async function activateWorkspace(name, button) {
-    if (!name || name === workspaceName()) { return; }
+    if (!name || name === workspaceName()) {
+      closeSheetsWhenNarrow();
+      return;
+    }
     clearSidebarMessages();
     if (button) { button.disabled = true; }
     try {
@@ -2856,6 +2999,9 @@
       // A switch invalidates every cached list, and the counts move with the
       // active mark, so the list is re-read rather than patched.
       await loadWorkspaces({ focusKey: 'ws:' + name });
+      // Only once it worked: a failure is reported in this sheet, so closing it
+      // would hide the reason the tap did nothing.
+      closeSheetsWhenNarrow();
     } catch (err) {
       sidebarError('Could not switch to ' + name + ': ' + str(err && err.message));
       renderTree('use:' + name);
@@ -2874,6 +3020,9 @@
         await loadWorkspaces({ keep: true, focusKey: 's:' + name + ':' + id });
       }
       await switchSession({ action: 'resume', id: id }, button);
+      // The conversation is on screen now, which is what the sheet was opened
+      // for; a failure below leaves it up, because that is where it is reported.
+      closeSheetsWhenNarrow();
     } catch (err) {
       if (button) { button.disabled = false; }
       sidebarError('Could not open ' + clip(id, 44) + ': ' + str(err && err.message));
@@ -4423,6 +4572,8 @@
     dom.input.focus();
   }
 
+  dom.btnCompact.addEventListener('click', compactNow);
+
   dom.composer.addEventListener('submit', function (event) {
     event.preventDefault();
     sendMessage();
@@ -4546,7 +4697,9 @@
     const open = openPicker();
     if (open) { open.closePanel(true); }
     else if (!dom.settingsOverlay.hidden) { closeSettings(); }
-    else if (!dom.workspaceAddForm.hidden) {
+    else if (dom.sidebar.classList.contains('open') || dom.side.classList.contains('open')) {
+      closeSheets();
+    } else if (!dom.workspaceAddForm.hidden) {
       setAddFormOpen(false);
       dom.workspaceAdd.focus();
     } else { cancelArmedDeletes(); }
@@ -4587,16 +4740,27 @@
     if (narrow) {
       const open = dom.side.classList.toggle('open');
       dom.btnSide.setAttribute('aria-expanded', open ? 'true' : 'false');
+      // One sheet at a time: the sidebar is the other one, and leaving it up
+      // would put the panel behind a panel.
+      if (open) { dom.sidebar.classList.remove('open'); }
     } else {
       const collapsed = dom.side.classList.toggle('collapsed');
       dom.btnSide.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     }
+    paintScrim();
   });
 
   window.addEventListener('resize', function () {
     if (!window.matchMedia('(max-width: 900px)').matches) {
       dom.side.classList.remove('open');
     }
+    if (!sheetsAreSheets()) {
+      // Back to columns: the sheets were a phone's layout, and the panels have
+      // their own state (collapsed or not) for this one.
+      dom.sidebar.classList.remove('open');
+      dom.side.classList.remove('open');
+    }
+    paintScrim();
   });
 
   // --------------------------------------------------------------- start

@@ -147,6 +147,10 @@ public final class OpenAiProvider implements Provider {
     return switch (message) {
       case Message.System system -> textTurn("system", system.text());
       case Message.User user -> textTurn("user", user.text());
+      // A summary travels as a user turn, carrying the marker that says what it is: the chat API has
+      // no shape for "prose the model must read but did not write", and the alternative — pretending
+      // it is the assistant's own earlier answer — is what makes a model trust an invention.
+      case Message.Summary summary -> textTurn("user", summary.text());
       case Message.Assistant assistant -> assistantTurn(assistant);
       case Message.ToolResult result -> toolTurn(result);
     };

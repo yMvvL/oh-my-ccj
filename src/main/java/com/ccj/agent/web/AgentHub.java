@@ -4,6 +4,7 @@ import com.ccj.agent.core.AgentListener;
 import com.ccj.agent.core.AgentLoop;
 import com.ccj.agent.core.AgentOptions;
 import com.ccj.agent.core.Approver;
+import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
 import com.ccj.agent.core.Message;
@@ -341,6 +342,9 @@ public final class AgentHub implements AutoCloseable {
     }
     node.put("toolCalls", totals.toolCalls());
     node.put("toolErrors", totals.toolErrors());
+    // Its own line, never folded into steps: a compaction is a request the user paid for, and it is
+    // not a turn of the conversation. The panel shows it so the tokens are accounted for.
+    node.put("compactions", totals.compactions());
     node.put("elapsedMs", totals.elapsedMillis());
     // How much of the model's window this conversation would take. It is an estimate and the panel
     // says so: the count is a heuristic, and the number that matters is the one the user paid for.
@@ -416,6 +420,16 @@ public final class AgentHub implements AutoCloseable {
                     .put("ok", !result.error())
                     .putNull("elapsedMs")
                     .put("output", result.content()));
+        // The summary is part of the conversation now — it is what the compacted turns came to — so
+        // a replay has to draw it. Without this branch it fell into the default below and a page
+        // reloaded after a compaction showed the kept exchanges with no sign of what had happened,
+        // which is exactly the thing the user needs to see to know the compaction worked.
+        case Message.Summary summary ->
+            events.add(
+                replay("summary")
+                    .put("text", summary.text())
+                    .put("covers", summary.covers())
+                    .put("source", summary.source()));
         default -> {
           // System messages are not part of a rendered conversation.
         }
@@ -1028,6 +1042,135 @@ public final class AgentHub implements AutoCloseable {
     publishStatus();
     turns.submit(() -> runTurn(conversation, text));
     return true;
+  }
+
+  /**
+   * Compacts the session on screen: the older part of the conversation is replaced by a summary the
+   * model writes, and the session carries on as the next generation of the same id.
+   *
+   * <p>Refused while that session has a turn running. A compaction rewrites what the conversation is,
+   * and doing that under a running turn is two writers on one transcript — the thing the per
+   * conversation turn flag exists to prevent. Other conversations are unaffected, exactly as they are
+   * for a normal turn.
+   *
+   * <p>The summarising request is <em>not</em> a turn: it does not go through the loop, does not
+   * append a user message, and does not advance the turn counters. It is a question this server asks
+   * the model about work that already happened, and the transcript would be lying if it showed up as
+   * a thing the user said.
+   */
+  public ObjectNode compact() {
+    if (closed) {
+      throw new IllegalStateException("the web session is shutting down");
+    }
+    Provider current = provider.get();
+    if (current == null) {
+      throw new IllegalStateException("no model configured — open Settings and add one");
+    }
+    FileSession shown = session();
+    if (shown == null) {
+      throw new IllegalStateException("no session is open");
+    }
+    String id = shown.id();
+    Conversation conversation =
+        conversations.computeIfAbsent(id, key -> new Conversation(key, shown));
+    // Claimed for the duration, so a turn cannot start in the middle of a compaction and so the
+    // composer shows this conversation as busy while it runs.
+    if (!conversation.begin()) {
+      throw new IllegalStateException("a turn is still running; abort it first");
+    }
+    try {
+      return runCompaction(conversation, current);
+    } finally {
+      conversation.end();
+    }
+  }
+
+  private ObjectNode runCompaction(Conversation conversation, Provider current) {
+    List<Message> before = conversation.session().messages();
+    if (!Compaction.possible(before)) {
+      throw new IllegalArgumentException(
+          "this conversation has nothing to compact yet — it is shorter than the "
+              + Compaction.KEEP_EXCHANGES
+              + " exchanges a compaction keeps");
+    }
+    Config active = config;
+    int beforeTokens = TokenEstimate.of(before);
+    String transcript = Compaction.transcript(before);
+    Message.Assistant reply;
+    try {
+      reply =
+          current.complete(
+              new Provider.Request(
+                  active.model(),
+                  // No tools and no history: this is one question about a transcript that is in the
+                  // message itself, and offering the tool set would invite the model to go and do
+                  // work instead of describing the work that was done.
+                  null,
+                  List.of(new Message.User(Compaction.INSTRUCTIONS + "\n\n" + transcript)),
+                  List.of(),
+                  null,
+                  null,
+                  active.reasoning()),
+              event -> {});
+    } catch (Exception e) {
+      throw new IllegalStateException("could not summarise the conversation: " + message(e));
+    }
+    String summary = reply.text() == null ? "" : reply.text().strip();
+    if (summary.isEmpty()) {
+      throw new IllegalStateException("the model returned an empty summary; nothing was changed");
+    }
+    return install(conversation, before, summary, beforeTokens);
+  }
+
+  /**
+   * Writes the next generation and reports what happened.
+   *
+   * <p>The file the summarised messages are still in is named to the model as well as recorded, so a
+   * detail the summary dropped can be read back: {@code read} is read-only and needs no approval,
+   * which is what turns a lossy compaction into one that can be undone on demand.
+   */
+  private ObjectNode install(
+      Conversation conversation, List<Message> before, String summary, int beforeTokens) {
+    FileSession session = conversation.session();
+    Path source = session.file();
+    Compaction.Result result;
+    try {
+      result = Compaction.apply(before, summary, source.toString(), conversation.cwd());
+    } catch (Compaction.NotWorthIt notWorthIt) {
+      // The summary came out no smaller than what it would replace. Reported as a refusal rather than
+      // written down: a compaction that frees nothing is a cost with no benefit, and the honest thing
+      // to tell the user is that this conversation has not grown enough to be worth compacting yet.
+      throw new IllegalStateException(
+          "nothing to gain: "
+              + notWorthIt.getMessage()
+              + " — the conversation is not long enough for a summary to save anything yet");
+    }
+    session.compactInto(result.messages(), session.totals().plusCompaction());
+    int afterTokens = TokenEstimate.of(result.messages());
+    int generation = FileSession.newestGeneration(sessionsDir(), session.id());
+    publish(
+        conversation.id(),
+        "compacted",
+        Json.object()
+            .put("summarised", result.summarised())
+            .put("kept", result.kept())
+            .put("beforeTokens", beforeTokens)
+            .put("afterTokens", afterTokens)
+            .put("generation", generation)
+            .put("savedPercent", result.savedPercent())
+            .put("source", source.toString()));
+    publishUsage(conversation.id());
+    publishStatus();
+    ObjectNode node = Json.object();
+    node.put("compacted", true);
+    node.put("summarised", result.summarised());
+    node.put("kept", result.kept());
+    node.put("beforeTokens", beforeTokens);
+    node.put("afterTokens", afterTokens);
+    node.put("generation", generation);
+    node.put("savedPercent", result.savedPercent());
+    node.put("source", source.toString());
+    return node;
   }
 
   /** Requests that the turn of the session on screen stops at the next safe point. */

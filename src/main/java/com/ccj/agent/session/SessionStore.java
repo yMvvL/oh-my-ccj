@@ -8,7 +8,11 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -74,11 +78,21 @@ public final class SessionStore {
     if (!FileSession.isValidId(id)) {
       throw new IllegalArgumentException("invalid session id: " + id);
     }
+    // Every generation goes, not just the newest: the older ones are this conversation too, and
+    // leaving them behind would resurrect the session on the next listing under the same id.
+    boolean removed = false;
     try {
-      return Files.deleteIfExists(FileSession.fileFor(sessionsDir, id));
+      for (int generation : FileSession.generations(sessionsDir, id)) {
+        Path file =
+            generation == 0
+                ? FileSession.fileFor(sessionsDir, id)
+                : FileSession.generationFile(sessionsDir, id, generation);
+        removed |= Files.deleteIfExists(file);
+      }
     } catch (IOException e) {
       throw new UncheckedIOException("cannot delete session " + id, e);
     }
+    return removed;
   }
 
   /**
@@ -93,7 +107,7 @@ public final class SessionStore {
     int deleted = 0;
     try (Stream<Path> entries = Files.list(sessionsDir)) {
       for (Path file : entries.toList()) {
-        if (file.getFileName().toString().endsWith(FileSession.EXTENSION)) {
+        if (!idOf(file.getFileName().toString()).isEmpty()) {
           Files.deleteIfExists(file);
           deleted++;
         }
@@ -107,48 +121,98 @@ public final class SessionStore {
   /**
    * Newest-first summaries; an absent directory is simply an empty history.
    *
-   * <p>Every file is still stat'd on each call, which is what keeps the answer honest: a session that
-   * grew, was truncated, or was deleted since the last listing is re-read rather than reported from
-   * what used to be true.
+   * <p>A session has <em>one</em> row however many generation files it has: a compaction writes a new
+   * file but does not create a new session, so listing per file would make every compaction look like
+   * a second conversation appearing out of nowhere. The newest generation is the one whose contents,
+   * size and timestamp the row reports, because that is the one {@link FileSession#open} reads.
+   *
+   * <p>Every generation file is still stat'd on each call, which is what keeps the answer honest: a
+   * session that grew, was compacted, or was deleted since the last listing is reported as it is now
+   * rather than from what used to be true.
    */
   public static List<Summary> list(Path sessionsDir) {
     if (sessionsDir == null || !Files.isDirectory(sessionsDir)) {
       return List.of();
     }
-    List<Summary> summaries = new ArrayList<>();
+    // id -> the newest generation of it, which is the file the row describes.
+    Map<String, Path> newest = new LinkedHashMap<>();
     List<Path> present = new ArrayList<>();
     try (Stream<Path> entries = Files.list(sessionsDir)) {
       for (Path file : entries.toList()) {
-        String name = file.getFileName().toString();
-        if (!name.endsWith(FileSession.EXTENSION)) {
+        String id = idOf(file.getFileName().toString());
+        if (id.isEmpty()) {
           continue;
         }
-        String id = name.substring(0, name.length() - FileSession.EXTENSION.length());
-        Instant modified;
-        long size;
-        try {
-          modified = Files.getLastModifiedTime(file).toInstant();
-          size = Files.size(file);
-        } catch (IOException e) {
-          // Vanished between the listing and the stat: not a session any more, and reporting a row
-          // for a file that is gone is worse than one row fewer.
-          INDEX.forget(file);
-          continue;
+        int generation = generationOf(file.getFileName().toString(), id);
+        Path known = newest.get(id);
+        if (known == null || generation > generationOf(known.getFileName().toString(), id)) {
+          newest.put(id, file);
         }
-        present.add(file);
-        summaries.add(INDEX.summaryFor(file, id, modified, size, SessionStore::derive));
       }
-      // A file deleted without a listing in between keeps its derivation until this runs, so the
-      // ones that are gone are dropped here rather than growing the map for the life of the process.
-      INDEX.retain(sessionsDir, present);
     } catch (IOException e) {
       throw new UncheckedIOException("cannot list sessions in " + sessionsDir, e);
     }
+
+    List<Summary> summaries = new ArrayList<>(newest.size());
+    for (Map.Entry<String, Path> entry : newest.entrySet()) {
+      String id = entry.getKey();
+      Path file = entry.getValue();
+      Instant modified;
+      long size;
+      try {
+        modified = Files.getLastModifiedTime(file).toInstant();
+        size = Files.size(file);
+      } catch (IOException e) {
+        // Vanished between the listing and the stat: not a session any more, and reporting a row for a
+        // file that is gone is worse than one row fewer.
+        INDEX.forget(file);
+        continue;
+      }
+      present.add(file);
+      summaries.add(INDEX.summaryFor(file, id, modified, size, SessionStore::derive));
+    }
+    // A file deleted without a listing in between keeps its derivation until this runs, so the ones
+    // that are gone are dropped here rather than growing the map for the life of the process.
+    INDEX.retain(sessionsDir, present);
     summaries.sort(
         Comparator.comparing(Summary::lastModified)
             .reversed()
             .thenComparing(Summary::id, Comparator.reverseOrder()));
     return List.copyOf(summaries);
+  }
+
+  /**
+   * The session id a file name belongs to, or empty when the name is not a session file.
+   *
+   * <p>Both a plain {@code <id>.jsonl} and a generation {@code <id>.g1.jsonl} map to {@code <id>},
+   * which is what lets a listing collapse them into one row.
+   */
+  static String idOf(String fileName) {
+    if (!fileName.endsWith(FileSession.EXTENSION)) {
+      return "";
+    }
+    String stem = fileName.substring(0, fileName.length() - FileSession.EXTENSION.length());
+    int marker = stem.lastIndexOf(".g");
+    if (marker > 0) {
+      String digits = stem.substring(marker + 2);
+      if (!digits.isEmpty() && digits.chars().allMatch(Character::isDigit)) {
+        stem = stem.substring(0, marker);
+      }
+    }
+    return FileSession.isValidId(stem) ? stem : "";
+  }
+
+  /** The generation a session file holds: 0 for the plain name, n for {@code <id>.gn.jsonl}. */
+  private static int generationOf(String fileName, String id) {
+    String stem = fileName.substring(0, fileName.length() - FileSession.EXTENSION.length());
+    if (stem.equals(id)) {
+      return 0;
+    }
+    try {
+      return Integer.parseInt(stem.substring(stem.lastIndexOf(".g") + 2));
+    } catch (RuntimeException e) {
+      return 0;
+    }
   }
 
   /**
@@ -164,17 +228,20 @@ public final class SessionStore {
     if (sessionsDir == null || !Files.isDirectory(sessionsDir)) {
       return 0;
     }
-    int sessions = 0;
+    // Counted by id, so the number beside a workspace is how many conversations there are rather than
+    // how many files they occupy — a compacted session is one session, not two.
+    Set<String> ids = new HashSet<>();
     try (Stream<Path> entries = Files.list(sessionsDir)) {
       for (Path file : entries.toList()) {
-        if (file.getFileName().toString().endsWith(FileSession.EXTENSION)) {
-          sessions++;
+        String id = idOf(file.getFileName().toString());
+        if (!id.isEmpty()) {
+          ids.add(id);
         }
       }
     } catch (IOException e) {
       throw new UncheckedIOException("cannot list sessions in " + sessionsDir, e);
     }
-    return sessions;
+    return ids.size();
   }
 
   /**

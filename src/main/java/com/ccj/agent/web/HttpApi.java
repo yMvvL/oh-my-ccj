@@ -15,6 +15,7 @@ import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -46,7 +47,8 @@ public final class HttpApi implements AutoCloseable {
   private static final long HEARTBEAT_MILLIS = 15_000;
 
   private final AgentHub hub;
-  private final HttpServer server;
+  /** One server per bind address — the same routing, the same hub, two ways in. */
+  private final List<HttpServer> servers;
   private final String token;
   /** The pictures the page may use as a background; an absent directory means none. */
   private final Wallpapers wallpapers;
@@ -61,14 +63,30 @@ public final class HttpApi implements AutoCloseable {
    */
   private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
-  private HttpApi(AgentHub hub, InetSocketAddress bind, String token, Wallpapers wallpapers)
+  private HttpApi(AgentHub hub, List<InetSocketAddress> binds, String token, Wallpapers wallpapers)
       throws IOException {
     this.hub = hub;
     this.token = token == null || token.isBlank() ? null : token.strip();
     this.wallpapers = wallpapers == null ? new Wallpapers(null) : wallpapers;
-    this.server = HttpServer.create(bind, 0);
-    server.setExecutor(workers);
-    register();
+    List<HttpServer> created = new ArrayList<>();
+    try {
+      for (InetSocketAddress bind : binds) {
+        // One port, several addresses: asking for port 0 means "any free port", and it means one free
+        // port — a second address bound to a second arbitrary number would give the same page two
+        // different URLs, which is not what "serve it here and there" can mean.
+        InetSocketAddress resolved =
+            bind.getPort() == 0 && !created.isEmpty()
+                ? new InetSocketAddress(bind.getAddress(), created.get(0).getAddress().getPort())
+                : bind;
+        created.add(serverOn(resolved));
+      }
+    } catch (IOException e) {
+      // A half-bound server would answer on one address and refuse on another, which is a state
+      // nobody asked for: the servers made so far are closed and the failure is reported.
+      created.forEach(server -> server.stop(0));
+      throw e;
+    }
+    this.servers = List.copyOf(created);
   }
 
   public static HttpApi start(AgentHub hub, InetSocketAddress bind, String token) throws IOException {
@@ -78,52 +96,95 @@ public final class HttpApi implements AutoCloseable {
   public static HttpApi start(
       AgentHub hub, InetSocketAddress bind, String token, Wallpapers wallpapers)
       throws IOException {
-    HttpApi api = new HttpApi(hub, bind, token, wallpapers);
-    api.server.start();
+    return start(hub, List.of(bind), token, wallpapers);
+  }
+
+  /**
+   * Serves the same page on every address given.
+   *
+   * <p>More than one because the two ways in are genuinely different: loopback is the machine the
+   * user is sitting at, and the tailnet address is their phone. Binding a wildcard instead would
+   * also put the port on the café wifi, so the addresses are named one by one.
+   */
+  public static HttpApi start(
+      AgentHub hub, List<InetSocketAddress> binds, String token, Wallpapers wallpapers)
+      throws IOException {
+    HttpApi api = new HttpApi(hub, binds, token, wallpapers);
+    api.servers.forEach(HttpServer::start);
     return api;
+  }
+
+  private HttpServer serverOn(InetSocketAddress bind) throws IOException {
+    HttpServer server = HttpServer.create(bind, 0);
+    server.setExecutor(workers);
+    server.createContext("/", exchange -> route(exchange));
+    return server;
   }
 
   /** The port actually bound — useful when the caller asked for 0. */
   public int port() {
-    return server.getAddress().getPort();
+    return servers.get(0).getAddress().getPort();
+  }
+
+  /**
+   * Every address a human can click, in the order they were bound, each carrying the token only when
+   * that address needs one.
+   *
+   * <p>Loopback is not "another device": a request that arrives there was made on this machine, so
+   * the token gates the network and not the user's own browser. That is what lets {@code ccj} keep
+   * opening {@code http://127.0.0.1:6767} with nothing attached while the same server asks the phone
+   * for the secret.
+   */
+  public List<String> urls() {
+    List<String> urls = new ArrayList<>(servers.size());
+    for (HttpServer server : servers) {
+      String host = server.getAddress().getAddress().isAnyLocalAddress()
+          ? "127.0.0.1"
+          : server.getAddress().getHostString();
+      if (host.contains(":") && !host.startsWith("[")) {
+        host = "[" + host + "]";
+      }
+      String base = "http://" + host + ":" + server.getAddress().getPort() + "/";
+      urls.add(needsToken(server.getAddress()) && token != null ? base + "?token=" + token : base);
+    }
+    return urls;
   }
 
   /** A URL a human can click, carrying the token when one is required. */
   public String url() {
-    String host = server.getAddress().getAddress().isAnyLocalAddress()
-        ? "127.0.0.1"
-        : server.getAddress().getHostString();
-    if (host.contains(":") && !host.startsWith("[")) {
-      host = "[" + host + "]";
-    }
-    String base = "http://" + host + ":" + server.getAddress().getPort() + "/";
-    return token == null ? base : base + "?token=" + token;
+    return urls().get(0);
+  }
+
+  /** True for an address reachable from somewhere other than this machine. */
+  private static boolean needsToken(InetSocketAddress address) {
+    return !address.getAddress().isLoopbackAddress();
   }
 
   @Override
   public void close() {
-    server.stop(0);
+    servers.forEach(server -> server.stop(0));
     workers.shutdownNow();
-  }
-
-  private void register() {
-    server.createContext("/", exchange -> route(exchange));
   }
 
   private void route(HttpExchange exchange) throws IOException {
     try {
-      if (!authorized(exchange)) {
-        unauthorized(exchange);
-        return;
-      }
-      if (!hostAllowed(exchange)) {
-        error(
-            exchange,
-            403,
-            "Host '"
-                + exchange.getRequestHeaders().getFirst("Host")
-                + "' is not a loopback address; a browser can reach this server from any page it"
-                + " visits, so either open it as localhost/127.0.0.1 or start ccj with a token");
+      // Two ways in, and they are reported differently on purpose. A caller who has not proved the
+      // token is told *that* when there is a token to prove — it is the thing they can fix. A caller
+      // to a tokenless server is answering for its Host instead, and the message says so. A caller who
+      // did prove the token is asked nothing else: the secret is the whole price of a network bind.
+      boolean provedToken = token != null && tokenPresented(exchange);
+      if (!provedToken && !permitted(exchange)) {
+        if (token != null) {
+          unauthorized(exchange);
+        } else {
+          error(
+              exchange,
+              403,
+              "Host '"
+                  + exchange.getRequestHeaders().getFirst("Host")
+                  + "' is not a loopback address; a browser can reach this server from any page it"
+                  + " visits, so either open it as localhost/127.0.0.1 or start ccj with a token");
+        }
         return;
       }
       String path = exchange.getRequestURI().getPath();
@@ -146,6 +207,7 @@ public final class HttpApi implements AutoCloseable {
         case "/api/events" -> events(exchange);
         case "/api/message" -> message(exchange);
         case "/api/abort" -> abort(exchange);
+        case "/api/compact" -> compact(exchange);
         case "/api/approval" -> approval(exchange);
         case "/api/auto-approve" -> autoApprove(exchange);
         case "/api/session" -> session(exchange);
@@ -199,6 +261,19 @@ public final class HttpApi implements AutoCloseable {
     String id = queryParam(exchange, "id");
     boolean aborted = id == null || id.isBlank() ? hub.abort() : hub.abort(id);
     respond(exchange, 200, Json.object().put("aborted", aborted));
+  }
+
+  /**
+   * Compacts the session on screen. Answers with what was replaced and what it cost, and the
+   * conversation itself arrives as a {@code compacted} event — the page learns its transcript changed
+   * the same way it learns about everything else.
+   */
+  private void compact(HttpExchange exchange) throws IOException {
+    if (!"POST".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "POST required");
+      return;
+    }
+    respond(exchange, 200, hub.compact());
   }
 
   private void approval(HttpExchange exchange) throws IOException {
@@ -688,9 +763,9 @@ public final class HttpApi implements AutoCloseable {
     return new String(body, StandardCharsets.UTF_8);
   }
 
-  private boolean authorized(HttpExchange exchange) {
+  private boolean tokenPresented(HttpExchange exchange) {
     if (token == null) {
-      return true;
+      return false; // there is nothing to present, which is not the same as having presented it
     }
     if (token.equals(queryParam(exchange, "token"))) {
       return true;
@@ -716,21 +791,29 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * Accepts a request only from a Host header that names the loopback interface, while no token is
-   * configured.
+   * True when a request that did <em>not</em> prove the token may be served anyway: it arrived on the
+   * loopback interface <em>and</em> it names a loopback Host.
    *
-   * <p>The default front end is an unauthenticated server on 127.0.0.1 that can run shell commands
-   * on the user's machine. Loopback is not a boundary against a browser: any page the user visits
-   * can POST to it without a preflight, and DNS rebinding lets that page read the answers too.
-   * Pinning the Host header to a loopback literal is the cheap half of the defence; a token is the
-   * other half, and the CLI already refuses a tokenless non-loopback bind.
+   * <p>This is the local case, and it is deliberately the only one. Loopback is not a boundary
+   * against a browser: any page the user visits can POST to 127.0.0.1 without a preflight, and DNS
+   * rebinding lets that page read the answers too — which is why the Host half is checked and not
+   * assumed, a name like {@code dead.beef} being exactly the attack. An address the page was reached
+   * on being loopback says the request came from this machine; the Host header says it was aimed at
+   * this server rather than at a name that happens to resolve here.
+   *
+   * <p>So a token gates the <em>network</em>, not the user's own browser: {@code http://127.0.0.1:6767}
+   * keeps working with nothing attached while the same server asks the phone for the secret. The
+   * alternative — a token on every request — would mean the machine's own user has to carry a secret
+   * to reach a server they started.
    */
-  private boolean hostAllowed(HttpExchange exchange) {
-    if (token != null) {
-      return true;
-    }
-    String host = exchange.getRequestHeaders().getFirst("Host");
-    return loopbackHost(host);
+  private boolean permitted(HttpExchange exchange) {
+    return loopbackPeer(exchange) && loopbackHost(exchange.getRequestHeaders().getFirst("Host"));
+  }
+
+  /** True when this connection was accepted on a loopback address. */
+  private static boolean loopbackPeer(HttpExchange exchange) {
+    InetSocketAddress peer = exchange.getRemoteAddress();
+    return peer != null && peer.getAddress() != null && peer.getAddress().isLoopbackAddress();
   }
 
   /** The host part of a {@code Host} header, without its port, or null when there is none. */

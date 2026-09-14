@@ -4,9 +4,12 @@ import com.ccj.agent.core.AgentLoop;
 import com.ccj.agent.core.AgentOptions;
 import com.ccj.agent.core.AppPaths;
 import com.ccj.agent.core.Approver;
+import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
+import com.ccj.agent.core.Message;
 import com.ccj.agent.core.Prompts;
 import com.ccj.agent.core.Provider;
+import com.ccj.agent.core.TokenEstimate;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolRegistry;
 import com.ccj.agent.core.ToolSpec;
@@ -24,6 +27,8 @@ import com.ccj.agent.ui.ConsoleRenderer;
 import com.ccj.agent.web.AgentHub;
 import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.web.HttpApi;
+import com.ccj.agent.web.Tailnet;
+import com.ccj.agent.web.WebToken;
 import com.ccj.agent.web.Wallpapers;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -39,6 +44,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -66,6 +72,9 @@ public final class Cli {
   public static final String VERSION = "0.1.0";
   public static final String PROMPT = "ccj> ";
   public static final int DEFAULT_WEB_PORT = 6767;
+
+  /** The environment variable that carries the web token when {@code --web-token} is not passed. */
+  public static final String ENV_WEB_TOKEN = "CCJ_WEB_TOKEN";
 
   private static final DateTimeFormatter TIMESTAMP =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
@@ -484,19 +493,57 @@ public final class Cli {
       Path home,
       PrintStream out,
       PrintStream err) {
-    String host =
-        options.host() == null || options.host().isBlank() ? "127.0.0.1" : options.host().strip();
     int port = options.port() == null ? DEFAULT_WEB_PORT : options.port();
     if (port < 1 || port > 65535) {
       err.println("error: --port must be between 1 and 65535");
       err.flush();
       return 2;
     }
-    if (!isLoopback(host) && (options.webToken() == null || options.webToken().isBlank())) {
-      err.println("error: refusing to serve the web UI on " + host + " without a token");
-      err.println("  the UI can run shell commands; pass --web-token <secret> or bind 127.0.0.1");
+    String requested = options.host() == null ? "" : options.host().strip();
+    String token = webToken(options, env);
+    List<InetSocketAddress> binds = new ArrayList<>();
+    try {
+      if (requested.isEmpty()) {
+        // The default is both ways in: loopback for the machine the user is sitting at, and this
+        // machine's tailnet address for their phone — if it has one. Not a wildcard, because a
+        // wildcard also opens the café wifi, and the point of naming the addresses is that the set
+        // of devices that can reach this port is a set the user chose.
+        binds.add(new InetSocketAddress(InetAddress.getLoopbackAddress(), port));
+        Tailnet.address().ifPresent(address -> binds.add(new InetSocketAddress(address, port)));
+      } else if (requested.equalsIgnoreCase(Tailnet.FLAG_VALUE)) {
+        Optional<InetAddress> tailnet = Tailnet.address();
+        if (tailnet.isEmpty()) {
+          err.println(
+              "error: --host tailscale was asked for, but this machine has no tailnet address");
+          err.println("  is Tailscale installed and up? `tailscale ip -4` should print one");
+          err.println("  otherwise pass --host <addr>, or leave the flag out");
+          err.flush();
+          return 2;
+        }
+        binds.add(new InetSocketAddress(tailnet.get(), port));
+      } else {
+        binds.add(new InetSocketAddress(requested, port));
+      }
+    } catch (IllegalArgumentException e) {
+      err.println("error: cannot bind " + requested + " — " + message(e));
       err.flush();
       return 2;
+    }
+    boolean reachesTheNetwork = binds.stream().anyMatch(bind -> !isLoopbackAddress(bind));
+    if (reachesTheNetwork && token == null) {
+      // A token generated here and kept in the home directory, because the whole point is one word:
+      // `ccj`, and the phone works. A secret that has to be passed every time ends up in shell
+      // history, in `ps`, or in an alias that is one more file to leak from — and one that changes
+      // every run would log the phone out every restart.
+      try {
+        token = WebToken.from(home);
+      } catch (IOException e) {
+        err.println("error: refusing to serve the web UI on " + binds + " without a token");
+        err.println("  the UI can run shell commands, and one could not be stored: " + message(e));
+        err.println("  pass --web-token <secret>, or set a home directory that can be written");
+        err.flush();
+        return 2;
+      }
     }
 
     AgentHub.Settings settings =
@@ -513,9 +560,17 @@ public final class Cli {
             Boolean.TRUE.equals(config.autoApprove()) || options.yolo());
     AgentHub hub = new AgentHub(provider, config, tools, settings, session);
     Wallpapers wallpapers = Wallpapers.from(env, options.wallpapers());
-    try (HttpApi api =
-        HttpApi.start(hub, new InetSocketAddress(host, port), options.webToken(), wallpapers)) {
-      out.println("oh-my-ccj " + VERSION + " — web UI: " + api.url());
+    try (HttpApi api = HttpApi.start(hub, binds, token, wallpapers)) {
+      List<String> urls = api.urls();
+      out.println("oh-my-ccj " + VERSION + " — web UI: " + urls.get(0));
+      for (int i = 1; i < urls.size(); i++) {
+        out.println("                          also on " + urls.get(i));
+      }
+      if (reachesTheNetwork) {
+        out.println(
+            "  the first address is this machine (no token needed there); the others are the"
+                + " tailnet, and ask for the token in the URL");
+      }
       out.println(
           (provider == null
                   ? "no model configured — Settings in the UI"
@@ -538,7 +593,10 @@ public final class Cli {
       out.println("Ctrl+C to stop");
       out.flush();
       if (!options.noOpen()) {
-        openBrowser(api.url(), err);
+        // The loopback URL, which is the one this machine can always reach and the one that needs no
+        // token: opening the browser on the tailnet address would work too, and would put a secret in
+        // the address bar of every window.
+        openBrowser(urls.get(0), err);
       }
       // Serving runs until something stops it. Ctrl+C is one thing; `restart` is the other, and it
       // cannot be a latch the hub completes, because the hub is wired after this point and the tool
@@ -556,7 +614,7 @@ public final class Cli {
       err.flush();
       return RestartTool.RESTART_EXIT;
     } catch (IOException e) {
-      err.println("error: cannot serve " + host + ":" + port + " — " + message(e));
+      err.println("error: cannot serve " + binds + " — " + message(e));
       int free = freePortFrom(port + 1);
       err.println(
           "  something else is already on that port;"
@@ -570,6 +628,35 @@ public final class Cli {
     } finally {
       hub.close();
     }
+  }
+
+  /**
+   * The token every web request must carry: {@code --web-token}, or {@code CCJ_WEB_TOKEN}, or none.
+   *
+   * <p>The environment variable exists so a phone-to-laptop setup does not have to paste a secret
+   * into a command line — which is a file that gets read back by `ps`, shell history and any terminal
+   * that was being recorded — or into a shell alias, which is one more place to leak from. Exporting
+   * it once per session keeps the token out of both. The flag still wins, so a one-off run can use
+   * something else without unsetting anything, and blank means none from either source: an empty
+   * variable is "not set", not an empty password.
+   *
+   * <p>It is read here rather than in {@code Config} because it is not a model setting: it is about
+   * how this run is served, and it is deliberately not stored in the config file — a file that holds
+   * it is a file every backup of the home directory holds.
+   */
+  static String webToken(CliOptions options, Map<String, String> env) {
+    String flag = options == null ? null : options.webToken();
+    if (flag != null && !flag.isBlank()) {
+      return flag.strip();
+    }
+    String fromEnv = env == null ? null : env.get(ENV_WEB_TOKEN);
+    return fromEnv == null || fromEnv.isBlank() ? null : fromEnv.strip();
+  }
+
+  /** True when this address is where other devices would reach this machine. */
+  private static boolean isLoopbackAddress(InetSocketAddress bind) {
+    InetAddress address = bind.getAddress();
+    return address != null && address.isLoopbackAddress();
   }
 
   private static boolean isLoopback(String host) {
@@ -777,6 +864,76 @@ public final class Cli {
       }
     }
 
+    /**
+     * Replaces the older part of the conversation with a summary the model writes.
+     *
+     * <p>The summarising request goes through the provider directly rather than through the loop: a
+     * loop run appends a user message and counts a turn, and "summarise yourself" is neither something
+     * the user said nor a turn of the work. The conversation that comes back is written as the next
+     * generation of the session, so the file the summary replaced is still on disk and still readable.
+     */
+    private void compact() {
+      try {
+        List<Message> before = session.messages();
+        if (!Compaction.possible(before)) {
+          out.println(
+              "nothing to compact: this conversation is shorter than the "
+                  + Compaction.KEEP_EXCHANGES
+                  + " exchanges a compaction keeps");
+          return;
+        }
+        int beforeTokens = TokenEstimate.of(before);
+        out.println("compacting…");
+        out.flush();
+        Message.Assistant reply =
+            provider.complete(
+                new Provider.Request(
+                    agentOptions.model(),
+                    null,
+                    List.of(
+                        new Message.User(
+                            Compaction.INSTRUCTIONS + "\n\n" + Compaction.transcript(before))),
+                    List.of(),
+                    null,
+                    null,
+                    agentOptions.reasoning()),
+                event -> {});
+        String summary = reply.text() == null ? "" : reply.text().strip();
+        if (summary.isEmpty()) {
+          err.println("error: the model returned an empty summary; nothing was changed");
+          return;
+        }
+        Path source = session.file();
+        Compaction.Result result;
+        try {
+          result = Compaction.apply(before, summary, source.toString(), cwd);
+        } catch (Compaction.NotWorthIt notWorthIt) {
+          out.println("nothing to gain: " + notWorthIt.getMessage());
+          out.println("this conversation has not grown enough for a summary to save anything yet.");
+          return;
+        }
+        session.compactInto(result.messages(), session.totals().plusCompaction());
+        int afterTokens = TokenEstimate.of(result.messages());
+        out.println(
+            "compacted: "
+                + result.summarised()
+                + " message(s) summarised, "
+                + result.kept()
+                + " kept verbatim — "
+                + beforeTokens
+                + " → "
+                + afterTokens
+                + " tokens (estimated), "
+                + result.savedPercent()
+                + "% of the replaced part saved");
+        out.println("the full conversation before this is still in " + source);
+      } catch (RuntimeException e) {
+        err.println("error: " + message(e));
+      } catch (Exception e) {
+        err.println("error: could not summarise the conversation: " + message(e));
+      }
+    }
+
     private void turn(String input) {
       try {
         loop.run(input);
@@ -836,6 +993,7 @@ public final class Cli {
             out.println("model set to " + argument);
           }
         }
+        case "/compact" -> compact();
         case "/tools" -> printTools(tools, out);
         case "/config" -> printConfig(config, env, out);
         case "/yolo" -> {
@@ -883,6 +1041,7 @@ public final class Cli {
             /resume <id>     reopen a session by id
             /sessions        list sessions
             /model <name>    switch model for this session
+            /compact         replace earlier turns with a summary, freeing context
             /tools           list available tools
             /config          show the effective configuration
             /yolo            toggle auto-approval of tool calls

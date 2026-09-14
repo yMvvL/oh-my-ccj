@@ -148,6 +148,10 @@ public final class AnthropicProvider implements Provider {
     return switch (message) {
       case Message.System system -> textTurn(system.text());
       case Message.User user -> textTurn(user.text());
+      // A summary goes on the wire as a user turn: the Messages API has no other shape that can carry
+      // prose the model needs to read but did not say, and the marker inside the text is what keeps it
+      // from reading as its own earlier words.
+      case Message.Summary summary -> textTurn(summary.text());
       case Message.Assistant assistant -> assistantTurn(assistant, thinking);
       case Message.ToolResult result -> {
         ObjectNode turn = Json.object();

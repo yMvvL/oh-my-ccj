@@ -2,7 +2,8 @@
 
 A coding agent runtime written from scratch in plain Java 21. No agent framework, no HTTP client
 library, no CLI library — `java.net.http` for transport, `com.sun.net.httpserver` for the web UI and
-the test doubles, 11.1k lines of hand-written Java plus a 7.1k-line vanilla page, 345 tests.
+the test doubles — 14.1k lines of Java plus a 7.2k-line vanilla page, with 11.5k more lines of tests
+alongside them.
 
 `ccj` streams a conversation with a model, lets the model call tools that touch your filesystem,
 feeds the results back, and repeats until the model answers. It is a small, readable implementation
@@ -19,6 +20,30 @@ $ ccj -p "add a null check to Parser.java and run the tests"
     exit code 0
 Added the check on line 42 and the suite passes.
 ```
+
+## Read this before you run it
+
+`ccj` executes shell commands on your machine. That is the whole point of it, and it means the
+boundaries below are not fine print — they are the design.
+
+- **The agent runs as you, with your environment.** `bash` is not sandboxed, not limited to a
+  directory, and not restricted to a command list. Anything you could type, it can type.
+- **Approval is the only guard.** Tools that write or execute ask first, and without a terminal to
+  ask on they are *denied* rather than assumed. `--yolo` (or auto-approve in the UI) removes that
+  guard entirely; on a session that can also be reached over a network, that combination is remote
+  code execution by design.
+- **The web UI is a shell prompt reachable over HTTP.** It is served on addresses you name and never
+  on a wildcard, and every address except loopback requires a token (`~/.oh-my-ccj/web-token`, 32
+  random bytes, `0600`, generated on first need). The token is the only thing between a device that
+  can reach the port and the ability to run commands. Treat the URL that carries it as a password:
+  it is printed once at startup and appears in your shell history only if you paste it there.
+- **Do not expose it to a network you do not control.** A tailnet address is reasonable because the
+  set of devices that can reach it is one you administer. A public interface — a VPS, a forwarded
+  port, a café network — is not, and the token does not change that: it filters callers, it does not
+  make the service safe to publish.
+
+None of this is a defect to be fixed later; a coding agent that cannot run commands cannot do the
+job. It is the reason `ccj` is built as a personal tool for a machine you own.
 
 ## Quick start
 
@@ -71,7 +96,8 @@ needs no key, no network and no second process. It is the fastest way to watch t
 ## Web UI
 
 ```bash
-ccj                       # the default: serve http://127.0.0.1:6767 and open it
+ccj                       # the default: serve on 127.0.0.1 and on this machine's tailnet address,
+                          # then open it
 ccj --no-open             # for scripts: serve it without launching a browser
 ccj --repl                # the terminal front end instead
 ```
@@ -81,14 +107,33 @@ output, and renders an approval request as a blocking card with Approve / Deny �
 exactly what it is: the loop thread is parked until someone answers, and a timeout denies. Answers
 arrive as markdown and are rendered as markdown (headings, lists, tables, fenced code, links) while
 they stream. Sessions are the same JSONL files the CLI uses, so a conversation started in the
-terminal can be resumed in the browser and vice versa. `--port` moves it, `--host` binds another
-interface, and binding
-anything but loopback **requires** `--web-token` — the UI can run shell commands, so an unauthenticated
-network bind is a remote code execution surface. With a token, the printed URL carries it and the
-server stores it in an HttpOnly cookie, so the browser never needs token plumbing. Without a token
-the server also insists on a loopback `Host` header: any page you open can POST to `127.0.0.1`
-without a preflight, and DNS rebinding would let it read the answers, so a request addressed to
-another name is refused rather than served.
+terminal can be resumed in the browser and vice versa.
+
+**One command, two ways in.** Serving is bound to named addresses rather than to a wildcard:
+
+```
+$ ccj
+oh-my-ccj 0.1.0 — web UI: http://127.0.0.1:6767/
+                          also on http://100.72.92.41:6767/?token=…
+  the first address is this machine (no token needed there); the others are the tailnet, and ask for
+  the token in the URL
+```
+
+- **This machine** reaches it at `127.0.0.1` with nothing attached. Loopback is not a network, and a
+  secret to type in order to use your own command line would be a password nobody asked for.
+- **Your other devices** reach it at the tailnet address, and have to carry a token. It is generated
+  on first use, kept at `~/.oh-my-ccj/web-token` (0600) so a restart does not log the phone out, and
+  printed in the URL — open that URL once and the token lands in an HttpOnly cookie.
+- **Nothing else** reaches it: no wildcard bind, so the café wifi, the office LAN and the docker
+  bridge have no listener to talk to. `--host <addr>` binds exactly one address instead, `--host
+  tailscale` the tailnet address alone, and anything but loopback then needs a token — one from
+  `--web-token`, `CCJ_WEB_TOKEN`, or the file.
+- A tokenless server (a machine with no tailnet) additionally insists on a loopback `Host` header:
+  any page you open can POST to `127.0.0.1` without a preflight, and DNS rebinding would let it read
+  the answers, so a request naming another host is refused rather than served.
+
+`--port` moves the port. The agent can run shell commands, so the address it is reachable on is a
+security decision, not a convenience one: a token is the price of reaching it from the network.
 
 Model settings — provider, model, base URL, API key and temperature — live in the UI itself
 (`Settings`), and `Test connection` sends one tiny request to check them before saving. The effort
@@ -96,6 +141,48 @@ tier is picked above the message box instead. The context budget is deliberately
 is `--max-context-tokens`, `CCJ_MAX_CONTEXT_TOKENS` or `"maxContextTokens"` in the config file. The
 key is never sent back to the browser, only whether one exists and where it comes from. See
 [docs/WEBUI.md](docs/WEBUI.md).
+
+### From your phone, over Tailscale
+
+Nothing extra to type: if this machine is on a tailnet, `ccj` already serves your phone.
+
+```bash
+ccj                    # this machine at http://127.0.0.1:6767/
+                       # and the phone at http://100.72.92.41:6767/?token=…
+```
+
+Open the second URL on the phone once; the token goes into an HttpOnly cookie and the bookmark needs
+nothing after that. The token is generated on first use and kept at `~/.oh-my-ccj/web-token` (0600,
+readable only by you) so restarts do not log the phone out; `--web-token` and `CCJ_WEB_TOKEN` override
+it, and a blank value in either place counts as "no token" rather than as an empty password.
+
+Two things make it *yours* rather than merely "on the tailnet":
+
+Open the printed URL once on the phone; the token goes into an HttpOnly cookie and the bookmark needs
+nothing after that. Two things make it *yours* rather than merely "on the tailnet":
+
+- **The bind is the address, not every interface.** `ss -ltn | grep 6767` shows two listeners:
+  `127.0.0.1:6767` and `100.72.92.41:6767`. The tailnet one is what the phone uses, and it is the only
+  one that can be reached from off this machine. `--host tailscale` serves *only* the tailnet address
+  (then this machine must use it too, or the MagicDNS name `archymwl.taile88351.ts.net`).
+- **A tailnet is not the same as one device.** Every device in it can reach that port; the token is
+  what stops the others. To pin it to one device as well, add to the tailnet's access rules:
+
+  ```json
+  { "acls": [ { "action": "accept", "src": ["ffdancer"], "dst": ["archymwl:6767"] },
+              { "action": "accept", "src": ["archymwl"], "dst": ["archymwl:6767"] } ] }
+  ```
+
+  (Tailscale's default rule already allows everything within a tailnet — the pair above is what
+  *narrows* it. `tailscale status` prints the device names.)
+
+The tailnet address is resolved through the `tailscale0` interface, or by asking `tailscale ip -4` on
+systems that carry the tailnet over a differently named one; an address outside `100.64.0.0/10` is
+never accepted, and a machine without a tailnet simply serves loopback and is not bound to anything
+else. `--host <addr>` still takes any address, and any non-loopback one **requires** a token.
+For HTTPS with a real certificate and no open port at all, `tailscale serve --bg 6767` in front of a
+loopback bind works too — it still needs the token, because the `Host` the server sees is then a
+hostname rather than loopback.
 
 ## What it does
 
@@ -106,8 +193,10 @@ key is never sent back to the browser, only whether one exists and where it come
 | Endpoint and key | They belong to the provider they were entered for, and the config file keeps one pair per provider: the one in effect plus a `remembered` entry for each other provider you have configured. Switching provider loads that provider's pair instead of passing the old one on, so a session cannot end up billing the provider it just left — and switching back does not ask you to paste the key again. |
 | Tools | `read`, `write`, `edit`, `bash`, `glob`, `grep` — each with a hand-written JSON Schema and self-describing errors. `bash` runs the command with its stdin already closed, so `cat`, `sort` or a script's `read` sees end-of-input instead of waiting for a terminal that is not there. The read-only three declare themselves as such, and a run of them in one turn executes concurrently. |
 | Loop | One model turn at a time per conversation; every requested tool runs, its result goes back, and the model is asked again. No step ceiling — a turn ends when the model answers or when you abort it, because a cap cannot tell a model stuck in a rut from one working through a long task. Abort is real: a running shell command is killed rather than waited out. |
+| Project rules | Drop a `CCJ.md` in a working directory and its contents lead the prompt for every request made there: the project's own statement about how work is done here, with the built-in rules following it rather than being replaced by it. Read from **that directory only** — a file higher up the tree is not consulted, so "what prompt is this run using" is answerable by looking at the folder you started in. `--system` still overrides the built-in part. Missing, empty and unreadable all mean "no project rules". |
 | Context budget | `--max-context-tokens` (or `CCJ_MAX_CONTEXT_TOKENS`, or the config file) caps what one request carries, in estimated tokens. Over it, old tool output is elided first, then whole older exchanges are dropped — never splitting an assistant turn from the results of the calls it made — and if the exchange being answered still does not fit, its largest result is cut short with an explicit marker. The session file keeps everything; only the request is a projection, and the transcript says what was trimmed. |
 | Context | The side panel reports the estimated prompt size against the budget (`--max-context-tokens`), so you can see a session about to be trimmed before the transcript says it was. It is an estimate and labelled as such: token counting is a heuristic. No money is shown — a price is an assumption about a rate card that changes without telling ccj. |
+| Compaction | `/compact` (or the Compact button) replaces the older turns with a summary the model writes, so a long session keeps going without re-sending everything it has ever read. Written as the next **generation** of the same session — `<id>.g1.jsonl` beside the untouched `<id>.jsonl` — so the conversation it replaced is still on disk and still readable, and the summary tells the model where to `read` it back. The newest five exchanges stay verbatim; a summary that would not come out smaller than what it replaces is refused instead of written. See [docs/COMPACT.md](docs/COMPACT.md). |
 | Usage | Prompt/output tokens, steps, tool calls and the **cache hit rate** per session, parsed from both protocols (`prompt_tokens_details.cached_tokens`, `prompt_cache_hit_tokens`, `cache_read_input_tokens`), shown live in the side panel and in each turn's token line, and persisted with the session so resuming continues the count. |
 | Sessions | Append-only JSONL under `~/.oh-my-ccj/sessions/`, created on the first message (an empty session leaves no file), resumable with `--resume` / `--continue`, replayed into the transcript when the UI opens one, and deletable one at a time or all at once from the sidebar — including in a workspace you are not currently in. The sidebar labels each one with the first thing you asked it, since a list of timestamp ids says nothing about which task it was. A turn that an interruption left without its tool results (`Ctrl-C` between the call and its execution, or a killed process) is repaired for the next request instead of being refused forever, and so is a turn whose answers ended up displaced by a message written in the middle of them — the answers are carried back into the turn that asked, because a `tool` message the API cannot place is a rejected request. |
 | Approval | Anything that writes or executes asks first; without a terminal it is denied, not silently allowed. |
@@ -118,7 +207,7 @@ key is never sent back to the browser, only whether one exists and where it come
 | Effort tiers | A picker above the message box: provider → model → `default`/`low`/`high`/`max`, translated per protocol (`reasoning_effort` for OpenAI-shaped APIs, extended-thinking budgets for Anthropic). `default` sends nothing, so ordinary models are unaffected. |
 | Folder picker | "Add workspace" *is* the folder picker: one click opens the desktop's own chooser (`zenity`, `kdialog` or Swing) and the folder that comes back becomes the workspace under its own name, with a suffix if that name is taken. A machine with no chooser falls back to the form the same click opens, so typing a path — or browsing to one with the same chooser — always works. |
 | Workspaces | A VS Code-style sidebar: every workspace is a folder that expands to its own sessions, with lazy loading, per-row delete and per-node remove. A row is labelled by the first thing it was asked and is one click target end to end, and a finished turn re-reads the list so the conversation you just had is at the top. Named directories with their own session history — the workspace `ccj` starts in keeps the original sessions directory, added ones get their own under `<home>/workspaces/<name>/`. Switching changes the working directory *and* the history in one move, the active workspace is where the tools run no matter where the process was started, and reading a folded folder never moves the session you are in. |
-| Web UI | `ccj` serves the same loop as a single page: streaming transcript, tool cards, blocking approval prompts, session switching, and a settings panel that configures the model at runtime. No framework, no build step. |
+| Web UI | `ccj` serves the same loop as a single page: streaming transcript, tool cards, blocking approval prompts, session switching, and a settings panel that configures the model at runtime. No framework, no build step. On a phone the two panels become sheets over the transcript. It is served on loopback and, when the machine is on a tailnet, on its tailnet address as well — so the same page is one command away from the laptop it runs on and from the phone in your pocket, with a generated token the only thing the network side needs. |
 | Several conversations at once | A turn running in one session does not lock the server: start a second task in another conversation while the first is still working, and the sidebar marks the sessions that are running (■ stops one from anywhere, without opening it). What each session still takes is *one* turn at a time — two writers on one transcript is how it gets corrupted — and the operations that change what every conversation is built on (the model, the config file, the workspace) wait until nothing is running. Payloads of messages carry their session id, so a delta from a background turn can never be rendered into the transcript you are reading. |
 | Self-bootstrap | The agent can rebuild this project and install the result: `mvn -q -DskipTests -Djar.name=ccj-next package` writes a scratch jar without touching the one in use (truncating a jar a JVM is executing is how the process dies mid-build), then `restart` renames it into place and the launcher starts the new code — **on the conversation you were on**: the ending process writes that session id down and the next one opens it, so a restart no longer hands you an empty transcript. See [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md). |
 
@@ -161,8 +250,10 @@ Sessions:
 
 Web:
           --port <n>           web UI port (default 6767)
-          --host <addr>        bind address (default 127.0.0.1; anything else needs --web-token)
+          --host <addr>        bind address (default 127.0.0.1; 'tailscale' uses this machine's
+                               tailnet address; anything else needs --web-token)
           --web-token <token>  require this token from every web request
+                               (or set CCJ_WEB_TOKEN; the flag wins)
           --wallpapers <dir>   pictures the page rotates as its background
                                (default: ~/Pictures/ccj-backgrounds, or CCJ_WALLPAPERS)
 
@@ -180,7 +271,7 @@ The web UI is the default front end; --repl gives the terminal one. In the REPL,
 ```
 
 REPL commands: `/help`, `/exit`, `/clear`, `/new`, `/resume <id>`, `/sessions`, `/model <name>`,
-`/tools`, `/config`, `/yolo`.
+`/compact`, `/tools`, `/config`, `/yolo`.
 
 ### Configuration
 
@@ -208,6 +299,7 @@ command-line flags.
 | `CCJ_REASONING`, `CCJ_MAX_CONTEXT_TOKENS` | reasoning effort, prompt budget |
 | `CCJ_AUTO_APPROVE`, `CCJ_SYSTEM_PROMPT` | approval mode and prompt override |
 | `CCJ_WALLPAPERS` | pictures the page rotates as its background |
+| `CCJ_WEB_TOKEN` | the token the network addresses must carry (without `--web-token`, which wins; otherwise `~/.oh-my-ccj/web-token`) |
 | `CCJ_HOME` | application home directory |
 
 `model` can be omitted for `openai` and `anthropic`: the defaults are `gpt-4o-mini` and
@@ -336,7 +428,7 @@ mappings and the reasoning behind the design.
 ## Development
 
 ```bash
-mvn test                                  # 436 tests, no network, no API key
+mvn test                                  # 472 tests, no network, no API key
 mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
 mvn -Dtest=WebApiTest test                # HTTP + SSE + approval handshake only
 mvn -DskipTests package                   # fat jar
@@ -352,14 +444,16 @@ file on disk, session written.
 |---|---|
 | providers (SSE parsing, both wire mappings, retry policy, custom definitions, effort tiers, catalogue) | 75 |
 | tools (matching, truncation, timeouts, cancellation, denial paths) | 41 |
-| core (loop behaviour, tool overlap, abort reaching a streaming model call, a project's own CCJ.md rules, context budget, token estimate, config precedence, per-provider settings, interrupted-history repair, the thinking-language prompt) | 99 |
-| session (codec round-trips including thinking, append/reopen, the listing cache, the restart handover note) | 44 |
+| core (loop behaviour, tool overlap, abort reaching a streaming model call, a project's own CCJ.md rules leading the prompt, context budget, token estimate, config precedence, per-provider settings, interrupted-history repair, the thinking-language prompt, compaction) | 108 |
+| session (codec round-trips including thinking, append/reopen, the listing cache, generation files, the restart handover note) | 49 |
 | CLI (argument parsing, mode selection, port suggestion) | 13 |
-| end-to-end (CLI → HTTP → tool → disk, reasoning, budget, where tools run, CCJ.md reaching the request, a restart landing on the same conversation) | 25 |
-| web API (HTTP, SSE, approvals surviving a session switch, refusal by session, sessions running side by side, opening a busy session, token gate, host guard, settings, workspaces, deletion, models, providers) | 99 |
-| web rendering (the markdown, session-row and add-workspace cases, run under node) | 8 |
+| end-to-end (CLI → HTTP → tool → disk, reasoning, budget, where tools run, CCJ.md reaching the request, a restart landing on the same conversation) | 26 |
+| web API (HTTP, SSE, approvals surviving a session switch, refusal by session, sessions running side by side, opening a busy session, token gate, host guard, settings, workspaces, deletion, models, providers, compaction) | 88 |
+| web rendering (the markdown, session-row, approval, replay, add-workspace and compaction cases, run under node) | 20 |
 | restart (the swap, its refusals, and that nothing happens without approval) | 8 |
 | folder chooser (subprocess plumbing, timeout, single-dialog guard) | 5 |
+| wallpapers (numeric ordering, type from the bytes, containment, no directory) | 8 |
+| tailnet (the address `--host tailscale` resolves, and what is refused) | 5 |
 | workspaces (registry rules, persistence, isolation, naming a picked folder) | 11 |
 | demo provider (routing, termination) | 8 |
 
@@ -371,9 +465,10 @@ file on disk, session written.
 - Text only: no image or file attachments on the wire.
 - No MCP, no plugins, no sandboxing — approval is the only guard, and `--yolo` removes it.
 - Bash runs as the current user with your full environment.
-- Sessions grow without bound on disk. What does not fit the context budget is elided or dropped, not
-  summarised: a model that gets a summary of a file read twenty turns ago cannot tell which parts of
-  it were quoted and which were invented.
+- Sessions grow without bound on disk. What does not fit the context budget is elided or dropped;
+  what you *ask* for with `/compact` is summarised, and only then is it a summary you can see and undo —
+  the turns it replaced are still in the generation file beside it, and the summary names that file so
+  the model can read a detail back rather than trusting its own paraphrase.
 - A turn has no step ceiling, so a model that gets stuck will keep calling tools until you abort it.
   That is the trade: a long task is never cut off at a number somebody guessed, and stopping a stuck
   one is a decision you make while watching it rather than a guess made in advance.
@@ -384,8 +479,11 @@ file on disk, session written.
 - The API key is stored in plaintext when you let the UI save it (the file is `0600`); keeping it
   in the environment instead is one dropdown away.
 - The web UI is a local console: several conversations can work at once, but one browser page shows
-  one transcript, and there are no accounts. It binds loopback by default and refuses a public bind
-  without a token, because the agent can run shell commands.
+  one transcript, and there are no accounts. It is served on named addresses — loopback, plus this
+  machine's tailnet address when it has one — and never on a wildcard, so the port does not exist on
+  any network the user did not name. Loopback needs nothing; every other address needs the token,
+  because the agent can run shell commands. Inside a tailnet the token is what tells devices apart:
+  the network decides who is nearby, the token decides who is let in.
 - Several conversations can be running in the same workspace, which means their tools can write the
   same files with no ordering between them. That is the same exposure as two terminals in one
   directory, and it is deliberately not serialised — the point is to start a task and keep working.

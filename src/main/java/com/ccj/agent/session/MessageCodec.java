@@ -27,6 +27,8 @@ public final class MessageCodec {
   public static final String TYPE_USER = "user";
   public static final String TYPE_ASSISTANT = "assistant";
   public static final String TYPE_TOOL_RESULT = "tool_result";
+  /** A model-written summary standing in for the messages a compaction replaced. */
+  public static final String TYPE_SUMMARY = "summary";
 
   private MessageCodec() {}
 
@@ -72,6 +74,18 @@ public final class MessageCodec {
           }
         }
       }
+      case Message.Summary summary -> {
+        node.put("type", TYPE_SUMMARY);
+        node.put("text", summary.text());
+        // Written only when there is something to say: a generation file made before compaction
+        // existed, or a test constructing one by hand, stays byte-identical without these.
+        if (summary.covers() > 0) {
+          node.put("covers", summary.covers());
+        }
+        if (!summary.source().isEmpty()) {
+          node.put("source", summary.source());
+        }
+      }
       case Message.ToolResult result -> {
         node.put("type", TYPE_TOOL_RESULT);
         node.put("tool_call_id", result.toolCallId());
@@ -105,6 +119,7 @@ public final class MessageCodec {
       case TYPE_ASSISTANT ->
           new Message.Assistant(
               text(node, "text"), toolCalls(node.get("tool_calls")), thinking(node.get("thinking")));
+      case TYPE_SUMMARY -> new Message.Summary(text(node, "text"), covers(node), source(node));
       case TYPE_TOOL_RESULT ->
           new Message.ToolResult(
               text(node, "tool_call_id"),
@@ -178,6 +193,28 @@ public final class MessageCodec {
     return value == null || !value.isTextual() ? "" : value.asText();
   }
 
+  /**
+   * How many messages a summary replaced. Absent is 0 rather than an error: the count is what the
+   * transcript displays, and a hand-written generation file without it is still a usable summary.
+   */
+  private static int covers(JsonNode node) {
+    JsonNode value = node.get("covers");
+    if (value == null || value.isNull()) {
+      return 0;
+    }
+    if (!value.isIntegralNumber() || !value.canConvertToInt() || value.asInt() < 0) {
+      throw new IllegalArgumentException(
+          "message field 'covers' must be a non-negative integer, got " + describe(value));
+    }
+    return value.asInt();
+  }
+
+  /** The file the summarised messages are still in, or empty when the writer named none. */
+  private static String source(JsonNode node) {
+    JsonNode value = node.get("source");
+    return value == null || !value.isTextual() ? "" : value.asText();
+  }
+
   private static String text(JsonNode node, String field) {
     JsonNode value = node.get(field);
     if (value == null || value.isNull()) {
@@ -221,6 +258,11 @@ public final class MessageCodec {
     node.put("tool_calls", totals.toolCalls());
     node.put("tool_errors", totals.toolErrors());
     node.put("elapsed_ms", totals.elapsedMillis());
+    // Written only when there is one: a session recorded before compaction existed keeps a usage line
+    // byte-identical to what it was, so nothing about an old file looks newer than it is.
+    if (totals.compactions() > 0) {
+      node.put("compactions", totals.compactions());
+    }
     node.put("cache_reported", totals.cacheReported());
     return Json.write(node);
   }
@@ -239,6 +281,8 @@ public final class MessageCodec {
         node.path("tool_calls").asInt(),
         node.path("tool_errors").asInt(),
         node.path("elapsed_ms").asLong(),
+        // Absent reads as 0, which is what a session that was never compacted recorded.
+        node.path("compactions").asInt(0),
         node.path("cache_reported").asBoolean());
   }
 }

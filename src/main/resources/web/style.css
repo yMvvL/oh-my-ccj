@@ -1089,6 +1089,49 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 /* small lines */
 
 .ev-notice { color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+
+/* The summary a compaction left in place of the earlier turns. Collapsed by
+ * default — it is long, and it is rarely what the reader is looking for — but
+ * the head is a real control, because opening it is how you check what it kept.
+ * Muted rather than loud: it is a fold in the conversation, not a message. */
+.ev-summary {
+  border: 1px solid var(--dsw-alias-border-secondary);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-secondary);
+  font-size: 12px;
+}
+.ev-summary-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+  list-style: none;
+}
+.ev-summary-head::-webkit-details-marker { display: none; }
+.ev-summary-head:hover { color: var(--dsw-alias-label-primary); }
+.ev-summary-glyph { opacity: 0.7; }
+.ev-summary-title { font-weight: 500; }
+.ev-summary-count { opacity: 0.75; }
+.ev-summary-count::before { content: "· "; }
+.ev-summary-body {
+  padding: 0 10px 9px;
+  border-top: 1px solid var(--dsw-alias-border-secondary);
+}
+.ev-summary-note {
+  color: var(--dsw-alias-label-tertiary);
+  padding: 7px 0;
+  line-height: 1.5;
+}
+.ev-summary-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  max-height: 42vh;
+  overflow-y: auto;
+  color: var(--dsw-alias-label-primary);
+}
 .ev-error { color: var(--dsw-alias-state-error-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* A short label between two hairlines — a paragraph break, not a chapter
@@ -1782,6 +1825,20 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 
 /* ------------------------------------------------------------- responsive */
 
+/* The scrim belongs to the sheets: a panel opened over the transcript is
+ * plainly a panel, and a tap that lands anywhere else puts it away. Under the
+ * panels (z 40 and 41) and under every dialog (50), so a dialog opened from a
+ * sheet is still on top of the sheet that opened it. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+  background: var(--dsw-alias-bg-mask-1);
+  backdrop-filter: blur(1px);
+  animation: fade .12s ease-out both;
+}
+.scrim[hidden] { display: none; }
+
 @media (max-width: 900px) {
   .side {
     position: fixed;
@@ -1805,6 +1862,68 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   .overlay { padding: var(--sp-3); }
   .overlay-head, .overlay-body { padding-left: var(--sp-3); padding-right: var(--sp-3); }
   .session-actions { padding-right: 0; }
+}
+
+/* A phone shows one thing at a time, and the transcript is the thing. Below
+ * 720px the sidebar stops being a column and becomes a sheet as well — 280px of
+ * tree beside the conversation leaves neither of them readable on a 390px
+ * screen — and both sheets are dismissed by tapping away from them, which is
+ * what the scrim above is for. */
+@media (max-width: 720px) {
+  .sidebar {
+    position: fixed;
+    top: 0; bottom: 0; left: 0;
+    z-index: 41;
+    width: min(320px, 86vw);
+    display: none;
+    box-shadow: var(--dsw-shadow-lv3);
+  }
+  .sidebar.open { display: flex; }
+
+  /* Sizes for a fingertip rather than a pointer: the harness's 28px rows and 12px
+   * labels are a mouse's measurements, and every one of these is a real control. */
+  .btn.sm { padding: 8px 12px; font-size: 13px; border-radius: 16px; }
+  .icon-btn { width: 34px; height: 34px; font-size: 17px; }
+  /* 16px, or Safari zooms the whole page the moment one of these takes focus —
+   * the same rules as the desktop sheet, at the one size that stops it. */
+  .field input[type="text"],
+  .field input[type="password"],
+  .field input[type="number"],
+  .field select { font-size: 16px; }
+  .picker-manual input, .field .picker-manual input { font-size: 16px; }
+
+  /* There is no hover on a phone, so anything that appears under the pointer has
+   * to simply be there — a delete button nobody can find is not a control. */
+  .session-actions, .ws-foot { opacity: 1; }
+
+  /* Rows a thumb can hit: 32px is a pointer's row, and these two are the list
+   * the sheet exists to offer. Named as `.sidebar …` rather than bare, because
+   * the existing rules are `.ws-sessions .session-row` and two `.ws-name`s — a
+   * media query adds no weight, so the selector has to carry it. The buttons
+   * inside them are `.btn.sm`, which the rule above has already grown. */
+  .sidebar .ws-sessions .session-row { min-height: 44px; }
+  /* `height: 34px` is fixed in the base rule, so this one has to undo it rather
+   * than add to it. */
+  .sidebar .ws-name { height: auto; min-height: 44px; padding: 11px var(--sp-2); }
+  /* The rows' own controls — `Delete`, `Use`, `Remove` — are the ones a thumb
+   * aims at in this list, and two-step delete only excuses so much. */
+  .sidebar .btn.sm { padding: 10px 12px; }
+
+  .header { padding: 10px 14px 0 12px; }
+  .title-row { flex-wrap: wrap; row-gap: 8px; }
+  .transcript { padding: var(--sp-3) 12px; }
+  .ev-user .bubble { max-width: 100%; }
+  .overlay { padding: var(--sp-3); }
+
+  /* `show all` is a 12px underlined word with no padding, which is a mouse's
+   * target: here it gets a fingertip's, without moving off the code it belongs
+   * to — the negative margin keeps the row the same height. */
+  .tool-output-more .link { padding: 7px 8px; margin: -7px 0; }
+
+  /* The keyboard and the home bar both live at the bottom edge of the screen,
+   * and the composer is what they cover. */
+  .composer { padding: 0 12px max(10px, env(safe-area-inset-bottom)); }
+  .composer-row { gap: 8px; }
 }
 
 /* Motion is decoration here: the pulse, the tool spinner, the arrival rise and

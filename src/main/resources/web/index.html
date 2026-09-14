@@ -192,6 +192,9 @@
           </div>
         </div>
           <span class="hint" id="composer-hint"></span>
+          <button type="button" class="btn ghost sm" id="btn-compact"
+                  title="Replace earlier turns with a summary, freeing context. The full conversation stays on disk.">
+            <span class="btn-glyph" aria-hidden="true">⤓</span><span class="btn-label">Compact</span></button>
           <button type="button" class="btn danger" id="btn-abort" hidden
                   title="Stop the running turn at the next safe point">Abort</button>
           <button type="submit" id="send" class="btn primary">Send</button>
@@ -222,6 +225,7 @@
               <tr><th scope="row">cached input</th><td id="u-cached">—</td></tr>
               <tr id="u-errors-row"><th scope="row">tool errors</th><td id="u-errors">—</td></tr>
               <tr><th scope="row">tool calls</th><td id="u-tools">—</td></tr>
+              <tr id="u-compact-row"><th scope="row">compactions</th><td id="u-compact">—</td></tr>
               <tr><th scope="row">elapsed</th><td id="u-elapsed">—</td></tr>
               <tr><th scope="row">context (est.)</th><td id="u-context">—</td></tr>
             </tbody>
@@ -236,6 +240,10 @@
       </section>
     </aside>
   </div>
+
+  <!-- Shown under the sheets on a phone, so a tap outside one closes it. It is
+       above the wallpaper layer and below every panel and dialog. -->
+  <div id="scrim" class="scrim" hidden></div>
 </div>
 
 <div id="settings-overlay" class="overlay" hidden>

@@ -97,6 +97,29 @@ public sealed interface Message {
     }
   }
 
+  /**
+   * What earlier turns came to, written by the model so the conversation can carry on without them.
+   *
+   * <p>A distinct kind rather than a {@link User} message dressed up as history, because the model has
+   * to be able to tell the difference: a summary is somebody else's compression of work it cannot see,
+   * and treating it as its own words is how an invented detail becomes a remembered fact. It is
+   * rendered onto the wire as a user turn carrying an explicit marker for the same reason.
+   *
+   * <p>{@code covers} is how many messages were replaced and {@code source} names the generation file
+   * they are still in, so the model can {@code read} the real thing when it needs a detail the summary
+   * did not keep — {@code read} is read-only and needs no approval, which is what makes that work.
+   */
+  record Summary(String text, int covers, String source) implements Message {
+    public Summary {
+      text = text == null ? "" : text;
+      source = source == null ? "" : source;
+    }
+
+    public static Summary of(String text) {
+      return new Summary(text, 0, "");
+    }
+  }
+
   /** One tool invocation requested by the model. */
   record ToolCall(String id, String name, String arguments) {
     public ToolCall {
