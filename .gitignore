@@ -4,3 +4,8 @@ target/
 *.iml
 .vscode/
 ccj-home/
+
+# A CCJ.md in this repository is *your* rules for working on it, not the project's. Committing it
+# would push one machine's preferences onto everyone who clones, which is the opposite of what the
+# file is for.
+CCJ.md

@@ -16,8 +16,18 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>A prompt can only say what is true everywhere. What is true about <em>this</em> project — the
  * build command, the module that must not be touched, the way its tests are run — belongs next to
  * the code it is about, where it moves with the project instead of living in one machine's config
- * file. The file is read from the working directory and from the directories above it, because a
- * convention that only applies when you happen to be standing in the root is not a convention.
+ * file.
+ *
+ * <p>Two properties are the ones worth defending, because both were the opposite at some point:
+ *
+ * <ul>
+ *   <li><b>The read is exactly one directory deep.</b> A file above the working directory is not
+ *       consulted. The answer to "what prompt is this run using" has to be something a user can work
+ *       out by looking at the folder they started in — a walk to the root would let a stray file in a
+ *       home directory redefine the agent for every project beneath it.
+ *   <li><b>An empty file is not rules.</b> It has to mean "nothing here", the same as no file at all,
+ *       so that saving a placeholder cannot quietly strip the agent of its built-in rules.
+ * </ul>
  */
 class ProjectPromptTest {
 
@@ -41,40 +51,38 @@ class ProjectPromptTest {
     String rules = ProjectPrompt.from(root);
 
     assertTrue(rules.contains("mvn -o test"), rules);
+    // Returned as written, with no heading: with one file at one known location there is nothing to
+    // disambiguate, and a heading would cost prompt on every request to say which of one it was.
+    assertFalse(rules.contains("Rules from"), rules);
+    assertEquals("Run tests with `mvn -o test`.", rules, "and stripped of surrounding blank lines");
   }
 
   @Test
-  void rulesAboveTheWorkingDirectoryApplyToo() throws Exception {
-    // The reported use: the rules sit at the top of a tree of projects, and the agent is started in
-    // one of the subdirectories. Only reading the working directory would silently drop them.
+  void aFileInAParentDirectoryIsNotUsed() throws Exception {
+    // The reversal this pins down: the walk upwards is gone. The rule is "the directory you are
+    // working in", which is predictable from one folder; a walk to the root would let a file in a home
+    // directory apply to every project under it without any project asking for it.
     write(root, ProjectPrompt.FILE_NAME, "Top-level rule: never force-push.");
     Path nested = Files.createDirectories(root.resolve("a/b/c"));
 
-    String rules = ProjectPrompt.from(nested);
-
-    assertTrue(rules.contains("never force-push"), rules);
+    assertEquals("", ProjectPrompt.from(nested), "a parent's rules are not this directory's");
   }
 
   @Test
-  void theClosestRulesComeLastAndTheRemoteOnesFirst() throws Exception {
-    // Order is the whole point of supporting both: the general rule is stated, then the specific
-    // one that narrows it. Reversed, a project's rule would be contradicted by its parent's.
+  void aCloserFileDoesNotMergeWithTheOneAboveIt() throws Exception {
     write(root, ProjectPrompt.FILE_NAME, "GENERAL: keep commits small.");
     Path nested = write(root.resolve("sub"), ProjectPrompt.FILE_NAME, "SPECIFIC: this module uses tabs.");
 
     String rules = ProjectPrompt.from(nested);
 
-    int general = rules.indexOf("GENERAL");
-    int specific = rules.indexOf("SPECIFIC");
-    assertTrue(general >= 0 && specific >= 0, rules);
-    assertTrue(general < specific, "the closer rule must come after the more distant one:\n" + rules);
-    // Which file each block came from, so a model reading a contradiction can tell them apart.
-    assertTrue(rules.contains(root.resolve(ProjectPrompt.FILE_NAME).toString()), rules);
-    assertTrue(rules.contains(nested.resolve(ProjectPrompt.FILE_NAME).toString()), rules);
+    assertTrue(rules.contains("SPECIFIC"), rules);
+    assertFalse(rules.contains("GENERAL"), "and it is not combined with the parent's: " + rules);
   }
 
   @Test
   void anEmptyOrBlankFileContributesNothing() throws Exception {
+    // Saving an empty file — an editor not yet typed into — must not read as "no rules of any kind",
+    // because the built-in rules follow the file and their absence is not something the user asked for.
     write(root, ProjectPrompt.FILE_NAME, "\n\n   \n");
 
     assertEquals("", ProjectPrompt.from(root));
@@ -82,8 +90,8 @@ class ProjectPromptTest {
 
   @Test
   void aFileThatCannotBeReadIsNotAnError() throws Exception {
-    // The prompt is a help, not a dependency: a directory the process cannot read must not stop it
-    // from starting, and the worst case is the behaviour a prompt-less run had before this existed.
+    // The prompt is a help, not a dependency: a file the process cannot read must not stop it from
+    // starting, and the worst case is the behaviour a prompt-less run had before this existed.
     Path file = write(root, ProjectPrompt.FILE_NAME, "secret").resolve(ProjectPrompt.FILE_NAME);
     file.toFile().setReadable(false);
     try {
@@ -108,25 +116,6 @@ class ProjectPromptTest {
   }
 
   @Test
-  void aDirectoryThatIsUnreadableUpstreamDoesNotHideTheCloserRules() throws Exception {
-    Path nested = write(root.resolve("deep"), ProjectPrompt.FILE_NAME, "CLOSEST: run `make check`.");
-
-    String rules = ProjectPrompt.from(nested);
-
-    assertTrue(rules.contains("make check"), rules);
-  }
-
-  @Test
-  void theSearchStopsAtTheFilesystemRoot() throws Exception {
-    // A rules file cannot live above the root, so the walk has to terminate rather than fail. This
-    // also pins that a walk from a deep path does not lose the file in the middle of it.
-    write(root, ProjectPrompt.FILE_NAME, "FOUND: the walk reaches it.");
-    Path deep = Files.createDirectories(root.resolve("one/two/three/four/five"));
-
-    assertTrue(ProjectPrompt.from(deep).contains("FOUND"));
-  }
-
-  @Test
   void nothingIsFoundWhenTheNameIsOnlySimilar() throws Exception {
     // CCJ.md is the file this project reads, and near-misses are not it: guessing at other names is
     // how a directory ends up with rules the user never agreed to.
@@ -141,5 +130,15 @@ class ProjectPromptTest {
   void aNullOrMissingDirectoryIsNotAnError() {
     assertEquals("", ProjectPrompt.from(null));
     assertEquals("", ProjectPrompt.from(root.resolve("does-not-exist")));
+  }
+
+  @Test
+  void theDirectoryItselfIsReadNotTheFileBesideIt() throws Exception {
+    // The path is resolved against the directory as given: a relative path, a path with a trailing
+    // slash and a path with `..` in it all have to find the same file.
+    write(root, ProjectPrompt.FILE_NAME, "FOUND: the rules are here.");
+
+    assertTrue(ProjectPrompt.from(root.resolve(".")).contains("FOUND"));
+    assertTrue(ProjectPrompt.from(root.resolve("sub/..")).contains("FOUND"));
   }
 }

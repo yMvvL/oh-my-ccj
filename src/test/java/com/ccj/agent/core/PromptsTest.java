@@ -58,10 +58,15 @@ class PromptsTest {
   }
 
   @Test
-  void aProjectsOwnRulesAreAddedAndTheLanguageStaysLast() throws Exception {
-    // The three parts have a deliberate order. A project's rules must come after the defaults so a
-    // repository can narrow them, and the language instruction must survive being read last because
-    // it is the one about how to answer rather than what to do.
+  void theProjectsRulesLeadAndTheBuiltInRulesStillFollow() throws Exception {
+    // Two things pinned at once, both of them reversals of an earlier design.
+    //
+    // The project's file comes *first*: it is the specific statement about this work, and a reader
+    // meeting general instructions first has to hold them while being told the real ones.
+    //
+    // And the built-in rules are still there. They are not project preferences but the way this agent
+    // works — "inspect before you change", "never claim something works unless a command proved it" —
+    // and a project adding its own rules has not asked to stop being told those.
     java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("project-rules");
     try {
       java.nio.file.Files.writeString(
@@ -69,12 +74,40 @@ class PromptsTest {
 
       String prompt = Prompts.system(null, "Simplified Chinese", dir);
 
-      int base = prompt.indexOf("You are ccj");
       int project = prompt.indexOf("make check");
+      int base = prompt.indexOf("You are ccj");
       int language = prompt.indexOf("Language:");
-      assertTrue(base >= 0 && project >= 0 && language >= 0, prompt);
-      assertTrue(base < project, "the project's rules narrow the defaults, so they come after:\n" + prompt);
-      assertTrue(project < language, "and the language rule stays last:\n" + prompt);
+      assertTrue(project >= 0 && base >= 0 && language >= 0, prompt);
+      assertTrue(project < base, "the project's rules lead the prompt:\n" + prompt);
+      assertTrue(base < language, "the built-in rules follow them, and the language stays last:\n" + prompt);
+      // The specific behaviours a project file must not be able to switch off by existing.
+      assertTrue(prompt.contains("Inspect before you change"), prompt);
+      assertTrue(prompt.contains("Never claim something works"), prompt);
+    } finally {
+      java.nio.file.Files.deleteIfExists(dir.resolve(ProjectPrompt.FILE_NAME));
+      java.nio.file.Files.deleteIfExists(dir);
+    }
+  }
+
+  @Test
+  void aConfiguredPromptKeepsItsPlaceAfterTheProjectsRules() throws Exception {
+    // With a configured prompt the same order holds: the project's file, the configured prompt, the
+    // language. The configured text replaces the built-in one — that is what configuring it means —
+    // but it does not displace the project's file, which is about this work rather than about ccj.
+    java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("configured-and-project");
+    try {
+      java.nio.file.Files.writeString(
+          dir.resolve(ProjectPrompt.FILE_NAME), "PROJECT: this module uses tabs.");
+
+      String prompt = Prompts.system("CONFIGURED: answer in riddles.", "English", dir);
+
+      int project = prompt.indexOf("PROJECT:");
+      int configured = prompt.indexOf("CONFIGURED:");
+      int language = prompt.indexOf("Language:");
+      assertTrue(project >= 0 && configured >= 0 && language >= 0, prompt);
+      assertTrue(project < configured, prompt);
+      assertTrue(configured < language, prompt);
+      assertFalse(prompt.contains("You are ccj"), "a configured prompt replaces the built-in one");
     } finally {
       java.nio.file.Files.deleteIfExists(dir.resolve(ProjectPrompt.FILE_NAME));
       java.nio.file.Files.deleteIfExists(dir);
@@ -83,16 +116,16 @@ class PromptsTest {
 
   @Test
   void aDirectoryWithoutRulesLeavesThePromptExactlyAsItWas() throws Exception {
-    // The whole feature is additive: a working directory with no CCJ.md must produce exactly the
-    // prompt this build produced before rules files existed, or every existing setup would change
-    // silently. The search walks upwards, so this only holds where nothing above it has one either —
-    // hence a directory of its own under the system temp dir, which is as close as a test gets.
+    // A working directory with no CCJ.md must produce exactly the prompt this build produced before
+    // rules files existed, or every existing setup would change silently. With the read now confined
+    // to one directory, this holds for any directory that has no file of its own — no matter what
+    // lives above it, which is the point of not walking upwards.
     java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("no-rules");
     try {
       assertEquals(
           Prompts.system(null, "English"),
           Prompts.system(null, "English", dir),
-          "no rules file anywhere above " + dir);
+          "no rules file in " + dir);
     } finally {
       java.nio.file.Files.deleteIfExists(dir);
     }

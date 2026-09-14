@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
 import com.ccj.agent.core.Message;
@@ -23,6 +25,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
@@ -859,13 +862,23 @@ class WebApiTest {
   }
 
   @Test
-  void theTokenGateProtectsEveryEndpoint() throws Exception {
+  void theTokenGateProtectsTheNetworkAndRemembersTheBrowser() throws Exception {
     api.close();
     start("s3cret");
 
-    HttpResponse<String> denied = get("/api/status");
-    assertEquals(401, denied.statusCode());
-    assertTrue(denied.body().contains("token"), denied.body());
+    // The token is for reaching this server from somewhere else, and a request that names a host
+    // other than loopback is that case even when it was made on this machine — which is the half that
+    // answers a page whose own domain resolves to 127.0.0.1.
+    String denied = rawResponse("rebind.example", "/api/status");
+    assertTrue(denied.startsWith("HTTP/1.1 401"), denied);
+    assertTrue(denied.contains("token"), denied);
+
+    String refused = rawResponse("rebind.example", "/api/status?token=wrong");
+    assertTrue(refused.startsWith("HTTP/1.1 401"), refused);
+
+    // This machine is not "somewhere else": reaching the page at 127.0.0.1 is how the user at the
+    // keyboard uses ccj, and a secret to type there would be a password on their own command line.
+    assertEquals(200, get("/api/status").statusCode(), "the machine itself is let in");
 
     HttpResponse<String> allowed = get("/api/status?token=s3cret");
     assertEquals(200, allowed.statusCode());
@@ -1419,6 +1432,125 @@ class WebApiTest {
                 .DELETE()
                 .build(),
             HttpResponse.BodyHandlers.ofString()).statusCode());
+  }
+
+  // ------------------------------------------------------------------ compaction
+
+  @Test
+  void compactingReplacesTheOlderTurnsWithASummaryAndKeepsTheFile() throws Exception {
+    // A conversation long enough to compact: 8 exchanges, so the newest 5 are kept.
+    for (int i = 0; i < 8; i++) {
+      provider.reply(Message.Assistant.text("answer " + i + " " + "detail ".repeat(50)));
+      try (Sse sse = watch()) {
+        post("/api/message", "{\"text\":\"question " + i + " " + "context ".repeat(50) + "\"}");
+        sse.await("done", 5000);
+      }
+    }
+    String id = json("/api/status").path("sessionId").asText();
+    Path original = sessions.resolve(id + ".jsonl");
+    String originalBytes = Files.readString(original);
+    JsonNode usageBefore = json("/api/status").path("usage");
+    int stepsBefore = usageBefore.path("steps").asInt();
+
+    // What the model is asked for the summary is a question about the transcript, not a turn.
+    provider.reply(Message.Assistant.text("Goal: answer questions. Files: none. Open: nothing."));
+    JsonNode result = postJson("/api/compact", "{}");
+
+    assertTrue(result.path("compacted").asBoolean(), result.toString());
+    assertEquals(6, result.path("summarised").asInt(), "three exchanges of two messages are replaced");
+    assertEquals(10, result.path("kept").asInt());
+    assertTrue(result.path("afterTokens").asInt() < result.path("beforeTokens").asInt(), result.toString());
+    assertEquals(1, result.path("generation").asInt());
+
+    // The generation file holds the summary plus the kept tail; the original is byte-for-byte intact,
+    // which is the whole reason a compaction is safe to attempt.
+    Path generation = sessions.resolve(id + ".g1.jsonl");
+    assertTrue(Files.isRegularFile(generation), "the new generation is on disk");
+    assertEquals(originalBytes, Files.readString(original), "the generation it replaced is untouched");
+    List<Message> compacted = FileSession.readAll(generation);
+    assertTrue(compacted.get(0) instanceof Message.Summary, compacted.get(0).toString());
+
+    // The summarising request is not a turn: no user message was appended and no step was counted.
+    var requests = provider.requests();
+    var summariseRequest = requests.get(requests.size() - 1);
+    assertNull(summariseRequest.system(), "the summary request carries no system prompt");
+    assertTrue(summariseRequest.tools().isEmpty(), "and no tools to go and do work with");
+    assertEquals(1, requests.get(requests.size() - 1).messages().size(), "one message: the transcript");
+    assertTrue(
+        ((Message.User) summariseRequest.messages().get(0)).text().contains(Compaction.INSTRUCTIONS),
+        "the instruction is what turns a transcript into a summary");
+    assertEquals(stepsBefore, json("/api/status").path("usage").path("steps").asInt(), "not a step");
+
+    // But it is counted, and separately: it cost tokens and folding it into steps would make that
+    // number mean two things.
+    assertEquals(1, json("/api/status").path("usage").path("compactions").asInt());
+
+    // And the session carries on: the next turn is answered, from the compacted conversation.
+    provider.reply(Message.Assistant.text("continuing"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"what next?\"}");
+      sse.await("done", 5000);
+    }
+    var nextTurn = provider.requests().get(provider.requests().size() - 1);
+    assertTrue(
+        nextTurn.messages().stream().anyMatch(m -> m instanceof Message.Summary),
+        "the summary is what the next request carries instead of the old turns: " + nextTurn.messages());
+  }
+
+  @Test
+  void aCompactionIsRefusedWhileATurnIsRunning() throws Exception {
+    // Two writers on one transcript is the exception the per-conversation turn flag exists to prevent,
+    // and a compaction rewrites what the conversation is.
+    CountDownLatch gate = new CountDownLatch(1);
+    provider.reply(Message.Assistant.text("slow"));
+    provider.gate(gate);
+    post("/api/message", "{\"text\":\"start a turn\"}");
+
+    HttpResponse<String> refusal = post("/api/compact", "{}");
+    assertEquals(409, refusal.statusCode(), refusal.body());
+    assertTrue(refusal.body().contains("turn is still running"), refusal.body());
+
+    provider.release();
+    gate.countDown();
+  }
+
+  @Test
+  void aConversationTooShortToCompactIsRefusedWithoutCallingTheModel() throws Exception {
+    provider.reply(Message.Assistant.text("only one exchange"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"hello\"}");
+      sse.await("done", 5000);
+    }
+    int callsBefore = provider.requests().size();
+
+    HttpResponse<String> refusal = post("/api/compact", "{}");
+
+    assertEquals(400, refusal.statusCode(), refusal.body());
+    assertTrue(refusal.body().contains("nothing to compact"), refusal.body());
+    assertEquals(callsBefore, provider.requests().size(), "the model is not asked to summarise nothing");
+    assertEquals(405, get("/api/compact").statusCode());
+  }
+
+  @Test
+  void anEmptySummaryChangesNothing() throws Exception {
+    for (int i = 0; i < 8; i++) {
+      provider.reply(Message.Assistant.text("answer " + i));
+      try (Sse sse = watch()) {
+        post("/api/message", "{\"text\":\"question " + i + "\"}");
+        sse.await("done", 5000);
+      }
+    }
+    String id = json("/api/status").path("sessionId").asText();
+
+    provider.reply(Message.Assistant.text("   "));
+    HttpResponse<String> refusal = post("/api/compact", "{}");
+
+    assertEquals(409, refusal.statusCode(), refusal.body());
+    assertTrue(refusal.body().contains("empty summary"), refusal.body());
+    // Nothing was written, so the session is still its generation 0 and still complete.
+    assertEquals(16, json("/api/status").path("messageCount").asInt());
+    assertFalse(Files.exists(sessions.resolve(id + ".g1.jsonl")));
+    assertEquals(0, json("/api/status").path("usage").path("compactions").asInt());
   }
 
   @Test
@@ -2075,27 +2207,102 @@ class WebApiTest {
   void aTokenlessServerRefusesRequestsAddressedToAnotherHost() throws Exception {
     // A tokenless server is reachable from any page the user visits; the Host header is what keeps
     // a name that resolves to 127.0.0.1 (DNS rebinding) from being treated as this server.
-    try (Socket socket = new Socket("127.0.0.1", api.port())) {
-      socket
-          .getOutputStream()
-          .write(
-              "GET /api/status HTTP/1.1\r\nHost: rebind.example\r\nConnection: close\r\n\r\n"
-                  .getBytes(StandardCharsets.UTF_8));
-      String response =
-          new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-      assertTrue(response.startsWith("HTTP/1.1 403"), response);
-    }
+    assertTrue(
+        rawResponse("rebind.example", "/api/status").startsWith("HTTP/1.1 403"),
+        "a name that is not loopback is not this server");
+    assertTrue(
+        rawResponse("127.0.0.1:" + api.port(), "/api/status").startsWith("HTTP/1.1 200"),
+        "and the loopback literal is");
+  }
 
+  /**
+   * A raw request, because {@code HttpClient} will not let a test choose the {@code Host} header — and
+   * that header is the thing under test in three places here.
+   */
+  private String rawResponse(String hostHeader, String path) throws IOException {
     try (Socket socket = new Socket("127.0.0.1", api.port())) {
       socket
           .getOutputStream()
           .write(
-              ("GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:" + api.port() + "\r\nConnection: close\r\n\r\n")
+              ("GET " + path + " HTTP/1.1\r\nHost: " + hostHeader + "\r\nConnection: close\r\n\r\n")
                   .getBytes(StandardCharsets.UTF_8));
-      String response =
-          new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-      assertTrue(response.startsWith("HTTP/1.1 200"), response);
+      return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
     }
+  }
+
+  @Test
+  void bothAddressesServeTheSamePageAndOnlyTheNetworkOneAsksForTheToken() throws Exception {
+    // What "just run ccj" means: the machine itself reaches the page at 127.0.0.1 with nothing
+    // attached, and the same server asks the phone for the token — over the same process, the same
+    // hub and the same conversation. A test needs a second address to be one, so a machine whose only
+    // address is loopback skips this rather than pretending.
+    Optional<InetAddress> elsewhere = anAddressOtherThanLoopback();
+    assumeTrue(elsewhere.isPresent(), "this machine has no address other than loopback");
+
+    api.close();
+    api =
+        HttpApi.start(
+            hub,
+            List.of(
+                new InetSocketAddress(InetAddress.getLoopbackAddress(), 0),
+                new InetSocketAddress(elsewhere.get(), 0)),
+            "s3cret",
+            new Wallpapers(null));
+    List<String> urls = api.urls();
+
+    assertEquals(2, urls.size(), urls.toString());
+    assertTrue(urls.get(0).startsWith("http://127.0.0.1:"), urls.toString());
+    assertFalse(urls.get(0).contains("token"), "the machine itself is not asked for a secret");
+    assertTrue(urls.get(1).contains("?token=s3cret"), urls.toString());
+
+    assertEquals(200, plainGet("http://127.0.0.1:" + api.port() + "/api/status"), "loopback");
+    assertEquals(
+        401,
+        plainGet("http://" + elsewhere.get().getHostAddress() + ":" + api.port() + "/api/status"),
+        "the network address without the token");
+    assertEquals(
+        200,
+        plainGet(
+            "http://"
+                + elsewhere.get().getHostAddress()
+                + ":"
+                + api.port()
+                + "/api/status?token=s3cret"),
+        "and with it");
+  }
+
+  private static int plainGet(String url) throws Exception {
+    HttpResponse<String> response =
+        HttpClient.newHttpClient()
+            .send(
+                HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(10)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+    return response.statusCode();
+  }
+
+  /**
+   * An address this machine has that is not loopback, or empty when it has none.
+   *
+   * <p>Deliberately not a hard-coded one: the point of the test is that a real second address gets a
+   * different answer from the server, and which address that is depends on the machine.
+   */
+  private static Optional<InetAddress> anAddressOtherThanLoopback() throws Exception {
+    java.util.Enumeration<java.net.NetworkInterface> interfaces =
+        java.net.NetworkInterface.getNetworkInterfaces();
+    while (interfaces != null && interfaces.hasMoreElements()) {
+      java.net.NetworkInterface candidate = interfaces.nextElement();
+      if (!candidate.isUp() || candidate.isLoopback()) {
+        continue;
+      }
+      java.util.Enumeration<InetAddress> addresses = candidate.getInetAddresses();
+      while (addresses.hasMoreElements()) {
+        InetAddress address = addresses.nextElement();
+        if (address instanceof java.net.Inet4Address && !address.isLoopbackAddress()) {
+          return Optional.of(address);
+        }
+      }
+    }
+    return Optional.empty();
   }
 
   @Test

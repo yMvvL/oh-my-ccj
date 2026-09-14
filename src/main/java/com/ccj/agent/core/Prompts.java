@@ -124,20 +124,23 @@ public final class Prompts {
   /**
    * The prompt for a configured base prompt, language, and the project the agent is working in.
    *
-   * <p>The three parts sit in a deliberate order: the base rules, then the project's own, then the
-   * language. The project's rules come <em>after</em> the base ones because they are the more specific
-   * statement and a model weights what it reads last — a repository that says "use tabs" has to be
-   * able to say it after a default that says nothing about indentation. The language goes last of all
-   * because it is about the shape of the reply rather than about the work, and it is the instruction
-   * that most needs to survive being read last.
+   * <p>The parts sit in a deliberate order: the project's own rules first, then the built-in rules,
+   * then the language. The project's file comes <em>first</em> because it is the specific statement
+   * about this work — the build command, the module not to touch — and a reader meeting general
+   * instructions first has to hold them while being told the real ones. The built-in rules stay in
+   * every prompt rather than being replaced by the file: they are not project preferences but the way
+   * this agent works ("inspect before you change", "never claim something works unless a command
+   * proved it"), and a project that adds its own rules has not asked to stop being told those. The
+   * language goes last of all because it is about the shape of the reply rather than about the work,
+   * and it is the instruction that most needs to survive being read last.
    *
-   * @param workingDirectory where the agent will run, whose {@link ProjectPrompt} rules are added, or
-   *     null for none
+   * @param workingDirectory where the agent will run, whose {@link ProjectPrompt} rules are prepended,
+   *     or null for none
    */
   public static String system(String system, String language, Path workingDirectory) {
     String base = system == null || system.isBlank() ? DEFAULT_SYSTEM : system;
     String project = ProjectPrompt.from(workingDirectory);
-    String withProject = project.isEmpty() ? base : base + "\n\n" + project;
+    String withProject = project.isEmpty() ? base : project + "\n\n" + base;
     String asked = language == null ? "" : language.strip();
     if (asked.isEmpty() || AUTO.equalsIgnoreCase(asked)) {
       return withProject;

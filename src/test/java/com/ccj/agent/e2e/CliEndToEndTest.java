@@ -148,13 +148,19 @@ class CliEndToEndTest {
     assertTrue(
         sent.contains("always run `make check`"),
         "the working directory's rules must be in the request: " + sent.substring(0, 600));
-    assertTrue(sent.contains(ProjectPrompt.FILE_NAME), "and under a heading naming the file: " + sent);
+    assertFalse(
+        sent.contains("Rules from"),
+        "with no heading naming the file: with one file at one known location there is nothing to"
+            + " disambiguate, and a heading would spend prompt on every request: "
+            + sent.substring(0, 600));
   }
 
   @Test
-  void rulesInAParentDirectoryApplyToo() throws IOException {
-    // A tree of projects with one rules file at the top and the agent started inside a subdirectory:
-    // reading only the working directory would drop the rules in exactly the case they are for.
+  void rulesInAParentDirectoryAreNotUsed() throws IOException {
+    // The read is one directory deep, on purpose. A walk upwards would let a file in a home directory
+    // apply to every project beneath it without any project asking for it, and the user would have to
+    // search upwards to find out why their prompt changed. What a run uses has to be answerable by
+    // looking at the directory it was started in.
     Path nested = Files.createDirectories(workspace.resolve("src/module"));
     Files.writeString(
         workspace.resolve(ProjectPrompt.FILE_NAME), "Top rule: never force-push.");
@@ -172,11 +178,14 @@ class CliEndToEndTest {
 
     assertEquals(0, run.exitCode(), run.err());
     String sent = server.lastRequest().body();
-    assertTrue(sent.contains("never force-push"), "the parent's rule is included: " + sent);
-    assertTrue(sent.contains("this one uses tabs"), "and so is the module's: " + sent);
-    assertTrue(
-        sent.indexOf("never force-push") < sent.indexOf("this one uses tabs"),
-        "the closer rule comes last, so it can narrow the one above it: " + sent);
+    assertTrue(sent.contains("this one uses tabs"), "the working directory's rules are used: " + sent);
+    assertFalse(
+        sent.contains("never force-push"),
+        "and the parent's are not, even though they are one level up: " + sent);
+    // The built-in rules are still in the request: a project's file leads the prompt, it does not
+    // replace what this agent is.
+    assertTrue(sent.contains("You are ccj"), sent.substring(0, 500));
+    assertTrue(sent.contains("Inspect before you change"), sent.substring(0, 900));
   }
 
   @Test
@@ -194,6 +203,25 @@ class CliEndToEndTest {
     assertFalse(
         sent.contains(ProjectPrompt.FILE_NAME),
         "no rules file exists here, so none is mentioned: " + sent.substring(0, 600));
+  }
+
+  @Test
+  void theProjectsRulesLeadThePromptInARealRequest() throws IOException {
+    // Order as it reaches the wire, not just as the builder returns it: the project's own statement
+    // comes first, the built-in rules follow it.
+    Files.writeString(
+        workspace.resolve(ProjectPrompt.FILE_NAME), "PROJECT RULE: this tree uses tabs.");
+    writeConfig("openai", server.openAiBaseUrl(), true);
+    server.enqueue(MockModelServer.openAiText("ok"));
+
+    Run run = runCli(args("hello"));
+
+    assertEquals(0, run.exitCode(), run.err());
+    String sent = server.lastRequest().body();
+    int project = sent.indexOf("PROJECT RULE");
+    int base = sent.indexOf("You are ccj");
+    assertTrue(project >= 0 && base >= 0, sent.substring(0, 800));
+    assertTrue(project < base, "the project's rules come before the built-in ones:\n" + sent.substring(0, 800));
   }
 
   @Test

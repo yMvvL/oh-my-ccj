@@ -11,6 +11,22 @@
 
   <name>oh-my-ccj</name>
   <description>A from-scratch coding agent runtime in plain Java 21.</description>
+  <url>https://github.com/ArchCCJ/oh-my-ccj</url>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>ArchCCJ</id>
+      <name>ArchCCJ</name>
+    </developer>
+  </developers>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>

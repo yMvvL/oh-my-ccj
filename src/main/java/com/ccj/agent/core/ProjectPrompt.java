@@ -4,9 +4,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 
 /**
  * The rules a directory keeps for the agent working in it, read from {@value #FILE_NAME}.
@@ -19,18 +16,19 @@ import java.util.List;
  * <p>Two decisions shape the reading:
  *
  * <ul>
- *   <li><b>The file is looked for upwards, not only in the working directory.</b> The usual layout is
- *       one rules file at the top of a tree of projects with the agent started somewhere inside it;
- *       reading only the working directory would silently drop the rules in exactly that case. The
- *       walk stops at the filesystem root, and every file found is included.
- *   <li><b>The closest file comes last.</b> A general rule stated first, then the specific one that
- *       narrows it — the order a reader expects, and the only one where a subdirectory can override
- *       its parent rather than be contradicted by it. Each block is introduced by its path, so a model
- *       looking at two rules that disagree can tell which file each came from.
+ *   <li><b>Only the working directory itself is read.</b> A file higher up the tree is deliberately
+ *       <em>not</em> consulted. The rule is "the agent uses the rules in the directory it is working
+ *       in, and the configured prompt everywhere else", which is a statement a user can predict from
+ *       looking at one folder. A walk to the filesystem root would mean a stray file in a home
+ *       directory silently redefining the agent for every project beneath it, and the user would have
+ *       to search upwards to find out why.
+ *   <li><b>When it exists, it leads the prompt.</b> The file is the project's own statement about how
+ *       work is done here, so it is read first and the built-in rules follow it — see
+ *       {@link Prompts#system(String, String, Path)} for the ordering and why.
  * </ul>
  *
- * <p>It is a help, never a dependency: a missing file, an unreadable directory or a walk that runs
- * out of parents all mean "no extra rules", which is exactly how a run behaved before this existed.
+ * <p>It is a help, never a dependency: a missing file, an unreadable file, or an empty one all mean
+ * "no project rules", which is exactly how a run behaved before this existed.
  */
 public final class ProjectPrompt {
 
@@ -41,7 +39,7 @@ public final class ProjectPrompt {
   public static final String FILE_NAME = "CCJ.md";
 
   /**
-   * How much of all the rules files together may reach the prompt.
+   * How much of the rules file may reach the prompt.
    *
    * <p>The system prompt is sent on <em>every</em> request and, unlike the conversation, it is not
    * part of anything that trims: {@link ContextBudget} projects the messages, so an oversized prompt
@@ -58,71 +56,43 @@ public final class ProjectPrompt {
   private ProjectPrompt() {}
 
   /**
-   * The rules that apply to {@code directory}: every {@value #FILE_NAME} from the filesystem root
-   * down to it, most distant first, each under a heading naming the file it came from.
+   * The rules {@code directory} keeps, or {@code ""} when it keeps none.
    *
-   * @return the rules as one block of prompt text, or {@code ""} when there are none
+   * <p>The text is returned as it was written. No heading naming the file is added: with a single file
+   * at a single known location there is nothing to disambiguate, and a heading would spend prompt on
+   * every request to say which of one file the text came from.
+   *
+   * @return the rules as prompt text, or {@code ""} when there are none
    */
   public static String from(Path directory) {
     if (directory == null) {
       return "";
     }
-    Path start = directory.toAbsolutePath().normalize();
-    List<String> blocks = new ArrayList<>();
-    int used = 0;
-    for (Path found : filesFromRootTo(start)) {
-      String text;
-      try {
-        text = Files.readString(found, StandardCharsets.UTF_8);
-      } catch (IOException | RuntimeException e) {
-        // Unreadable is the same answer as absent: the prompt is a help, and a directory the process
-        // cannot read must not be a reason for it to refuse to start.
-        continue;
-      }
-      if (text.isBlank()) {
-        continue;
-      }
-      String block = heading(found) + "\n" + text.strip() + "\n";
-      int room = LIMIT_CHARS - used;
-      if (room <= 0) {
-        // The budget is spent. Saying so once is better than a model that believes it has read all
-        // the rules when it has read the first few files.
-        if (blocks.isEmpty() || !blocks.get(blocks.size() - 1).endsWith(CUT_MARKER)) {
-          blocks.add(CUT_MARKER.strip() + "\n");
-        }
-        break;
-      }
-      if (block.length() > room) {
-        blocks.add(block.substring(0, Math.max(0, room - CUT_MARKER.length())) + CUT_MARKER + "\n");
-        break;
-      }
-      blocks.add(block);
-      used += block.length();
-    }
-    if (blocks.isEmpty()) {
+    Path file = directory.toAbsolutePath().normalize().resolve(FILE_NAME);
+    if (!isReadableRegularFile(file)) {
       return "";
     }
-    return String.join("\n", blocks).strip();
-  }
-
-  /**
-   * Every {@value #FILE_NAME} from the filesystem root down to {@code start}, so the caller can put
-   * the closest one last.
-   *
-   * <p>Collected upwards and reversed rather than recursed downwards: the walk only ever visits the
-   * directories between the working directory and the root, and the root is where it has to stop.
-   */
-  private static List<Path> filesFromRootTo(Path start) {
-    List<Path> found = new ArrayList<>();
-    for (Path dir = start; dir != null; dir = dir.getParent()) {
-      Path candidate = dir.resolve(FILE_NAME);
-      if (isReadableRegularFile(candidate)) {
-        found.add(candidate);
-      }
+    String text;
+    try {
+      text = Files.readString(file, StandardCharsets.UTF_8);
+    } catch (IOException | RuntimeException e) {
+      // Unreadable is the same answer as absent: the prompt is a help, and a file the process cannot
+      // read must not be a reason for it to refuse to start.
+      return "";
     }
-    // Closest first is what the walk produced; the caller wants root-first.
-    Collections.reverse(found);
-    return found;
+    if (text.isBlank()) {
+      // A file that exists but says nothing is not rules. This matters more here than it did for the
+      // walk: saving an empty CCJ.md — an editor that has not been typed into yet, a placeholder
+      // somebody is about to fill in — must not be read as "this project has no rules of any kind",
+      // because the built-in ones still follow and the run would otherwise be indistinguishable from
+      // a configured one.
+      return "";
+    }
+    String trimmed = text.strip();
+    if (trimmed.length() > LIMIT_CHARS) {
+      return trimmed.substring(0, Math.max(0, LIMIT_CHARS - CUT_MARKER.length())) + CUT_MARKER;
+    }
+    return trimmed;
   }
 
   private static boolean isReadableRegularFile(Path file) {
@@ -131,10 +101,5 @@ public final class ProjectPrompt {
     } catch (RuntimeException e) {
       return false;
     }
-  }
-
-  /** The line that says which file the rules under it came from. */
-  private static String heading(Path file) {
-    return "Rules from " + file + ":";
   }
 }
