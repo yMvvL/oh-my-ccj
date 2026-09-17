@@ -2595,6 +2595,94 @@ class WebApiTest {
     assertEquals(200, response.statusCode(), response.body());
   }
 
+  @Test
+  void aPageServedFromTheAddressItWasOpenedOnMayChangeState() throws Exception {
+    // The phone, and this was broken: a page reached at the tailnet address sends that address as its
+    // Origin, which is neither loopback nor anything this server can know in advance — so every
+    // state-changing request from the phone was refused. Measured against a real server started the
+    // way the phone reaches it: sending a message, aborting a turn, saving settings, answering an
+    // approval and uploading a picture all came back 403, while the same request with a loopback
+    // Origin was served. Nothing about the picture was special; it was simply the first one the user
+    // tried from a phone.
+    start("t0ken");
+
+    Raw ok = postByHand("100.72.92.41:6767", "http://100.72.92.41:6767", "/api/auto-approve",
+        "{\"enabled\":true}", "t0ken");
+
+    assertEquals(200, ok.status(), ok.body());
+    assertTrue(json("/api/status").path("autoApprove").asBoolean(), "the change really happened");
+    postByHand("100.72.92.41:6767", "http://100.72.92.41:6767", "/api/auto-approve",
+        "{\"enabled\":false}", "t0ken");
+  }
+
+  @Test
+  void anotherSiteIsStillRefusedWhenTheRequestNamesARealHost() throws Exception {
+    // What keeps the rule above from being a hole: a page on another site sends its own origin, and
+    // that is not the host this request was aimed at.
+    start("t0ken");
+
+    Raw refused = postByHand("100.72.92.41:6767", "https://evil.example", "/api/auto-approve",
+        "{\"enabled\":true}", "t0ken");
+
+    assertEquals(403, refused.status(), refused.body());
+    assertFalse(json("/api/status").path("autoApprove").asBoolean());
+  }
+
+  @Test
+  void aRebindingNameAgreesWithItselfAndStillGetsNowhere() throws Exception {
+    // Through a name that resolves here, Origin and Host are both dead.beef — so the agreement is
+    // deliberately not the only guard. A tokenless server has already refused the non-loopback Host
+    // before the origin check runs, and a token server refuses the request for arriving without the
+    // proof, which a page on another site cannot have for a name it does not own.
+    Raw tokenless =
+        postByHand("dead.beef:6767", "http://dead.beef:6767", "/api/auto-approve",
+            "{\"enabled\":true}", null);
+    assertEquals(403, tokenless.status(), tokenless.body());
+
+    start("t0ken");
+    Raw withoutToken =
+        postByHand("dead.beef:6767", "http://dead.beef:6767", "/api/auto-approve",
+            "{\"enabled\":true}", null);
+    assertEquals(401, withoutToken.status(), withoutToken.body());
+    assertFalse(json("/api/status").path("autoApprove").asBoolean());
+  }
+
+  /** A response read off a socket: whatever arrived, without a client library's opinion of it. */
+  private record Raw(int status, String body) {}
+
+  /**
+   * One request written by hand.
+   *
+   * <p>{@code Host} is a restricted header in {@code HttpClient} — it cannot be set, and a request
+   * whose {@code Origin} names the host it was aimed at is exactly the shape a phone sends. There is
+   * no way to ask a Java HTTP client for that shape, so the bytes are written.
+   */
+  private Raw postByHand(String host, String origin, String path, String json, String token)
+      throws IOException {
+    byte[] body = json.getBytes(StandardCharsets.UTF_8);
+    StringBuilder head = new StringBuilder()
+        .append("POST ").append(path).append(" HTTP/1.1\r\n")
+        .append("Host: ").append(host).append("\r\n")
+        .append("Origin: ").append(origin).append("\r\n")
+        .append("Content-Type: application/json\r\n")
+        .append("Content-Length: ").append(body.length).append("\r\n");
+    if (token != null) {
+      head.append("Authorization: Bearer ").append(token).append("\r\n");
+    }
+    head.append("Connection: close\r\n\r\n");
+
+    try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), api.port())) {
+      socket.getOutputStream().write(head.toString().getBytes(StandardCharsets.UTF_8));
+      socket.getOutputStream().write(body);
+      socket.getOutputStream().flush();
+      String raw = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      int firstSpace = raw.indexOf(' ');
+      int status = Integer.parseInt(raw.substring(firstSpace + 1, firstSpace + 4));
+      int split = raw.indexOf("\r\n\r\n");
+      return new Raw(status, split < 0 ? raw : raw.substring(split + 4).strip());
+    }
+  }
+
   // ------------------------------------------------------------------ pictures
 
   @Test

@@ -168,6 +168,12 @@ a turn that cannot happen.
 - **Not verified here:** the picker's behaviour on a real phone (no phone was involved; the `capture`
   decision above is reasoning from platform behaviour, not a measurement), and a real vision endpoint
   rather than a stub — the suite is offline by convention, so no API key is used by any test.
+- The **tailnet** half of "a picture arrives from a phone" is verified against a real server on this
+  machine's own tailnet address, with a real browser page loaded from `http://100.72.92.41:6767/`: the
+  message goes through, the picker opens, and the upload reaches the endpoint. That check found a
+  defect that had nothing to do with pictures — the cross-origin guard accepted only loopback origins,
+  so *every* state-changing request from a tailnet page was refused; the fix and its reasoning are in
+  [SECURITY.md](../SECURITY.md) and [WEBUI.md](WEBUI.md).
 
 ## Open questions, settled by the implementation
 

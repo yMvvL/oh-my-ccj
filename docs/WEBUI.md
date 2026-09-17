@@ -474,6 +474,17 @@ check this — only `localhost` and loopback literals are accepted — because r
 attacker-chosen name is the whole point of a rebinding attack. A token makes the check unnecessary,
 which is why it only applies to the tokenless default.
 
+State-changing requests are held to a second rule on top of that, token or not: a request that carries
+an `Origin` must have it name this server — a loopback address, or the host the request was aimed at.
+The second half is what makes the phone work. A page opened at `http://100.72.92.41:6767/` sends that
+address as its `Origin`, which is neither loopback nor knowable in advance, and the first version of
+this check refused it: **every** POST from a phone — a message, an abort, a settings save, an approval
+answer, a picture — came back `403` while the same request from a loopback page was served. A page on
+another site still cannot pass, because its `Origin` is its own host and not the one this request was
+aimed at; a page reaching the server through a rebinding name agrees with itself but has no token and
+is refused for that instead. Ports may differ, since the user may have started ccj on a different port
+than the page they first opened.
+
 ## SSE events
 
 One JSON object per `data:` line, each with a `type`, and an `id:` line so a reconnecting browser can

@@ -904,10 +904,29 @@ public final class HttpApi implements AutoCloseable {
    * page — a script, a test, the CLI. Refusing those would break every legitimate caller to defend
    * against one the browser would not deliver in the first place.
    *
-   * <p>When it is present, it has to name this server: the origin's host must be a loopback name, the
-   * same set the {@code Host} check accepts. A port mismatch is allowed because the user may have
-   * started ccj on a different port than the page they first opened, and every one of these addresses
-   * is the machine itself.
+   * <p>When it is present it has to name this server, in one of the two ways a page can honestly do
+   * that: a loopback address (the machine the server runs on), or the host the request was aimed at —
+   * {@code Origin} and {@code Host} agreeing. Both are needed. Only the first was here at the start,
+   * and it made every state-changing request from a phone on the tailnet a 403: that page is served
+   * from the tailnet address, so its {@code Origin} names the tailnet address, which is neither
+   * loopback nor anything the check would accept — measured from a phone-shaped request
+   * ({@code Origin: http://100.72.92.41:6767}, the same host the page came from) against a real
+   * server, where sending a message, aborting a turn, saving settings, answering an approval and
+   * uploading a picture were all refused. The address the page was loaded from is the one honest
+   * answer to "which page is this", and it is not knowable in advance — the server binds whatever
+   * addresses the user named, and the tailnet one is theirs.
+   *
+   * <p>Comparing against {@code Host} rather than accepting any host is what keeps this from being a
+   * hole. A page on another site sends its own origin, which is not the host the request is aimed at,
+   * so it is still refused. A page that reaches this server through a rebinding name sends that name
+   * in both headers and would agree with itself — which is why the agreement is not the only guard:
+   * a tokenless server has already refused the request for naming a non-loopback {@code Host} before
+   * this runs, and a token server has already refused it for arriving without the token. What is left
+   * is a page served from the very address this server answers on, which is the same machine, the
+   * same user, and the same trust the loopback case has always granted.
+   *
+   * <p>A port mismatch is allowed because the user may have started ccj on a different port than the
+   * page they first opened, and every one of these addresses is the machine itself.
    */
   private static boolean sameOrigin(HttpExchange exchange) {
     String origin = exchange.getRequestHeaders().getFirst("Origin");
@@ -922,10 +941,19 @@ public final class HttpApi implements AutoCloseable {
     try {
       java.net.URI parsed = java.net.URI.create(clean);
       String host = parsed.getHost();
-      // The same rule the Host header is held to, on purpose: one notion of "this machine" rather
-      // than two that can disagree, and the loopback-literal check that refuses to resolve a name is
-      // exactly what is wanted here too.
-      return host != null && loopbackHost(host);
+      if (host == null) {
+        return false;
+      }
+      if (loopbackHost(host)) {
+        // The same rule the Host header is held to, on purpose: one notion of "this machine" rather
+        // than two that can disagree, and the loopback-literal check that refuses to resolve a name is
+        // exactly what is wanted here too.
+        return true;
+      }
+      // Otherwise the page has to be served from the host this request was aimed at, which is what a
+      // user's own bookmark to the tailnet address sends.
+      String aimedAt = hostName(exchange.getRequestHeaders().getFirst("Host"));
+      return aimedAt != null && aimedAt.equalsIgnoreCase(host);
     } catch (IllegalArgumentException e) {
       // An Origin that does not parse is not this server's.
       return false;

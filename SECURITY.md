@@ -25,7 +25,16 @@ exactly as you would treat an open terminal.
   machine's loopback address and sets a loopback `Host`, so the two checks above cannot tell it apart
   from the real UI. This one can, and it was a real hole: a POST to `/api/auto-approve` carrying
   `Origin: https://evil.example` was served and did switch auto-approval on — after which the agent
-  stops asking before it runs commands.
+  stops asking before it runs commands. The rule is that the `Origin` must name either a loopback
+  address or the host the request was aimed at, which is what a page served from this server sends:
+  anything else is `403`, and a page that agrees with itself under a rebinding name is still stopped
+  by the `Host` check above (tokenless) or by the token (which that page does not have).
+  *The first version of this check only accepted loopback origins, which broke the phone:* a page
+  served from the tailnet address sends the tailnet address as its `Origin`, so every state-changing
+  request from a phone — sending a message, aborting a turn, saving settings, answering an approval,
+  uploading a picture — was refused. Measured against a real server on both addresses before and
+  after the fix. The mistake was reading "not loopback" as "another site" when the honest question is
+  "which page is this", and the address the page was loaded from is the answer.
 - **A sub-agent asks before it changes anything.** It reads in a conversation you never see, but its
   writes and shell commands go through the same approver as the main agent's, so they arrive as a
   prompt in the transcript you are already watching, and a refusal stops the write. It cannot delegate
