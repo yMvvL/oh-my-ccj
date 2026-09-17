@@ -1,0 +1,36 @@
+name: Feature request
+description: Something ccj should do and does not.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please read [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) first — MCP, plugins, sandboxing
+        and multi-user accounts are deliberately out of scope, and the reasons are there.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: |
+        What you were trying to do, and where it went wrong. A concrete situation is much easier to
+        act on than an abstract capability: "I wanted X and had to do Y by hand" says more than
+        "please add an X tool".
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: Optional. If you have a shape in mind, say it — but the problem above matters more.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: Existing flags, config, or doing it another way. Sometimes the answer is already there.
+    validations:
+      required: false

@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 
 /**
@@ -132,11 +133,33 @@ public final class EditTool implements Tool {
       return ToolResult.error("rejected by user");
     }
 
+    // Re-read before writing, because the approval is a window in which somebody else can change the
+    // file — the user in their editor, another conversation's turn, a formatter on save. The ranges
+    // above were computed against the text as it was when the diff was shown, and applying them to
+    // whatever is on disk now would write back a version that predates the other change: their edit
+    // silently gone, with an approval prompt that showed a diff nobody could tell was stale.
+    String current;
+    try {
+      current = ToolSupport.decodeText(Files.readAllBytes(file));
+    } catch (IOException | RuntimeException e) {
+      return ToolResult.error(label + " could not be re-read before editing: " + e.getMessage());
+    }
+    if (!current.equals(text)) {
+      return ToolResult.error(
+          "refused: "
+              + label
+              + " changed while this edit was waiting for approval. What is on disk now is not what"
+              + " the diff showed, so applying it would discard the other change. Read the file again"
+              + " and redo the edit against what is there now.");
+    }
+
     String updated =
         ranges.size() == 1
             ? text.substring(0, ranges.get(0)[0]) + newString + text.substring(ranges.get(0)[1])
             : replaceAll(text, ranges, newString);
-    Files.write(file, updated.getBytes(StandardCharsets.UTF_8));
+    // Written to a sibling and moved into place, so a crash or a full disk cannot leave the file
+    // half-written: the failure mode of a partial write to a source file is worse than not editing it.
+    writeAtomically(file, updated);
     return ToolResult.ok(
         "replaced "
             + ranges.size()
@@ -146,6 +169,34 @@ public final class EditTool implements Tool {
             + "; file now has "
             + ToolSupport.lineCount(updated)
             + " lines");
+  }
+
+  /**
+   * Writes through a temporary file in the same directory, then renames it into place.
+   *
+   * <p>The rename is atomic within one filesystem, so a reader sees either the old file or the new
+   * one — never a truncated mixture. Same directory because a rename across filesystems is a copy,
+   * which is the non-atomic thing this exists to avoid.
+   */
+  private static void writeAtomically(Path file, String content) throws IOException {
+    Path parent = file.getParent();
+    Path staged =
+        Files.createTempFile(parent == null ? Path.of(".") : parent, ".ccj-edit", ".tmp");
+    try {
+      Files.write(staged, content.getBytes(StandardCharsets.UTF_8));
+      // Copied onto the sibling so the replacement keeps the original's permissions: a fresh temp
+      // file is 0600, and silently tightening a file the user had made readable is a change nobody
+      // asked for.
+      try {
+        Files.setPosixFilePermissions(staged, Files.getPosixFilePermissions(file));
+      } catch (UnsupportedOperationException | IOException ignored) {
+        // Not a POSIX filesystem, or the permissions cannot be read: the content is what matters.
+      }
+      Files.move(staged, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    } catch (IOException e) {
+      Files.deleteIfExists(staged);
+      throw e;
+    }
   }
 
   /** Applies the replacements back to front so earlier offsets stay valid. */

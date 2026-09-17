@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -284,6 +285,91 @@ class WebApiTest {
       JsonNode ended = lastOf(sse, "tool");
       assertTrue(ended.path("ok").asBoolean(), ended.toString());
       assertEquals("end", ended.path("state").asText());
+    }
+  }
+
+  @Test
+  void theStreamSendsARealKeepAliveRatherThanAComment() throws Exception {
+    // The bug this pins, measured on a session waiting for an approval: the keep-alive was `: ping`,
+    // an SSE *comment*. A comment is delivered to nobody — EventSource dispatches only frames with a
+    // data field — so the page's `lastEventAt` never moved, its 20-second "the stream is dead" timer
+    // fired on a perfectly healthy connection, and the page reconnected underneath a prompt that was
+    // still open. To the user that is a prompt that flickers and then disappears.
+    //
+    // Asserted on the frame the server actually writes, because the failure was invisible to both
+    // sides: the server believed it was keeping the connection alive and the page believed the
+    // connection was gone.
+    try (Sse sse = watch()) {
+      JsonNode ping = sse.awaitRaw("event", "ping", 25_000);
+      assertNotNull(ping, "a keep-alive must arrive within the heartbeat interval");
+    }
+  }
+
+  @Test
+  void thePageListensForTheKeepAlive() throws Exception {
+    // The other half: a named event does not reach `onmessage`, so the server's frame is delivered
+    // only when the page registers a listener for it. One half without the other is the same bug.
+    String app = Files.readString(Path.of("src", "main", "resources", "web", "app.js"));
+
+    assertTrue(
+        app.contains("addEventListener('ping'"),
+        "the page must listen for the keep-alive the server sends");
+    int listener = app.indexOf("addEventListener('ping'");
+    int body = app.indexOf("lastEventAt = Date.now()", listener);
+    assertTrue(
+        body > listener && body - listener < 400,
+        "and it must refresh the staleness clock, which is the whole point of sending it");
+  }
+
+  @Test
+  void anUnansweredApprovalWaitsRatherThanExpiring() throws Exception {
+    // The behaviour, pinned: a question to a person does not expire. The old 120-second cap ended the
+    // turn and left the page showing a prompt that had already been withdrawn — the work abandoned
+    // and the user unable to tell why.
+    //
+    // Waited past the old timeout on purpose. Two minutes would make the suite unusable, so the
+    // assertion is that the turn is still waiting well after the *page* would have given up on a
+    // silent stream (20s), which is the window in which the old design failed: a prompt that never
+    // reached the browser in time. Still waiting here means the request survived it.
+    provider.reply(bashCall("printf hi > waiting.txt"));
+    provider.reply(Message.Assistant.text("done"));
+
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"do it\"}");
+      JsonNode approval = sse.await("approval", 5000);
+      assertFalse(approval.path("id").asText().isEmpty());
+
+      Thread.sleep(21_000); // past the page's stale-stream window
+
+      // Still pending, not answered for the user.
+      JsonNode status = json("/api/status");
+      assertEquals(1, status.path("approvals").size(), status.toString());
+      assertFalse(Files.exists(cwd.resolve("waiting.txt")), "nothing ran while nobody had answered");
+
+      // And the two ways out still work: answering it.
+      post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
+      sse.await("done", 5000);
+      assertEquals("hi", Files.readString(cwd.resolve("waiting.txt")));
+    }
+  }
+
+  @Test
+  void abortingAnswersAPendingApproval() throws Exception {
+    // The way out that does not depend on a timer: a turn waiting for a person used to need the
+    // timeout to end it, and without one abort has to be the thing that answers.
+    provider.reply(bashCall("printf hi > never.txt"));
+    provider.reply(Message.Assistant.text("stopped"));
+
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"do it\"}");
+      sse.await("approval", 5000);
+
+      assertEquals(200, post("/api/abort", "{}").statusCode());
+
+      // The turn ends rather than waiting for ever, and nothing ran.
+      sse.await("done", 5000);
+      assertFalse(Files.exists(cwd.resolve("never.txt")));
+      assertEquals(0, json("/api/status").path("approvals").size(), "the question is withdrawn");
     }
   }
 
@@ -2405,6 +2491,115 @@ class WebApiTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
+  /** A POST carrying an Origin, the way a browser page sends one. */
+  private HttpResponse<String> postFrom(HttpExchangeOrigin origin, String path, String json)
+      throws Exception {
+    HttpRequest.Builder request =
+        HttpRequest.newBuilder(URI.create(this.origin + path))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8));
+    if (origin != null) {
+      request.header("Origin", origin.value());
+    }
+    return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+  }
+
+  /** Where a request claims to have come from. */
+  private record HttpExchangeOrigin(String value) {
+    static final HttpExchangeOrigin EVIL = new HttpExchangeOrigin("https://evil.example");
+    static final HttpExchangeOrigin SELF = new HttpExchangeOrigin("http://127.0.0.1:8080");
+    static final HttpExchangeOrigin LOCALHOST = new HttpExchangeOrigin("http://localhost:3000");
+    static final HttpExchangeOrigin OPAQUE = new HttpExchangeOrigin("null");
+  }
+
+  @Test
+  void aCrossOriginRequestCannotChangeState() throws Exception {
+    // The attack this closes, reproduced before the check existed: a page on another site POSTed to
+    // /api/auto-approve, the loopback and Host checks both passed — the browser runs on this machine,
+    // so its connection *is* loopback and its Host *is* 127.0.0.1 — and auto-approval really did
+    // switch on. After that the agent stops asking before it runs commands.
+    assertFalse(json("/api/status").path("autoApprove").asBoolean());
+
+    HttpResponse<String> refused =
+        postFrom(HttpExchangeOrigin.EVIL, "/api/auto-approve", "{\"enabled\":true}");
+
+    assertEquals(403, refused.statusCode(), refused.body());
+    assertTrue(refused.body().contains("cross-origin"), refused.body());
+    assertFalse(
+        json("/api/status").path("autoApprove").asBoolean(),
+        "the guard is still on: the page changed nothing");
+  }
+
+  @Test
+  void theSameOriginTheServerItselfServesIsAccepted() throws Exception {
+    // The page ccj serves has to keep working: it sends Origin on its own POSTs.
+    assertEquals(
+        200, postFrom(HttpExchangeOrigin.SELF, "/api/auto-approve", "{\"enabled\":true}").statusCode());
+    assertTrue(json("/api/status").path("autoApprove").asBoolean());
+    postFrom(HttpExchangeOrigin.SELF, "/api/auto-approve", "{\"enabled\":false}");
+  }
+
+  @Test
+  void everyLoopbackSpellingIsAcceptedAsSelf() throws Exception {
+    // A user who opened localhost and a server on 127.0.0.1 are the same person on the same machine;
+    // refusing one of them would be a bug that reads as a security feature.
+    assertEquals(
+        200,
+        postFrom(HttpExchangeOrigin.LOCALHOST, "/api/auto-approve", "{\"enabled\":true}")
+            .statusCode());
+    postFrom(HttpExchangeOrigin.LOCALHOST, "/api/auto-approve", "{\"enabled\":false}");
+  }
+
+  @Test
+  void anOpaqueOriginIsRefused() throws Exception {
+    // A sandboxed iframe or a file:// page sends Origin: null. It is not this server, and it is
+    // exactly the shape an injected frame would have.
+    assertEquals(
+        403,
+        postFrom(HttpExchangeOrigin.OPAQUE, "/api/auto-approve", "{\"enabled\":true}").statusCode());
+    assertFalse(json("/api/status").path("autoApprove").asBoolean());
+  }
+
+  @Test
+  void aCallerThatSendsNoOriginIsStillServed() throws Exception {
+    // curl, a test, the CLI: not a browser page, and the browser would not have delivered a
+    // cross-origin request without the header. Refusing these would break every legitimate caller to
+    // defend against one that cannot arrive this way.
+    assertEquals(200, post("/api/auto-approve", "{\"enabled\":true}").statusCode());
+    assertTrue(json("/api/status").path("autoApprove").asBoolean());
+    post("/api/auto-approve", "{\"enabled\":false}");
+    assertFalse(json("/api/status").path("autoApprove").asBoolean());
+  }
+
+  @Test
+  void readingIsNotBlockedByOrigin() throws Exception {
+    // The check is for requests that change something. A GET leaks nothing a cross-origin page can
+    // read anyway — the browser withholds the response — so blocking it would cost without buying.
+    HttpResponse<String> response =
+        client.send(
+            HttpRequest.newBuilder(URI.create(origin + "/api/status"))
+                .header("Origin", HttpExchangeOrigin.EVIL.value())
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, response.statusCode(), response.body());
+  }
+
+  @Test
+  void everyStateChangingEndpointRefusesAnotherSite() throws Exception {
+    // The defence is by method, not by a list of paths, precisely so a new endpoint cannot forget to
+    // opt in. This checks the ones that exist today actually behave that way.
+    for (String path : List.of("/api/message", "/api/abort", "/api/compact", "/api/session",
+        "/api/workspaces", "/api/workspace", "/api/config", "/api/auto-approve", "/api/approval")) {
+      HttpResponse<String> refused = postFrom(HttpExchangeOrigin.EVIL, path, "{}");
+      assertEquals(
+          403,
+          refused.statusCode(),
+          "a page on another site must not reach " + path + ": " + refused.body());
+    }
+  }
+
   private HttpResponse<String> post(String path, String json) throws Exception {
     return client.send(
         HttpRequest.newBuilder(URI.create(origin + path))
@@ -2491,7 +2686,7 @@ class WebApiTest {
 
   /** Collects the SSE stream in the background so tests can await individual events. */
   /** One received event: the SSE id and its payload. */
-  private record SseEvent(long id, JsonNode payload) {}
+  private record SseEvent(long id, JsonNode payload, String name) {}
 
   private static final class Sse implements AutoCloseable {
 
@@ -2506,12 +2701,23 @@ class WebApiTest {
                 try (BufferedReader in =
                     new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8))) {
                   long id = 0;
+                  String name = "";
                   String line;
                   while ((line = in.readLine()) != null) {
                     if (line.startsWith("id: ")) {
                       id = Long.parseLong(line.substring("id: ".length()).strip());
+                    } else if (line.startsWith("event: ")) {
+                      // Kept, not skipped. The reader used to drop everything that was not `id:` or
+                      // `data:`, which is why a keep-alive sent as a *comment* went unnoticed for so
+                      // long: the test could not see the difference between a frame that reaches the
+                      // page and one that does not.
+                      name = line.substring("event: ".length()).strip();
                     } else if (line.startsWith("data: ")) {
-                      events.add(new SseEvent(id, Json.parse(line.substring("data: ".length()))));
+                      events.add(
+                          new SseEvent(id, Json.parse(line.substring("data: ".length())), name));
+                      name = "";
+                    } else if (line.isEmpty()) {
+                      name = "";
                     }
                   }
                 } catch (IOException | RuntimeException ignored) {
@@ -2525,6 +2731,24 @@ class WebApiTest {
 
     JsonNode await(String type, long millis) throws InterruptedException {
       return awaitAtLeast(type, 1, millis);
+    }
+
+    /**
+     * Waits for a frame carrying the given SSE {@code event} name, which is a different thing from the
+     * {@code type} inside the payload: an unnamed frame never reaches the page's {@code onmessage},
+     * and a named one reaches it only when a listener is registered for that name.
+     */
+    JsonNode awaitRaw(String field, String value, long millis) throws InterruptedException {
+      long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+      while (System.nanoTime() < deadline) {
+        for (SseEvent event : raw()) {
+          if ("event".equals(field) && value.equals(event.name())) {
+            return event.payload();
+          }
+        }
+        Thread.sleep(10);
+      }
+      return null;
     }
 
     /** The same as {@link #await} but with the SSE id, for tests about replay and reconnects. */

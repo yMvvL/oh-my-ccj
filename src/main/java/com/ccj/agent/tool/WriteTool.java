@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 /**
  * Whole-file writer, gated on approval.
@@ -93,13 +94,53 @@ public final class WriteTool implements Tool {
     if (parent != null) {
       Files.createDirectories(parent);
     }
-    Files.write(file, bytes);
+    // A file that appeared while the approval was waiting is a change the prompt did not mention: the
+    // approver agreed to "creates a new file" and would now be overwriting somebody's work. The
+    // reverse is fine — a file that was there and was deleted means the write creates what it claimed
+    // to create — so only the appearance is refused, and the message says what to do about it.
+    if (!replacing && Files.exists(file)) {
+      return ToolResult.error(
+          "refused: "
+              + label
+              + " did not exist when this write was approved, and does now. Writing would discard"
+              + " whatever appeared in between. Read it first, then decide.");
+    }
+    // Staged and renamed rather than written in place, so a crash cannot leave a truncated file: a
+    // half-written source file is worse than none, because nothing about it says it is incomplete.
+    writeAtomically(file, bytes);
     return ToolResult.ok(
         "wrote "
             + bytes.length
             + " bytes to "
             + label
             + (replacing ? " (replaced existing file)" : " (created new file)"));
+  }
+
+  /**
+   * Writes through a temporary file in the same directory and renames it into place.
+   *
+   * <p>The rename is atomic within one filesystem, so a reader sees the old file or the new one and
+   * never a truncated mixture. Same directory, because a rename across filesystems degrades to a
+   * copy, which is the non-atomic thing this exists to avoid.
+   */
+  private static void writeAtomically(Path file, byte[] bytes) throws IOException {
+    Path parent = file.getParent();
+    Path staged = Files.createTempFile(parent == null ? Path.of(".") : parent, ".ccj-write", ".tmp");
+    try {
+      Files.write(staged, bytes);
+      if (Files.exists(file)) {
+        // The original's permissions, so replacing a file does not quietly change who can read it.
+        try {
+          Files.setPosixFilePermissions(staged, Files.getPosixFilePermissions(file));
+        } catch (UnsupportedOperationException | IOException ignored) {
+          // Not a POSIX filesystem, or unreadable: the content is what matters.
+        }
+      }
+      Files.move(staged, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    } catch (IOException e) {
+      Files.deleteIfExists(staged);
+      throw e;
+    }
   }
 
   /** Current contents for the overwrite preview, or {@code null} when too large or not text. */

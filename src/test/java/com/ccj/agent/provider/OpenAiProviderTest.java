@@ -144,6 +144,36 @@ class OpenAiProviderTest {
   }
 
   @Test
+  void aHugeErrorPageIsNotHeldInMemoryToBeTruncated() throws Exception {
+    // The bug: the error body was collected in full and cut when formatting, so the memory the display
+    // limit was meant to protect was already spent. A gateway returning a large HTML error page — a
+    // proxy splash screen, a misconfigured nginx — was read entirely before being thrown away.
+    //
+    // Asserted on what reaches the caller rather than on heap size, because the message is the part a
+    // test can see: a bounded read produces a body that is truncated and says so, where an unbounded
+    // one would have produced the whole page.
+    String enormous = "x".repeat(2_000_000);
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.json(500, enormous))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+
+      Exception failure =
+          assertThrows(
+              Exception.class,
+              () ->
+                  provider.complete(
+                      new Provider.Request(
+                          "gpt-test", null, List.of(new Message.User("hi")), List.of(), null, null,
+                          null),
+                      event -> {}));
+
+      String message = failure.getMessage();
+      assertTrue(message.contains("truncated"), "the cut is announced: " + message.length());
+      assertTrue(
+          message.length() < 4_000,
+          "the message carries a bounded body, not two megabytes: " + message.length());
+    }
+  }
+
   void aRepeatedIdWithoutAnIndexContinuesTheCallInsteadOfStartingANewOne() throws Exception {
     // A server that omits `index` and forwards the whole call object it built repeats the id on
     // every fragment. Reading that as a second call split one call in two: the real one kept

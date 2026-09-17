@@ -1,0 +1,69 @@
+name: Bug report
+description: Something behaved differently from what the README or a comment says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste an API key.** If one appears in output you were about to send, rotate it first.
+
+        Security issues go through [SECURITY.md](../blob/main/SECURITY.md), not here.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The exact steps or commands. A reproduction is worth more than a description.
+      placeholder: |
+        1. `./ccj --repl`
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: |
+        The exact output, including any error. For a session problem, the relevant lines from
+        `~/.oh-my-ccj/sessions/<id>.jsonl` — every message and command is in there verbatim.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `./ccj --version`.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - macOS
+        - WSL
+        - Other (please say which)
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Provider and model
+      description: Behaviour differs enough between them that it matters.
+      placeholder: openai / gpt-4o-mini
+    validations:
+      required: false

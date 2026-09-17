@@ -1,0 +1,66 @@
+name: build
+
+# The whole test suite, on every push and pull request.
+#
+# This is the file that makes the test suite mean anything. Without it the only evidence that the
+# tests pass is the word of whoever last ran them, and a contributor cannot tell whether their change
+# broke something before opening a pull request. The count is deliberately not written down anywhere:
+# it drifts every time a test is added, and a stale number in a comment is worse than no number — the
+# badge above the README is the live answer.
+#
+# Two platforms, deliberately: the shell tool hard-codes /bin/bash and the launcher uses readlink,
+# so a POSIX system is the supported target — and running on both Linux and macOS is what keeps that
+# statement honest rather than aspirational.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Both platforms' results, not just the first failure: knowing that macOS passes while Linux
+      # fails is the difference between a platform bug and a real one.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # The browser cases (src/test/js/*.mjs) run under node and are wired into the JUnit suite. They
+      # report as *skipped* when node is missing rather than passing, so a build without node would
+      # show green while testing none of the page — the runtime is installed here so that cannot
+      # happen silently in CI.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Through the wrapper rather than a bare `mvn`: the wrapper pins the Maven version, so a build
+      # here is the same build a contributor gets.
+      - name: Build and test
+        run: ./mvnw -B -ntp verify
+
+      # The jar is what a user downloads, so the build has to prove it produces one.
+      - name: The packaged jar starts
+        run: |
+          ./mvnw -B -ntp -DskipTests package
+          java -jar target/ccj.jar --version
+
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-${{ matrix.os }}
+          path: target/surefire-reports/
+          if-no-files-found: ignore

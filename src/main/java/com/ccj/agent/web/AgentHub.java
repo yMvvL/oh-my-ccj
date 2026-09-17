@@ -7,6 +7,7 @@ import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
+import com.ccj.agent.core.SubAgentRunner;
 import com.ccj.agent.core.Message;
 import com.ccj.agent.core.Prompts;
 import com.ccj.agent.core.Provider;
@@ -18,6 +19,7 @@ import com.ccj.agent.core.TokenEstimate;
 import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.core.Workspace;
 import com.ccj.agent.core.ProviderDefinition;
+import com.ccj.agent.tool.TaskTool;
 import com.ccj.agent.core.SessionRepair;
 import com.ccj.agent.provider.ModelCatalog;
 import com.ccj.agent.provider.Providers;
@@ -80,7 +82,26 @@ public final class AgentHub implements AutoCloseable {
    * How long a tool call waits for a human before refusing. Timeout denies: the same fail-closed
    * rule the CLI applies when stdin is not a terminal.
    */
-  private static final long APPROVAL_TIMEOUT_SECONDS = 120;
+  /**
+   * How long an approval waits before being answered for the user.
+   *
+   * <p>{@code 0} means "wait until somebody answers" — the default, and the honest one: a request for
+   * permission is a question to a person, and a question that expires is a question that was never
+   * really asked. Measured with the old 120-second cap: a turn waiting on an approval that never
+   * reached the page was ended by the timer with the work abandoned, and the user's screen showed a
+   * prompt that had already been withdrawn — the worst of both, since it looked like a bug in the
+   * tool rather than an unanswered question.
+   *
+   * <p>Waiting for ever is safe rather than a deadlock because there are two ways out that do not
+   * depend on the timer: aborting the conversation answers pending approvals with "no" (see
+   * {@code Conversation.abort}), and a page that reloads rebuilds the prompt from the status it asks
+   * for on the way in. The alternative — a timer — fails the first of those by turning "nobody has
+   * answered yet" into "nobody answered".
+   *
+   * <p>A number is still honoured when one is set, for a caller that wants a turn to fail rather than
+   * hang: the tests set it, and so can an unattended run.
+   */
+  private static final long APPROVAL_TIMEOUT_SECONDS = 0;
 
   /** Builds a provider from settings; injected so this class stays free of transport details. */
   @FunctionalInterface
@@ -108,7 +129,35 @@ public final class AgentHub implements AutoCloseable {
       ModelCatalog modelCatalog,
       ProviderStore providerStore,
       FolderChooser folderChooser,
-      boolean autoApprove) {}
+      boolean autoApprove,
+      boolean subAgents) {
+
+    /** The settings as they were before sub-agents existed: none offered. */
+    public Settings(
+        String version,
+        WorkspaceStore workspaces,
+        Path cwdOverride,
+        Path configFile,
+        Map<String, String> env,
+        ProviderFactory providerFactory,
+        ModelCatalog modelCatalog,
+        ProviderStore providerStore,
+        FolderChooser folderChooser,
+        boolean autoApprove) {
+      this(
+          version,
+          workspaces,
+          cwdOverride,
+          configFile,
+          env,
+          providerFactory,
+          modelCatalog,
+          providerStore,
+          folderChooser,
+          autoApprove,
+          false);
+    }
+  }
 
   /**
    * One thing that happened, shaped for the wire.
@@ -123,6 +172,16 @@ public final class AgentHub implements AutoCloseable {
       DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(ZoneId.systemDefault());
 
   private final ToolRegistry tools;
+  /**
+   * Whether `task` is offered at all.
+   *
+   * <p>Off unless asked for, and that default is the honest one: a sub-agent spends tokens on a
+   * second conversation that the user did not type the message for, and an agent handed the tool
+   * will reach for it on work it could have done itself. Turning it on is a statement that the extra
+   * spend is wanted.
+   */
+  private final java.util.concurrent.atomic.AtomicBoolean subAgents =
+      new java.util.concurrent.atomic.AtomicBoolean();
   private final Settings settings;
 
   /** One per running turn: a session that is working gets its own thread, not the server's. */
@@ -173,6 +232,7 @@ public final class AgentHub implements AutoCloseable {
     this.settings = settings;
     this.session = session;
     this.autoApprove.set(settings.autoApprove());
+    this.subAgents.set(settings.subAgents());
     this.folderChooser =
         settings.folderChooser() == null ? new NativeFolderChooser() : settings.folderChooser();
   }
@@ -231,6 +291,7 @@ public final class AgentHub implements AutoCloseable {
     node.put("sessionId", current == null ? "" : current.id());
     node.put("messageCount", current == null ? 0 : current.messages().size());
     node.put("autoApprove", autoApprove.get());
+    node.put("subAgents", subAgents.get());
     // "busy" answers for the conversation on screen: a page's composer is about the transcript it
     // shows, and a turn running somewhere else must not disable it.
     Conversation shown = conversation(current == null ? "" : current.id());
@@ -1247,7 +1308,70 @@ public final class AgentHub implements AutoCloseable {
     ToolContext context =
         new ToolContext(conversation.cwd(), this::askApproval, active.outputLimitBytes());
     return new AgentLoop(
-        current, tools, conversation.session(), options, context, new WebListener(conversation.id()));
+        current,
+        registryFor(conversation, current, options, active),
+        conversation.session(),
+        options,
+        context,
+        new WebListener(conversation.id()));
+  }
+
+  /**
+   * The tool set for one conversation: the standard tools plus {@code task}.
+   *
+   * <p>Per conversation rather than shared, because {@code task} needs the model and settings of the
+   * conversation that is delegating — a sub-agent runs on the same model at the same effort as the
+   * agent that sent it, not on whatever the server happens to be configured with next.
+   *
+   * <p>A sub-agent is handed a registry built from this one minus {@code task}, which is what makes
+   * recursion impossible rather than merely discouraged: there is no depth limit to get wrong.
+   */
+  private ToolRegistry registryFor(
+      Conversation conversation, Provider current, AgentOptions options, Config active) {
+    SubAgentRunner runner =
+        new SubAgentRunner(
+            // The same provider instance: a sub-agent is not a second model, and closing one would
+            // close the other.
+            current,
+            tools,
+            options,
+            conversation.cwd(),
+            conversation::aborting,
+            active.outputLimitBytes(),
+            // The conversation's own approver, so a sub-agent's request for permission arrives in the
+            // transcript the user is already watching. It runs on this turn's thread, so
+            // `currentTurnSession` attributes it here, and aborting the turn answers it.
+            this::askApproval);
+    ToolRegistry registry = new ToolRegistry();
+    for (String name : tools.names()) {
+      tools.find(name).ifPresent(registry::register);
+    }
+    // `task` is registered last so it reads as the escalation it is rather than as one of the
+    // ordinary file tools. No staging directory is allocated: a sub-agent works in the session's own
+    // directory and asks before it changes anything there, like the agent that sent it.
+    registry.register(
+        new TaskTool(
+            (role, task) -> runner.run(role, task, options.system()),
+            // The sub-agent's tokens are this conversation's tokens: same model, same account, same
+            // bill. Added to the session's own books so the usage panel reports what was spent
+            // rather than what the main loop happened to spend by itself.
+            spent ->
+                conversation.add(
+                    (int) Math.min(Integer.MAX_VALUE, spent.inputTokens()),
+                    (int) Math.min(Integer.MAX_VALUE, spent.outputTokens()),
+                    (int) Math.min(Integer.MAX_VALUE, spent.cachedInputTokens()),
+                    spent.userTurns(),
+                    spent.modelTurns(),
+                    spent.toolCalls(),
+                    spent.toolErrors(),
+                    0),
+            subAgentsAllowed()));
+    return registry;
+  }
+
+  /** Whether this server will run sub-agents at all. */
+  private boolean subAgentsAllowed() {
+    return subAgents.get();
   }
 
   // ------------------------------------------------------------------ sessions
@@ -1465,6 +1589,16 @@ public final class AgentHub implements AutoCloseable {
     }
   }
 
+  public boolean subAgents() {
+    return subAgents.get();
+  }
+
+  public void setSubAgents(boolean enabled) {
+    if (subAgents.getAndSet(enabled) != enabled) {
+      publishStatus();
+    }
+  }
+
   /**
    * Blocks the loop thread until a browser answers. Publishing inside the call is what makes the
    * agent's request visible; returning false on timeout is what keeps it from waiting forever.
@@ -1490,7 +1624,12 @@ public final class AgentHub implements AutoCloseable {
             .put("detail", detail)
             .put("sessionId", sessionId));
     try {
-      boolean allow = answer.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+      boolean allow =
+          APPROVAL_TIMEOUT_SECONDS <= 0
+              // No deadline: the question stands until a person answers it, or until the turn is
+              // aborted, which answers it from the other side.
+              ? answer.get()
+              : answer.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
       publish(sessionId, "approval-closed", Json.object().put("id", id).put("allow", allow));
       return allow;
     } catch (TimeoutException e) {
@@ -1678,6 +1817,18 @@ public final class AgentHub implements AutoCloseable {
     /** Re-reads the working directory, which a turn starting now should use. */
     void useCurrentCwd() {
       this.cwd = AgentHub.this.cwd();
+    }
+
+    /**
+     * True once this conversation's turn has been asked to stop.
+     *
+     * <p>What a sub-agent checks to know it should stop too: aborting a turn has to reach the work the
+     * turn delegated, or the user's stop button leaves a sub-agent running with nothing on screen to
+     * say so.
+     */
+    boolean aborting() {
+      AgentLoop active = loop.get();
+      return active != null && active.isAborted();
     }
 
     boolean running() {

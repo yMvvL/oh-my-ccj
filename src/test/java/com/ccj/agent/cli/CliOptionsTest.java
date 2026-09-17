@@ -24,6 +24,52 @@ class CliOptionsTest {
   }
 
   @Test
+  void everyFlagAdvancesPastItself() {
+    // A flag whose branch forgets to move the cursor turns parse() into an infinite loop that burns a
+    // core and prints nothing — the process starts, never binds, and never says why. That happened:
+    // `--subagents` was added without its increment, and nothing caught it because no test ran the
+    // flag through a real parse. Each case here puts the flag in front of another one, so a
+    // non-advancing branch hangs the test instead of shipping.
+    CliOptions all =
+        CliOptions.parse(
+            new String[] {
+              "--subagents",
+              "--model", "m",
+              "--provider", "p",
+              "--base-url", "http://x",
+              "--api-key", "k",
+              "--cwd", "/tmp",
+              "--workspace", "w",
+              "--port", "1234",
+              "--host", "127.0.0.1",
+              "--web-token", "t",
+              "--wallpapers", "none",
+              "--language", "English",
+              "--max-tokens", "10",
+              "--temperature", "0.5",
+              "--reasoning", "high",
+              "--max-context-tokens", "100",
+            });
+
+    assertTrue(all.subAgents(), "--subagents is a switch, and the one that was broken");
+    assertEquals("m", all.model(), "and the flag after it was still reached");
+    assertEquals("p", all.provider());
+    assertEquals("w", all.workspace());
+    assertEquals(1234, all.port());
+    assertEquals("t", all.webToken());
+    assertEquals("English", all.language());
+    assertEquals(10, all.maxTokens());
+    assertEquals(100, all.maxContextTokens());
+  }
+
+  @Test
+  void subAgentsAreOffUnlessAskedFor() {
+    // It spends tokens on a conversation the user did not type a message for, so it is opt-in.
+    assertFalse(CliOptions.parse(new String[] {}).subAgents());
+    assertTrue(CliOptions.parse(new String[] {"--subagents"}).subAgents());
+  }
+
+  @Test
   void shortFlagsAndAliasesAreParsed() {
     CliOptions options =
         CliOptions.parse(

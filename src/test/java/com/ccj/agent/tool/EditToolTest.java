@@ -7,8 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -141,5 +144,75 @@ class EditToolTest {
     assertTrue(result.error(), result.content());
     assertEquals("rejected by user", result.content());
     assertEquals("keep me\n", Files.readString(dir.resolve("f.txt")));
+  }
+
+  @Test
+  void aFileThatChangesWhileTheApprovalWaitsIsNotOverwritten() throws Exception {
+    // The approval is a window in which somebody else can change the file — the user in their editor,
+    // another conversation's turn, a formatter on save. The ranges were computed against the text the
+    // diff showed, so applying them to whatever is on disk now would write back a version that
+    // predates the other change: their edit gone, with a prompt whose diff nobody could tell was
+    // stale.
+    Path file = dir.resolve("a.txt");
+    Files.writeString(file, "one\ntwo\nthree\n");
+    // The approver changes the file while "thinking", which is exactly what another writer does.
+    Approver editingBehindOurBack =
+        (title, detail) -> {
+          try {
+            Files.writeString(file, "one\nTWO CHANGED BY SOMEBODY ELSE\nthree\n");
+          } catch (IOException e) {
+            throw new UncheckedIOException(e);
+          }
+          return true;
+        };
+
+    ToolResult result =
+        new EditTool()
+            .execute(
+                "{\"path\":\"a.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}",
+                new ToolContext(dir, editingBehindOurBack, 4096));
+
+    assertTrue(result.error(), "must be refused: " + result.content());
+    assertTrue(result.content().contains("changed while"), result.content());
+    assertEquals(
+        "one\nTWO CHANGED BY SOMEBODY ELSE\nthree\n",
+        Files.readString(file),
+        "the other change survives");
+  }
+
+  @Test
+  void anEditAppliesWhenNothingChangedWhileItWaited() throws Exception {
+    // The check must not refuse the ordinary case, which is a file nobody touched.
+    Path file = dir.resolve("b.txt");
+    Files.writeString(file, "one\ntwo\nthree\n");
+
+    ToolResult result =
+        new EditTool()
+            .execute(
+                "{\"path\":\"b.txt\",\"old_string\":\"two\",\"new_string\":\"TWO\"}",
+                new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertFalse(result.error(), result.content());
+    assertEquals("one\nTWO\nthree\n", Files.readString(file));
+  }
+
+  @Test
+  void anEditLeavesNoTemporaryFileBehind() throws Exception {
+    // The write goes through a sibling and a rename. A leftover temp file in the user's directory
+    // would be the visible price of the atomicity, and it must not be paid.
+    Path file = dir.resolve("c.txt");
+    Files.writeString(file, "hello\n");
+
+    new EditTool()
+        .execute(
+            "{\"path\":\"c.txt\",\"old_string\":\"hello\",\"new_string\":\"goodbye\"}",
+            new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    try (var entries = Files.list(dir)) {
+      assertEquals(
+          List.of("c.txt"),
+          entries.map(p -> p.getFileName().toString()).sorted().toList(),
+          "only the edited file is left");
+    }
   }
 }

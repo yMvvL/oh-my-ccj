@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -31,32 +32,68 @@ class WebSessionRowTest {
     runNodeCases(SCRIPT, "the session row");
   }
 
-  /** Runs a node case file against the shipped {@code app.js}; prints and skips when node is absent. */
+  /**
+   * Runs a node case file against the shipped {@code app.js}.
+   *
+   * <p>Reported as <em>skipped</em> rather than passed when node is absent. The earlier version
+   * printed a line and returned, which JUnit records as a green test: a build machine without node
+   * would show every browser case as passing while not one of them ran. A test that cannot run has to
+   * say so in the report, because the report is what everybody reads.
+   *
+   * <p>Output is collected while the process runs, not after. The earlier version read the stream to
+   * the end before waiting, so the wait was never the thing that bounded it: a case file that hung
+   * would hold the build, and the timeout was decoration.
+   */
   static void runNodeCases(Path script, String what) throws IOException, InterruptedException {
-    if (!Files.exists(script)) {
-      return;   // the source tree is not the working directory; nothing to run
-    }
+    Assumptions.assumeTrue(Files.exists(script), "source tree is not the working directory");
     String node = findNode();
-    if (node == null) {
-      System.out.println("[node cases] no node on PATH — skipping " + what);
-      return;
-    }
+    Assumptions.assumeTrue(
+        node != null, "no node on PATH — the " + what + " cases cannot run");
 
     Path root = script.toAbsolutePath().getParent().getParent().getParent().getParent();
     Process process = new ProcessBuilder(node, script.toAbsolutePath().toString())
         .directory(root.toFile())
         .redirectErrorStream(true)
         .start();
-    String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    process.getOutputStream().close();
+    // Drained on another thread so the pipe cannot fill and deadlock the child while we wait: a case
+    // file that prints more than the pipe buffer holds used to hang until the timeout.
+    StringBuilder collected = new StringBuilder();
+    Thread drain =
+        new Thread(
+            () -> {
+              try (var in = process.getInputStream()) {
+                byte[] buffer = new byte[8192];
+                int read;
+                String tail = "";
+                while ((read = in.read(buffer)) != -1) {
+                  String chunk = new String(buffer, 0, read, StandardCharsets.UTF_8);
+                  collected.append(chunk);
+                  // Keep only the tail: a failing case's useful output is at the end, and an
+                  // unbounded buffer would make a runaway script a memory problem too.
+                  if (collected.length() > 200_000) {
+                    collected.delete(0, collected.length() - 100_000);
+                  }
+                  tail = chunk;
+                }
+              } catch (IOException ignored) {
+                // The process ended or was killed; the exit value is what is reported.
+              }
+            },
+            "node-cases-drain");
+    drain.setDaemon(true);
+    drain.start();
+
     boolean finished = process.waitFor(60, TimeUnit.SECONDS);
     if (!finished) {
       process.destroyForcibly();
+      process.waitFor(5, TimeUnit.SECONDS);
     }
-    assertTrue(finished, what + " cases must finish");
+    drain.join(2_000);
+    String output = collected.toString();
+    assertTrue(finished, what + " cases must finish within 60s; output so far:\n" + output);
     assertTrue(process.exitValue() == 0, what + " cases failed:\n" + output);
   }
-
-  static String findNodeStatic() { return findNode(); }
 
   @Test
   void theRowIsBuiltFromTheTitleTheServerSends() {

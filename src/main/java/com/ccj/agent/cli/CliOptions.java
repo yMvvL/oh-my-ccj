@@ -40,6 +40,7 @@ public record CliOptions(
     Integer port,
     String host,
     String webToken,
+    boolean subAgents,
     String wallpapers,
     boolean help,
     boolean version) {
@@ -102,6 +103,7 @@ public record CliOptions(
     Integer port = null;
     String host = null;
     String webToken = null;
+    boolean subAgents = false;
     String wallpapers = null;
     boolean open = false;
     boolean help = false;
@@ -167,6 +169,10 @@ public record CliOptions(
         case "--host" -> {
           host = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
+        }
+        case "--subagents" -> {
+          subAgents = true;
+          i += 1;
         }
         case "--web-token" -> {
           webToken = take(args, i, name, inline);
@@ -281,6 +287,7 @@ public record CliOptions(
         port,
         host,
         webToken,
+        subAgents,
         wallpapers,
         help,
         version);
@@ -329,6 +336,7 @@ public record CliOptions(
                                    a tailnet, its tailnet address as well; 'tailscale' means only
                                    the tailnet address; anything but loopback needs a token)
               --web-token <token>  require this token from every web request
+              --subagents          let the agent delegate to sub-agents (spends extra tokens)
                                    (or set CCJ_WEB_TOKEN; the flag wins)
               --wallpapers <dir>   pictures the page rotates as its background
                                    (default: ~/Pictures/ccj-backgrounds, or CCJ_WALLPAPERS)

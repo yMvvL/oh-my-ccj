@@ -10,6 +10,8 @@ import com.ccj.agent.core.ToolResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -77,5 +79,64 @@ class WriteToolTest {
     assertTrue(approvals.get(0).contains("replaces existing content"), approvals.get(0));
     assertTrue(approvals.get(0).contains("- two"), approvals.get(0));
     assertTrue(approvals.get(0).contains("+ TWO"), approvals.get(0));
+  }
+
+  @Test
+  void aFileThatAppearsWhileTheApprovalWaitsIsNotOverwritten() throws Exception {
+    // The prompt said "creates a new file" and the approver agreed to that. If a file appeared in the
+    // meantime, writing now discards work the person who approved never saw — a different act from
+    // the one they consented to.
+    Path file = dir.resolve("appeared.txt");
+    Approver creatingBehindOurBack =
+        (title, detail) -> {
+          try {
+            Files.writeString(file, "somebody else's work");
+          } catch (IOException e) {
+            throw new UncheckedIOException(e);
+          }
+          return true;
+        };
+
+    ToolResult result =
+        new WriteTool()
+            .execute(
+                "{\"path\":\"appeared.txt\",\"content\":\"mine\"}",
+                new ToolContext(dir, creatingBehindOurBack, 4096));
+
+    assertTrue(result.error(), "must be refused: " + result.content());
+    assertTrue(result.content().contains("did not exist"), result.content());
+    assertEquals("somebody else's work", Files.readString(file), "their file is intact");
+  }
+
+  @Test
+  void overwritingAFileThatWasAlreadyThereIsStillAllowed() throws Exception {
+    // A write is deliberately an overwrite, so the check above must not widen into "refuse any change
+    // while waiting" — that would break the ordinary case of rewriting a file the agent just read.
+    Path file = dir.resolve("existing.txt");
+    Files.writeString(file, "old");
+
+    ToolResult result =
+        new WriteTool()
+            .execute(
+                "{\"path\":\"existing.txt\",\"content\":\"new\"}",
+                new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertFalse(result.error(), result.content());
+    assertEquals("new", Files.readString(file));
+  }
+
+  @Test
+  void aWriteLeavesNoTemporaryFileBehind() throws Exception {
+    new WriteTool()
+        .execute(
+            "{\"path\":\"solo.txt\",\"content\":\"x\"}",
+            new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    try (var entries = Files.list(dir)) {
+      assertEquals(
+          List.of("solo.txt"),
+          entries.map(p -> p.getFileName().toString()).sorted().toList(),
+          "only the written file is left");
+    }
   }
 }

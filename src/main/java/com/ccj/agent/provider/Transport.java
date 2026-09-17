@@ -15,7 +15,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -160,10 +159,32 @@ final class Transport {
     Thread.sleep(delay);
   }
 
-  /** Drains and closes a body stream; used on error responses, which must fit in memory. */
+  /**
+   * Reads an error response, stopping once there is more than {@link #ERROR_BODY_LIMIT} of it.
+   *
+   * <p>Bounded while reading rather than after. The previous version collected the whole body and cut
+   * it when formatting, so the memory a display limit was meant to protect was already spent: an error
+   * page of any size — a misconfigured gateway returning a large HTML page, a proxy splash screen —
+   * was held in full before being thrown away. The limit is a limit only if it applies to the read.
+   *
+   * <p>The stream is closed either way, since abandoning a body without closing it leaks the
+   * connection.
+   */
   static String readBody(Stream<String> lines) {
     try (lines) {
-      return lines.collect(Collectors.joining("\n"));
+      StringBuilder kept = new StringBuilder();
+      for (String line : (Iterable<String>) lines::iterator) {
+        if (kept.length() > 0) {
+          kept.append('\n');
+        }
+        kept.append(line);
+        // Room for the marker the formatter adds, so a body exactly at the limit is not read twice
+        // over to discover it does not fit.
+        if (kept.length() > ERROR_BODY_LIMIT + 64) {
+          break;
+        }
+      }
+      return kept.toString();
     }
   }
 

@@ -1,5 +1,7 @@
 # oh-my-ccj
 
+[![build](https://github.com/ArchCCJ/oh-my-ccj/actions/workflows/build.yml/badge.svg)](https://github.com/ArchCCJ/oh-my-ccj/actions/workflows/build.yml)
+
 A coding agent runtime written from scratch in plain Java 21. No agent framework, no HTTP client
 library, no CLI library — `java.net.http` for transport, `com.sun.net.httpserver` for the web UI and
 the test doubles — 14.1k lines of Java plus a 7.2k-line vanilla page, with 11.5k more lines of tests
@@ -20,6 +22,35 @@ $ ccj -p "add a null check to Parser.java and run the tests"
     exit code 0
 Added the check on line 42 and the suite passes.
 ```
+
+## Why this one
+
+There are other coding agents. These are the things this one does that they mostly do not, and each is
+a place where a long session or an interrupted one goes wrong:
+
+- **An interrupted turn is repaired, not fatal.** Kill the process between an assistant turn and the
+  tool calls it asked for and you have a history no API will accept again — every later request is
+  refused, and the conversation is dead. ccj supplies the missing results on the projection it sends
+  ("not run" is what actually happened) and carries displaced answers back into the turn that asked
+  for them, so the session continues.
+- **`/compact` is reversible.** Compaction is usually a one-way loss: the old turns are gone and the
+  summary is all that is left. Here it writes a *new generation* of the same session and leaves the
+  original untouched, and the summary names that file so the model can `read` a dropped detail back.
+  It also refuses to run when the summary would not come out smaller than what it replaces — measured
+  on a real session at 4239 → 4236 tokens, which is a cost with no benefit.
+- **The agent can read its own history.** Sessions are plain JSONL in a directory the `read` tool can
+  reach, which is what makes the point above work at all.
+- **Context trimming keeps the protocol valid.** Old tool output is elided, then whole exchanges are
+  dropped — never splitting an assistant turn from the results of the calls it made.
+- **A sub-agent's changes go through your approval.** It reads in a conversation you never see, but a
+  write is put to you like any other, and aborting the turn answers it. It cannot delegate further
+  either: the tool is simply absent from its registry.
+- **The web UI is reachable from your phone without being on the open internet.** It binds named
+  addresses — loopback plus your tailnet — never a wildcard, and every non-loopback address needs a
+  token. Cross-origin requests that would change state are refused.
+
+What it deliberately does not have: MCP, plugins, a sandbox, images, or multi-user accounts. See
+[Limitations](#limitations) for the full list and the reasoning.
 
 ## Read this before you run it
 
@@ -48,7 +79,7 @@ job. It is the reason `ccj` is built as a personal tool for a machine you own.
 ## Quick start
 
 ```bash
-mvn package                      # builds target/ccj.jar (shaded, no classpath juggling)
+./mvnw package                   # builds target/ccj.jar (shaded, no classpath juggling)
 
 ./ccj                            # opens the web UI; configure your model there
 ./ccj --demo                     # the same, with a local stand-in model: no key, no network
@@ -61,14 +92,32 @@ provider, model, base URL, API key. Saving writes `~/.oh-my-ccj/config.json` (06
 running session over immediately: no restart, no JSON editing. Flags and environment variables still
 work for scripted use.
 
-Requires JDK 21+ and Maven. The only runtime dependency is `jackson-databind`.
+### What it runs on
+
+**Linux and macOS, with JDK 21+.** The wrapper (`./mvnw`) brings its own Maven, so Maven does not have
+to be installed — but a POSIX shell is required, and that is a real dependency rather than an
+incidental one:
+
+| Needs | Why |
+|---|---|
+| `/bin/bash` | The `bash` tool runs commands through it, and it is the tool the whole design is built around. |
+| POSIX shell utilities | The launcher (`ccj`) uses `readlink`; the tools expect `grep`, `find` and friends to behave the usual way. |
+| JDK 21+ | `./mvnw` and `java -jar` both need it. |
+
+Windows is not supported. Java itself runs there, but the shell tool would have nothing to run: a
+`cmd.exe` or PowerShell path is a different tool with different quoting rules, not a configuration
+change. **WSL works** and is the way to use this on Windows — inside it, everything above is true.
+
+Nothing else is required: no Maven, no Node (the browser cases are skipped, and *reported* as skipped,
+when it is absent — CI installs it so that cannot pass unnoticed), no API key (`--demo` runs against a
+local stand-in model).
 
 ## Install
 
 Put the launcher on your `PATH` once and use `ccj` from any directory, like any other CLI:
 
 ```bash
-mvn -DskipTests package                       # or let the launcher build it on first use
+./mvnw -DskipTests package                    # or let the launcher build it on first use
 ln -sfn "$PWD/ccj" ~/.local/bin/ccj           # ~/.local/bin is on PATH by default
 cd ~/some/other/project && ccj -p "explain this repo"
 ```
@@ -193,6 +242,7 @@ hostname rather than loopback.
 | Endpoint and key | They belong to the provider they were entered for, and the config file keeps one pair per provider: the one in effect plus a `remembered` entry for each other provider you have configured. Switching provider loads that provider's pair instead of passing the old one on, so a session cannot end up billing the provider it just left — and switching back does not ask you to paste the key again. |
 | Tools | `read`, `write`, `edit`, `bash`, `glob`, `grep` — each with a hand-written JSON Schema and self-describing errors. `bash` runs the command with its stdin already closed, so `cat`, `sort` or a script's `read` sees end-of-input instead of waiting for a terminal that is not there. The read-only three declare themselves as such, and a run of them in one turn executes concurrently. |
 | Loop | One model turn at a time per conversation; every requested tool runs, its result goes back, and the model is asked again. No step ceiling — a turn ends when the model answers or when you abort it, because a cap cannot tell a model stuck in a rut from one working through a long task. Abort is real: a running shell command is killed rather than waited out. |
+| Sub-agents | The agent can delegate a self-contained task to a sub-agent that works in its own conversation and returns only a report: a conclusion with file paths instead of the reading that produced it, so a search across thirty files costs the main conversation one paragraph. Three roles — `explore` and `verify` read only, `build` writes, and its changes ask for the same approval yours do. It cannot delegate further: `task` is absent from its registry, so recursion is impossible rather than limited. Off unless `--subagents`. |
 | Project rules | Drop a `CCJ.md` in a working directory and its contents lead the prompt for every request made there: the project's own statement about how work is done here, with the built-in rules following it rather than being replaced by it. Read from **that directory only** — a file higher up the tree is not consulted, so "what prompt is this run using" is answerable by looking at the folder you started in. `--system` still overrides the built-in part. Missing, empty and unreadable all mean "no project rules". |
 | Context budget | `--max-context-tokens` (or `CCJ_MAX_CONTEXT_TOKENS`, or the config file) caps what one request carries, in estimated tokens. Over it, old tool output is elided first, then whole older exchanges are dropped — never splitting an assistant turn from the results of the calls it made — and if the exchange being answered still does not fit, its largest result is cut short with an explicit marker. The session file keeps everything; only the request is a projection, and the transcript says what was trimmed. |
 | Context | The side panel reports the estimated prompt size against the budget (`--max-context-tokens`), so you can see a session about to be trimmed before the transcript says it was. It is an estimate and labelled as such: token counting is a heuristic. No money is shown — a price is an assumption about a rate card that changes without telling ccj. |
@@ -428,7 +478,7 @@ mappings and the reasoning behind the design.
 ## Development
 
 ```bash
-mvn test                                  # 472 tests, no network, no API key
+./mvnw test                               # the whole suite: no network, no API key
 mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
 mvn -Dtest=WebApiTest test                # HTTP + SSE + approval handshake only
 mvn -DskipTests package                   # fat jar
@@ -457,11 +507,18 @@ file on disk, session written.
 | workspaces (registry rules, persistence, isolation, naming a picked folder) | 11 |
 | demo provider (routing, termination) | 8 |
 
+The counts above are from the last run in the maintainer's environment. What CI actually runs, on Linux
+and macOS, is `./mvnw -B -ntp verify` — see [.github/workflows/build.yml](.github/workflows/build.yml).
+Where the work is going is in [docs/ROADMAP.md](docs/ROADMAP.md), and how code, tests and docs are
+written here is in [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
+
 ## Limitations
 
-- One conversation at a time per session: no sub-agents inside a conversation, but several
-  conversations run side by side (see the web UI row below). Only read-only tools run concurrently,
-  because they are the only ones whose overlap cannot change what the transcript means.
+- One conversation at a time per session. Several conversations run side by side, and the agent can
+  delegate to **sub-agents** that read in their own conversation and report back only a summary — off
+  unless `--subagents` is passed, because a delegated run spends tokens the user did not type a
+  message for. Inside a conversation, only read-only tools run concurrently: they are the only ones
+  whose overlap cannot change what the transcript means. See [docs/SUBAGENTS.md](docs/SUBAGENTS.md).
 - Text only: no image or file attachments on the wire.
 - No MCP, no plugins, no sandboxing — approval is the only guard, and `--yolo` removes it.
 - Bash runs as the current user with your full environment.

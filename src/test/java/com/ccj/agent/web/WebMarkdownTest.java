@@ -1,6 +1,7 @@
 package com.ccj.agent.web;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -30,29 +31,26 @@ class WebMarkdownTest {
 
   @Test
   void theRendererScriptPasses() throws IOException, InterruptedException {
-    if (!Files.exists(SCRIPT)) {
-      return;   // the source tree is not the working directory; nothing to run
-    }
-    String node = findNode();
-    if (node == null) {
-      System.out.println("[WebMarkdownTest] no node on PATH — skipping the renderer cases");
-      return;
-    }
+    // The shared runner rather than a second copy of it: the copy this replaces read the child's
+    // output to the end *before* waiting, so the timeout was decoration — a case file that hung held
+    // the build — and it reported a missing node by printing a line and returning, which JUnit records
+    // as a pass. Both are fixed in one place now.
+    WebSessionRowTest.runNodeCases(SCRIPT, "the markdown renderer");
+  }
 
-    // The script lives in the repository and is run from the repository root, so its relative
-    // paths are the same ones the build uses. src/test/js/markdown.test.mjs → the project root.
-    Path root = SCRIPT.toAbsolutePath().getParent().getParent().getParent().getParent();
-    Process process = new ProcessBuilder(node, SCRIPT.toAbsolutePath().toString())
-        .directory(root.toFile())
-        .redirectErrorStream(true)
-        .start();
-    String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-    boolean finished = process.waitFor(60, TimeUnit.SECONDS);
-    if (!finished) {
-      process.destroyForcibly();
-    }
-    assertTrue(finished, "the markdown cases must finish");
-    assertTrue(process.exitValue() == 0, "the markdown renderer cases failed:\n" + output);
+  @Test
+  void aCaseFileThatCannotBeRunIsSkippedRatherThanPassed() {
+    // The bug this pins: the earlier version printed a line and returned, which JUnit records as a
+    // green test — a build machine without node showed every browser case as passing while not one of
+    // them ran. A missing script must therefore abort the case, not complete it.
+    //
+    // Asserted through the real entry point with a path that cannot exist, so this checks the runner
+    // rather than the machine it happens to be running on.
+    Path missing = Path.of("src", "test", "js", "this-file-does-not-exist.test.mjs");
+
+    assertThrows(
+        org.opentest4j.TestAbortedException.class,
+        () -> WebSessionRowTest.runNodeCases(missing, "a case file that is not there"));
   }
 
   @Test

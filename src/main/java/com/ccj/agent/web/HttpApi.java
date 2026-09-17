@@ -188,6 +188,30 @@ public final class HttpApi implements AutoCloseable {
         return;
       }
       String path = exchange.getRequestURI().getPath();
+      // A cross-origin check for anything that changes state, and it is the one defence the loopback
+      // and Host checks cannot provide.
+      //
+      // Those two answer "did this arrive on the machine itself", which a page in the user's browser
+      // satisfies perfectly: the browser runs on the machine, so its connection is loopback and its
+      // Host is 127.0.0.1. What they cannot see is *which page* caused it. Measured before this
+      // existed: a POST to /api/auto-approve carrying `Origin: https://evil.example` was served, and
+      // it really did switch auto-approval on — after which the agent stops asking before it runs
+      // commands. That is the whole attack: visit a page, and the page turns off the guard.
+      //
+      // Checked only for state-changing requests, so a GET that leaks nothing is unaffected, and only
+      // when the browser sent an Origin at all — a curl or a script sends none, and treating that as
+      // hostile would break every legitimate caller to protect against one that a browser would not
+      // let through anyway.
+      if (stateChanging(exchange) && !sameOrigin(exchange)) {
+        error(
+            exchange,
+            403,
+            "cross-origin request refused: a page on "
+                + exchange.getRequestHeaders().getFirst("Origin")
+                + " must not change this server's state. A browser cannot reach ccj from another"
+                + " site, and this is what enforces that rather than assuming it.");
+        return;
+      }
       // One prefix before the table below: a wallpaper's name is part of the path, and the name is
       // whatever the directory happens to hold, so there is no case label that could match it.
       if (path.startsWith("/wallpaper/")) {
@@ -626,8 +650,22 @@ public final class HttpApi implements AutoCloseable {
       }
     }
 
+    /**
+     * Keeps the connection visibly alive.
+     *
+     * <p>A real data frame, not the {@code : ping} comment an SSE server usually sends. A comment is
+     * not delivered to the page at all — {@code EventSource} dispatches only frames with a
+     * {@code data} field — so the page's {@code lastEventAt} never moved and its 20-second
+     * "the stream is dead" timer fired on a perfectly healthy connection. Measured: a turn waiting on
+     * an approval showed a prompt that flickered while the page reconnected underneath it, and the
+     * request looked like it had been withdrawn when it was still open.
+     *
+     * <p>Sent with no {@code id}, so it cannot disturb the resume position the real events maintain,
+     * and named {@code ping} rather than the default message type: the page ignores it in its switch,
+     * so the only thing it does is prove the connection is alive — which is exactly the job.
+     */
     void heartbeat() {
-      write(": ping\n\n");
+      write("event: ping\ndata: {}\n\n");
     }
 
     private void write(String frame) {
@@ -806,6 +844,53 @@ public final class HttpApi implements AutoCloseable {
    * alternative — a token on every request — would mean the machine's own user has to carry a secret
    * to reach a server they started.
    */
+  /**
+   * True for a request that can change something.
+   *
+   * <p>Methods rather than a list of paths: a new endpoint must not have to remember to opt in, and
+   * the ones that read are exactly the ones the protocol says do not change state.
+   */
+  private static boolean stateChanging(HttpExchange exchange) {
+    String method = exchange.getRequestMethod();
+    return !("GET".equals(method) || "HEAD".equals(method) || "OPTIONS".equals(method));
+  }
+
+  /**
+   * True when the request did not come from another site, or did not say where it came from.
+   *
+   * <p>An absent {@code Origin} counts as same-origin. Browsers attach it to cross-origin requests and
+   * to every state-changing request they make at all, so its absence means the caller is not a browser
+   * page — a script, a test, the CLI. Refusing those would break every legitimate caller to defend
+   * against one the browser would not deliver in the first place.
+   *
+   * <p>When it is present, it has to name this server: the origin's host must be a loopback name, the
+   * same set the {@code Host} check accepts. A port mismatch is allowed because the user may have
+   * started ccj on a different port than the page they first opened, and every one of these addresses
+   * is the machine itself.
+   */
+  private static boolean sameOrigin(HttpExchange exchange) {
+    String origin = exchange.getRequestHeaders().getFirst("Origin");
+    if (origin == null || origin.isBlank()) {
+      return true;
+    }
+    String clean = origin.strip();
+    // "null" is what a sandboxed iframe or a file:// page sends. It is not this server.
+    if ("null".equalsIgnoreCase(clean)) {
+      return false;
+    }
+    try {
+      java.net.URI parsed = java.net.URI.create(clean);
+      String host = parsed.getHost();
+      // The same rule the Host header is held to, on purpose: one notion of "this machine" rather
+      // than two that can disagree, and the loopback-literal check that refuses to resolve a name is
+      // exactly what is wanted here too.
+      return host != null && loopbackHost(host);
+    } catch (IllegalArgumentException e) {
+      // An Origin that does not parse is not this server's.
+      return false;
+    }
+  }
+
   private boolean permitted(HttpExchange exchange) {
     return loopbackPeer(exchange) && loopbackHost(exchange.getRequestHeaders().getFirst("Host"));
   }

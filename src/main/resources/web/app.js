@@ -2180,6 +2180,18 @@
     };
 
     source.onmessage = handleMessage;
+    // The server's keep-alive, which arrives as a named event because a bare `data` frame would be
+    // dispatched to onmessage and looked like a real event of an unknown type. This is the only
+    // signal that reaches the page while a turn is waiting on something — a model call, or an approval
+    // nobody has answered — and without it the 20-second stale timer below fires on a healthy
+    // connection: the page reconnects underneath a prompt that is still open, and the prompt appears
+    // to flicker and then vanish. Measured, in a session waiting on an approval.
+    source.addEventListener('ping', function () {
+      state.lastEventAt = Date.now();
+      // A ping proves the connection is alive, which is also the moment to take the reconnecting pill
+      // down if it is up.
+      hideConnPill();
+    });
   }
 
   /* How long a stream may stay silent before the page stops trusting its own

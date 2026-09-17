@@ -557,7 +557,8 @@ public final class Cli {
             new ConfigModelCatalog(providerStore),
             providerStore,
             null,
-            Boolean.TRUE.equals(config.autoApprove()) || options.yolo());
+            Boolean.TRUE.equals(config.autoApprove()) || options.yolo(),
+            options.subAgents());
     AgentHub hub = new AgentHub(provider, config, tools, settings, session);
     Wallpapers wallpapers = Wallpapers.from(env, options.wallpapers());
     try (HttpApi api = HttpApi.start(hub, binds, token, wallpapers)) {
