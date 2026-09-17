@@ -191,6 +191,16 @@
     cfgApiKeyEnvHint: $('cfg-apikeyenv-hint'),
     cfgTemperature: $('cfg-temperature'),
     cfgLanguage: $('cfg-language'),
+    cfgVisionBaseUrl: $('cfg-vision-baseurl'),
+    cfgVisionModel: $('cfg-vision-model'),
+    cfgVisionApiKey: $('cfg-vision-apikey'),
+    cfgVisionApiKeyHint: $('cfg-vision-apikey-hint'),
+    cfgVisionClearKey: $('cfg-vision-clearkey'),
+    cfgVisionClearKeyWrap: $('cfg-vision-clearkey-wrap'),
+    cfgVisionMaxTokens: $('cfg-vision-maxtokens'),
+    cfgVisionOff: $('cfg-vision-off'),
+    cfgVisionState: $('cfg-vision-state'),
+    cfgVisionError: $('cfg-vision-error'),
     cfgProvidersNote: $('cfg-providers-note'),
     cfgProviderList: $('cfg-provider-list'),
     cfgBuiltInRow: $('cfg-builtin-row'),
@@ -3869,7 +3879,7 @@
   function clearSettingsErrors() {
     dom.settingsError.textContent = '';
     dom.settingsError.hidden = true;
-    [dom.cfgProviderError, dom.cfgModelError, dom.cfgApiKeyError].forEach(function (node) {
+    [dom.cfgProviderError, dom.cfgModelError, dom.cfgApiKeyError, dom.cfgVisionError].forEach(function (node) {
       node.textContent = '';
       node.hidden = true;
     });
@@ -4347,6 +4357,8 @@
     dom.cfgClearKey.checked = false;
     dom.cfgClearKeyWrap.hidden = source !== 'config';
 
+    renderVisionSettings(cfg);
+
     dom.cfgApiKeyEnvHint.textContent = source === 'env' ? 'the key is read from this variable' : '';
     dom.cfgApiKeyEnvHint.hidden = source !== 'env';
 
@@ -4389,6 +4401,45 @@
     if (dom.cfgLanguage.value !== wanted) { dom.cfgLanguage.value = 'auto'; }
   }
 
+  /* The model that describes pictures, which is configured separately from the provider above: its
+   * own endpoint, key and budget. The key follows the same rule as every other key on this page —
+   * the server says whether one exists and where it comes from, never what it is, so the field is
+   * always blank and blank means "keep what is there". */
+  function renderVisionSettings(cfg) {
+    const vision = cfg && cfg.vision && typeof cfg.vision === 'object' ? cfg.vision : {};
+    const source = str(vision.apiKeySource);
+    dom.cfgVisionBaseUrl.value = str(vision.baseUrl);
+    dom.cfgVisionModel.value = str(vision.model);
+    dom.cfgVisionMaxTokens.value =
+      vision.maxTokens === null || vision.maxTokens === undefined ? '' : str(vision.maxTokens);
+    dom.cfgVisionMaxTokens.placeholder = str(vision.defaultMaxTokens) || '8192';
+    dom.cfgVisionApiKey.value = '';
+    dom.cfgVisionApiKey.placeholder = KEY_PLACEHOLDER[source] || KEY_PLACEHOLDER.none;
+    dom.cfgVisionClearKey.checked = false;
+    dom.cfgVisionClearKeyWrap.hidden = source !== 'config';
+    dom.cfgVisionOff.checked = false;
+    if (source === 'config') {
+      dom.cfgVisionApiKeyHint.textContent = 'A vision key is saved in the config file. Leave this empty to keep it.';
+      dom.cfgVisionApiKeyHint.hidden = false;
+    } else if (source === 'env') {
+      dom.cfgVisionApiKeyHint.textContent = 'using ' + (str(vision.apiKeyEnv) || 'an environment variable') + ' from the environment';
+      dom.cfgVisionApiKeyHint.hidden = false;
+    } else {
+      dom.cfgVisionApiKeyHint.textContent = '';
+      dom.cfgVisionApiKeyHint.hidden = true;
+    }
+    // What the picture button will actually do, which is not the same as "the block is filled in":
+    // the feature needs an endpoint, a model and a key, and a form that called a half-filled block
+    // "on" would promise a description that then gets refused.
+    if (vision.on) {
+      dom.cfgVisionState.textContent = 'on — ' + str(vision.baseUrl) + ' · ' + str(vision.model);
+    } else if (vision.configured) {
+      dom.cfgVisionState.textContent = 'incomplete — a key is missing, so pictures are refused';
+    } else {
+      dom.cfgVisionState.textContent = 'off — a picture is refused with what to set';
+    }
+  }
+
   /* Only the fields this form manages are sent; apiKey is omitted when the
    * field is empty so the stored key survives an unrelated change. */
   function settingsPayload() {
@@ -4409,6 +4460,21 @@
     }
     const temperature = numField(dom.cfgTemperature);
     if (temperature !== undefined) { payload.temperature = temperature; }
+
+    // Pictures. Empty means unchanged, like every other text field here, so the two things that are
+    // not a value — forgetting the key, turning the feature off — are sent as the flags they are.
+    const visionBaseUrl = dom.cfgVisionBaseUrl.value.trim();
+    const visionModel = dom.cfgVisionModel.value.trim();
+    if (visionBaseUrl) { payload.visionBaseUrl = visionBaseUrl; }
+    if (visionModel) { payload.visionModel = visionModel; }
+    const budget = numField(dom.cfgVisionMaxTokens);
+    if (budget !== undefined) { payload.visionMaxTokens = budget; }
+    if (dom.cfgVisionClearKey.checked) {
+      payload.clearVisionApiKey = true;
+    } else if (dom.cfgVisionApiKey.value) {
+      payload.visionApiKey = dom.cfgVisionApiKey.value;
+    }
+    if (dom.cfgVisionOff.checked) { payload.clearVision = true; }
     return payload;
   }
 
@@ -4423,7 +4489,11 @@
   function showSaveError(err) {
     const message = str(err && err.message) || 'Save failed.';
     const status = err && err.status;
-    if (status === 401 || status === 403 || /api[- ]?key|unauthor|forbidden|invalid key|401|403/i.test(message)) {
+    if (/vision|picture/i.test(message)) {
+      // Before the key branch on purpose: "the vision key is missing" is about the picture field,
+      // and the generic apiKey rule below would match it and blame the provider's key.
+      fieldError(dom.cfgVisionError, message);
+    } else if (status === 401 || status === 403 || /api[- ]?key|unauthor|forbidden|invalid key|401|403/i.test(message)) {
       fieldError(dom.cfgApiKeyError, message);
     } else if (/model/i.test(message)) {
       // "no model configured" also names the provider, so the model branch wins.

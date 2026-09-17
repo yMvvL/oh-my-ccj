@@ -50,6 +50,17 @@ public record VisionConfig(
     return baseUrl != null && model != null;
   }
 
+  /**
+   * The same block with the key literal forgotten, keeping the endpoint, model and budget.
+   *
+   * <p>For a key that was entered by mistake, or one being replaced by an environment variable: the
+   * rest of the block is a working configuration and throwing it away would lose the endpoint the
+   * user looked up.
+   */
+  public VisionConfig withoutApiKey() {
+    return new VisionConfig(baseUrl, null, apiKeyEnv, model, maxTokens);
+  }
+
   /** The key to send, or null when neither this record nor the environment provides one. */
   public String resolvedApiKey(Map<String, String> env) {
     if (apiKey != null) {

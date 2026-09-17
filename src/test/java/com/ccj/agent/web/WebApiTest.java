@@ -2805,6 +2805,107 @@ class WebApiTest {
     assertEquals(List.of(), attachmentDirectories(), "and nothing was written");
   }
 
+  @Test
+  void theVisionBlockIsConfiguredFromTheSettingsFormAndUsed() throws Exception {
+    // The whole panel path: what the form posts is what the file keeps, and the picture that follows
+    // goes to the model that was just entered — not to the provider, and not to a stale block.
+    AtomicInteger visionCalls = new AtomicInteger();
+    startVision("described by the model the form saved", visionCalls, new CopyOnWriteArrayList<>());
+    String port = String.valueOf(vision.getAddress().getPort());
+
+    JsonNode saved =
+        postJson(
+            "/api/config",
+            "{\"provider\":\"openai\",\"model\":\"mock-model\","
+                + "\"visionBaseUrl\":\"http://127.0.0.1:"
+                + port
+                + "/v1\",\"visionModel\":\"mock-vision\","
+                + "\"visionApiKey\":\"sk-vision\",\"visionMaxTokens\":4096}");
+
+    // The save answers with the status, so what the form would read back is the config endpoint.
+    assertEquals("mock-model", saved.path("model").asText());
+    JsonNode vision = json("/api/config").path("vision");
+    assertTrue(vision.path("on").asBoolean(), vision.toString());
+    assertEquals("mock-vision", vision.path("model").asText());
+    assertEquals(4096, vision.path("maxTokens").asInt());
+    assertEquals(
+        "mock-vision",
+        Json.parse(Files.readString(configFile)).path("vision").path("model").asText(),
+        "and it is in the file, not only in memory");
+
+    assertEquals(202, postPicture("whiteboard.png", pngBytes()).statusCode());
+    assertEquals(1, visionCalls.get(), "the picture went to the model the form saved");
+  }
+
+  @Test
+  void theVisionKeyIsNeverReturnedToTheBrowser() throws Exception {
+    // The same rule as the provider's key: the form is told whether one exists and where it comes
+    // from, never what it is.
+    Files.writeString(
+        configFile,
+        "{\"vision\":{\"baseUrl\":\"http://127.0.0.1:1/v1\",\"model\":\"m\","
+            + "\"apiKey\":\"sk-vision-secret\"}}");
+    restartFromConfigFile();
+
+    String payload = json("/api/config").toString();
+    JsonNode vision = Json.parse(payload).path("vision");
+
+    assertFalse(payload.contains("sk-vision-secret"), payload);
+    assertEquals("config", vision.path("apiKeySource").asText(), vision.toString());
+    assertTrue(vision.path("on").asBoolean(), vision.toString());
+  }
+
+  @Test
+  void clearingTheVisionKeyKeepsTheEndpointAndTurningPicturesOffRemovesTheBlock() throws Exception {
+    Files.writeString(
+        configFile,
+        "{\"vision\":{\"baseUrl\":\"http://127.0.0.1:1/v1\",\"model\":\"m\","
+            + "\"apiKey\":\"sk-vision-secret\",\"maxTokens\":4096}}");
+    // The running configuration is built from the file at startup, so the file has to exist before
+    // the hub does — which is what the CLI does too.
+    restartFromConfigFile();
+
+    // Forgetting the key is not forgetting the endpoint the user looked up.
+    postJson("/api/config", "{\"clearVisionApiKey\":true}");
+    assertFalse(Files.readString(configFile).contains("sk-vision-secret"));
+    JsonNode cleared = json("/api/config").path("vision");
+    assertEquals("http://127.0.0.1:1/v1", cleared.path("baseUrl").asText());
+    assertEquals(4096, cleared.path("maxTokens").asInt());
+    assertEquals("none", cleared.path("apiKeySource").asText());
+
+    // And turning it off is not "clearing a field": an empty field means "leave it alone", which is
+    // why the form sends a flag for this one.
+    postJson("/api/config", "{\"clearVision\":true}");
+    assertFalse(json("/api/config").path("vision").path("configured").asBoolean());
+    assertFalse(Files.readString(configFile).contains("\"vision\""), "the block is gone from the file");
+
+    HttpResponse<String> posted = postPicture("photo.png", pngBytes());
+    assertEquals(409, posted.statusCode(), posted.body());
+    assertTrue(posted.body().contains("no vision model is configured"), posted.body());
+  }
+
+  @Test
+  void aBudgetOfZeroIsRefusedRatherThanSaved() throws Exception {
+    // It would mean "write nothing", and the refusal has to arrive before the file is written.
+    Files.writeString(configFile, "{}");
+
+    HttpResponse<String> refused =
+        post("/api/config", "{\"visionBaseUrl\":\"http://127.0.0.1:1/v1\",\"visionMaxTokens\":0}");
+
+    assertEquals(400, refused.statusCode(), refused.body());
+    assertTrue(refused.body().contains("at least 1 token"), refused.body());
+    assertFalse(Files.readString(configFile).contains("vision"), "nothing was written");
+  }
+
+  /** The hub again, on whatever the config file now says — the way the CLI starts it. */
+  private void restartFromConfigFile() throws IOException {
+    api.close();
+    hub.close();
+    hub = hub(provider, Config.layered(configFile, Map.of(), null));
+    api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), null);
+    origin = "http://127.0.0.1:" + api.port();
+  }
+
   /** A stand-in vision endpoint on loopback: one canned description, and a count of the calls. */
   private void startVision(String description, AtomicInteger calls, List<String> asked)
       throws IOException {

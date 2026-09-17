@@ -17,6 +17,7 @@ import com.ccj.agent.core.ToolResult;
 import com.ccj.agent.core.ToolSpec;
 import com.ccj.agent.core.TokenEstimate;
 import com.ccj.agent.core.UsageTotals;
+import com.ccj.agent.core.VisionConfig;
 import com.ccj.agent.core.Workspace;
 import com.ccj.agent.core.ProviderDefinition;
 import com.ccj.agent.tool.TaskTool;
@@ -917,6 +918,40 @@ public final class AgentHub implements AutoCloseable {
       settings.modelCatalog().providers().forEach(provider -> names.add(provider.name()));
     }
     names.forEach(providers::add);
+    node.set("vision", visionJson(active));
+    return node;
+  }
+
+  /**
+   * What the settings form needs about the model that describes pictures.
+   *
+   * <p>The key follows the rule every other key here follows: whether one exists and where it comes
+   * from, never what it is. {@code apiKeySource} is the same vocabulary the provider field uses, so
+   * the form can say "saved in the config file" or "from the environment" without a second rule.
+   *
+   * <p>{@code on} is what the feature will actually do, which is not the same as "the block exists":
+   * a block naming an endpoint but no model describes nothing, and a form that called that on would
+   * promise something the picture button then refuses.
+   */
+  private ObjectNode visionJson(Config active) {
+    VisionConfig vision = active.vision();
+    ObjectNode node = Json.object();
+    node.put("configured", vision != null && vision.isConfigured());
+    node.put("on", vision != null && vision.isConfigured() && vision.resolvedApiKey(settings.env()) != null);
+    node.put("defaultMaxTokens", VisionClient.DEFAULT_MAX_TOKENS);
+    node.put("baseUrl", (String) (vision == null ? null : vision.baseUrl()));
+    node.put("model", (String) (vision == null ? null : vision.model()));
+    node.put("apiKeyEnv", (String) (vision == null ? null : vision.apiKeyEnv()));
+    if (vision == null || vision.maxTokens() == null) {
+      node.putNull("maxTokens");
+    } else {
+      node.put("maxTokens", vision.maxTokens());
+    }
+    node.put(
+        "apiKeySource",
+        vision == null || vision.resolvedApiKey(settings.env()) == null
+            ? "none"
+            : vision.apiKey() != null ? "config" : "env");
     return node;
   }
 
@@ -938,13 +973,13 @@ public final class AgentHub implements AutoCloseable {
     // Both sides go through the same transition: the endpoint and key being left are remembered under
     // the provider they belong to, the one being switched to is recalled, and a change that names a
     // setting writes it as the active provider's.
-    Config candidate = config.changedBy(changes);
+    Config candidate = withVisionEdits(config.changedBy(changes), posted);
     Provider built = settings.providerFactory().create(candidate, settings.env());
     try {
       // The file is the side that is written, so it carries the provider actually in use: a form can
       // post a key on its own, and a save must not leave the file without the provider it is about.
       Config stored = Config.fromFile(settings.configFile()).namedBy(config).changedBy(changes);
-      Config.writeInto(settings.configFile(), stored);
+      Config.writeInto(settings.configFile(), withVisionEdits(stored, posted));
     } catch (RuntimeException e) {
       built.close();
       throw e;
@@ -1013,6 +1048,22 @@ public final class AgentHub implements AutoCloseable {
       throw new IllegalArgumentException("temperature must be between 0 and 2");
     }
     String language = text(posted, "language");
+    // The vision block, field by field: the form posts what it holds, and a field it left empty
+    // means "leave it as it is" — the same rule the key field above follows. Clearing the key and
+    // turning the feature off cannot be said with an empty string (an empty field is "unchanged"),
+    // so they are explicit flags, and `applyConfig` applies them after the merge.
+    Integer visionMaxTokens = integer(posted, "visionMaxTokens");
+    if (visionMaxTokens != null && visionMaxTokens < 1) {
+      throw new IllegalArgumentException("the vision completion budget must be at least 1 token");
+    }
+    String visionApiKey = text(posted, "visionApiKey");
+    VisionConfig vision =
+        new VisionConfig(
+            text(posted, "visionBaseUrl"),
+            visionApiKey,
+            text(posted, "visionApiKeyEnv"),
+            text(posted, "visionModel"),
+            visionMaxTokens);
     // The full shape, named by position: every field this form does not manage is an explicit null,
     // because the shorter constructors put a String in the wrong slot without saying so.
     return new Config(
@@ -1031,7 +1082,23 @@ public final class AgentHub implements AutoCloseable {
         null, // maxContextTokens
         null, // settingsFor
         java.util.Map.of(),
-        null); // vision: not managed by this form, so the block in the file stays as it was
+        vision);
+  }
+
+  /**
+   * The posted vision instructions applied to a configuration.
+   *
+   * <p>After the merge rather than inside it: "forget the key" and "turn pictures off" are not
+   * values, they are the removal of one — and a merge that is told nothing about a field keeps what
+   * is there, which is the opposite of what either of them means.
+   */
+  private static Config withVisionEdits(Config config, JsonNode posted) {
+    if (posted == null || !posted.isObject()) {
+      return config;
+    }
+    Config edited =
+        posted.path("clearVisionApiKey").asBoolean(false) ? config.withoutVisionKey() : config;
+    return posted.path("clearVision").asBoolean(false) ? edited.withoutVision() : edited;
   }
 
   private static String text(JsonNode node, String field) {

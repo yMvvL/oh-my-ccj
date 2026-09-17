@@ -45,7 +45,27 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `POST` | `/api/config/test` | send one tiny request with the posted settings **without saving** |
 
 `GET /api/config` also reports `language` and `languages` (see *Thinking language* below), and
-`POST /api/config` accepts `language` among its fields.
+`POST /api/config` accepts `language` among its fields. It reports the model that describes pictures
+too, and accepts it back:
+
+```json
+"vision": {
+  "on": true, "configured": true, "apiKeySource": "config", "apiKeyEnv": null,
+  "baseUrl": "https://api.openai.com/v1", "model": "gpt-4o-mini",
+  "maxTokens": 4096, "defaultMaxTokens": 8192
+}
+```
+
+| Posted field | Meaning |
+|---|---|
+| `visionBaseUrl`, `visionModel`, `visionApiKeyEnv`, `visionMaxTokens` | the value, or omitted for "leave as it is" — the same rule every other text field follows |
+| `visionApiKey` | the key literal; omitted, and the stored one survives |
+| `clearVisionApiKey` | forget the key, keeping the endpoint, the model and the budget |
+| `clearVision` | remove the block: describing pictures is off |
+
+`on` is what the picture button will actually do — a block with an endpoint but no model, or no key
+anywhere, is `configured` but not `on`, and the form says so rather than promising a description that
+would be refused. The key is reported as a source and never as a value, exactly like the provider's.
 
 ### Thinking language
 
@@ -414,6 +434,12 @@ provider whose list was empty could not be selected at all. The settings form ke
 behaviour, because there a pick is an edit to the form until Save.
 
 ## Settings
+
+The form manages the model that describes pictures as well — *Pictures*, below the provider fields:
+base URL, model, key, description budget, and two checkboxes for the things that are not values
+(forget the saved key, turn pictures off). Nothing there is covered by *Test connection*, which is
+about the provider: the picture button is the test, and it answers with a description or with the
+reason it could not make one.
 
 `ccj` with no arguments serves the web UI, and the UI is where a model gets configured — no JSON
 editing, no restart. `GET /api/config` returns:

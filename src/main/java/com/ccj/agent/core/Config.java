@@ -305,6 +305,39 @@ public record Config(
         systemPrompt, language, reasoning, maxContextTokens, null, remembered, vision);
   }
 
+  /**
+   * The same configuration with the vision block's key literal forgotten, and the endpoint, model and
+   * budget left where they are.
+   *
+   * <p>Separate from {@link #withoutVision} because they are different intentions: a key that was
+   * pasted into the wrong box is not a configuration to throw away, and {@code merge} cannot express
+   * either — a field it does not mention means "leave it", which is exactly what clearing a key has
+   * to override. The settings form therefore says which of the two it wants.
+   */
+  public Config withoutVisionKey() {
+    if (vision == null || vision.apiKey() == null) {
+      return this;
+    }
+    return new Config(
+        provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
+        outputLimitBytes, systemPrompt, language, reasoning, maxContextTokens, settingsFor,
+        remembered, vision.withoutApiKey());
+  }
+
+  /**
+   * The same configuration with no vision block at all, which is how the feature is turned off:
+   * absent and empty mean the same thing everywhere else, so this is the one representation of off.
+   */
+  public Config withoutVision() {
+    if (vision == null) {
+      return this;
+    }
+    return new Config(
+        provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
+        outputLimitBytes, systemPrompt, language, reasoning, maxContextTokens, settingsFor,
+        remembered, null);
+  }
+
   /** The same configuration, with its endpoint and credential fields marked as {@code provider}'s. */
   public Config scopedTo(String provider) {
     return new Config(

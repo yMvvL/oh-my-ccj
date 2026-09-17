@@ -356,6 +356,58 @@
           </div>
         </div>
 
+        <h3 class="settings-subhead" id="cfg-vision-title">Pictures</h3>
+        <p class="field-hint" id="cfg-vision-hint">
+          One picture per turn is described by this model, and the description becomes your message —
+          the main model never receives an image. Its own endpoint, key and model, because reading a
+          screenshot and writing code are different choices and a local model is right for a photo of
+          something private. Leave the endpoint or the model empty and pictures are off: the picture
+          button then refuses with what to set. Nothing here is tested by <em>Test connection</em> —
+          press the picture button to try it.
+        </p>
+
+        <div class="field">
+          <label for="cfg-vision-baseurl">Vision base URL</label>
+          <input type="text" id="cfg-vision-baseurl" spellcheck="false" placeholder="https://api.openai.com/v1">
+        </div>
+
+        <div class="field">
+          <label for="cfg-vision-model">Vision model</label>
+          <input type="text" id="cfg-vision-model" spellcheck="false" placeholder="gpt-4o-mini">
+        </div>
+
+        <div class="field">
+          <label for="cfg-vision-apikey">Vision API key</label>
+          <input type="password" id="cfg-vision-apikey" autocomplete="new-password" spellcheck="false">
+          <span class="field-hint" id="cfg-vision-apikey-hint" hidden></span>
+          <span class="field-error" id="cfg-vision-error" hidden></span>
+          <label class="field-check" id="cfg-vision-clearkey-wrap" hidden>
+            <input type="checkbox" id="cfg-vision-clearkey">
+            <span>clear the saved vision key</span>
+          </label>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="cfg-vision-maxtokens">Description budget (tokens)</label>
+            <input type="number" id="cfg-vision-maxtokens" min="1" step="1" placeholder="8192">
+            <span class="field-hint" id="cfg-vision-maxtokens-hint">
+              A ceiling, not a spend: a description costs what the model writes, whatever room it was
+              given. A reasoning model spends it <em>before</em> it writes anything, so too little
+              returns an empty answer rather than a short one — 1500 was too little for a phone
+              screenshot. Empty means the default.
+            </span>
+          </div>
+          <div class="field">
+            <label>State</label>
+            <span class="field-hint" id="cfg-vision-state"></span>
+            <label class="field-check">
+              <input type="checkbox" id="cfg-vision-off">
+              <span>turn pictures off (remove the vision block)</span>
+            </label>
+          </div>
+        </div>
+
         <p class="settings-test-result" id="settings-test-result" hidden></p>
 
         <div class="settings-actions">

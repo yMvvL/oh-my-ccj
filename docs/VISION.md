@@ -127,6 +127,12 @@ conversation path until step 4.
 | 5 | The phone: CSS at phone widths, the picker button, `capture` | The page is usable at 390×844; the button opens the library or the camera on a real phone | **done, with `capture` deliberately left off** — see *Two decisions taken differently* |
 | 6 | Docs: README row, `docs/WEBUI.md`, the security section | The limits, the storage location and what leaves the machine are written down | **done** — README feature/env/limitations rows, `WEBUI.md` *Pictures*, `SECURITY.md` both lists |
 
+One thing the steps did not ask for and the panel now has: the vision model is configurable from
+**Settings** (the *Pictures* section), not only from the config file and the flags. The design said
+the vision model is configured separately from the main provider — and it still is, in its own block
+on the form, in the file and in its own flags — but a feature that can only be turned on by editing a
+file on the machine is one that a phone cannot turn on, and the phone is the reason this exists.
+
 ### Two decisions taken differently, and why
 
 - **`capture` is not on the file input.** The step above says `accept="image/*" capture`, and it is
