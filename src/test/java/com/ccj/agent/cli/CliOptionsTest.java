@@ -53,6 +53,7 @@ class CliOptionsTest {
               "--vision-model", "vm",
               "--vision-api-key-env", "VV",
               "--vision-api-key", "vk",
+              "--vision-max-tokens", "6000",
             });
 
     assertTrue(all.subAgents(), "--subagents is a switch, and the one that was broken");
@@ -67,6 +68,7 @@ class CliOptionsTest {
     assertEquals("http://x", all.visionBaseUrl());
     assertEquals("vm", all.visionModel(), "the last one still gets its value");
     assertEquals("vk", all.visionApiKey());
+    assertEquals(6000, all.visionMaxTokens());
   }
 
   @Test
@@ -92,6 +94,17 @@ class CliOptionsTest {
     Config modelOnly = CliOptions.parse(new String[] {"--vision-model", "internvl"}).overrides();
     assertEquals("internvl", modelOnly.vision().model());
     assertNull(modelOnly.vision().baseUrl());
+
+    // The budget on its own, which is the flag somebody reaches for when a screenshot comes back
+    // empty: 1500 was not enough for a reasoning model to finish thinking and start describing.
+    Config budgeted =
+        CliOptions.parse(new String[] {"--vision-max-tokens", "16384"}).overrides();
+    assertEquals(16384, budgeted.vision().maxTokens().intValue());
+    assertNull(budgeted.vision().baseUrl(), "the flag named the budget and nothing else");
+    assertNull(budgeted.vision().model(), "the endpoint in the file underneath it is untouched");
+    assertTrue(
+        CliOptions.usage().contains("--vision-max-tokens"),
+        "a flag nobody can find is a flag nobody has");
   }
 
   @Test

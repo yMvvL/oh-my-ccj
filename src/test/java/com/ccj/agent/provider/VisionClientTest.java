@@ -2,6 +2,7 @@ package com.ccj.agent.provider;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -35,7 +36,10 @@ class VisionClientTest {
       assertEquals("Bearer sk-vision", server.header(0, "authorization"));
       JsonNode sent = Json.parse(server.body(0));
       assertEquals("vision-test", sent.get("model").asText());
-      assertEquals(1500, sent.get("max_tokens").asInt());
+      assertEquals(
+          VisionClient.DEFAULT_MAX_TOKENS,
+          sent.get("max_tokens").asInt(),
+          "the budget is a ceiling and not a spend, so the default is generous");
       JsonNode parts = sent.path("messages").get(0).path("content");
       assertTrue(
           parts.get(0).path("text").asText().contains("not from the user"),
@@ -66,21 +70,51 @@ class VisionClientTest {
   }
 
   @Test
-  void anEmptyReplyIsAFailureThatNamesTheReasoningBudget() throws Exception {
-    // HTTP 200, well-formed, and no text: the failure worth spelling out, because a caller that
-    // took it as a description would attach "the model saw your picture and said nothing" to the
-    // session.
+  void aReplyThatRanOutOfRoomWhileReasoningNamesTheSetting() throws Exception {
+    // The reported failure, reproduced: a phone screenshot of a busy page came back HTTP 200 with
+    // `finish_reason: length`, every one of the 1500-token budget spent on reasoning, `content`
+    // empty, and 6224 characters of thinking in the reply. The message has to say which setting
+    // fixes it, because "what arrived" is a wall of JSON that does not.
     String reply =
-        "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\"},"
-            + "\"finish_reason\":\"length\"}]}";
+        "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\","
+            + "\"reasoning\":\"We need answer. Need describe picture as data…\"},"
+            + "\"finish_reason\":\"length\"}],"
+            + "\"usage\":{\"completion_tokens\":1500,"
+            + "\"completion_tokens_details\":{\"reasoning_tokens\":1500}}}";
     try (FakeServer server = FakeServer.start(FakeServer.Reply.json(200, reply));
         VisionClient client = new VisionClient(server.url(), "sk-vision", "vision-test")) {
       AgentException failure =
           assertThrows(AgentException.class, () -> client.describe(png(), "image/png"));
 
-      assertTrue(failure.getMessage().contains("reasoning"), failure.getMessage());
-      assertTrue(failure.getMessage().contains("token budget"), failure.getMessage());
-      assertTrue(failure.getMessage().contains("HTTP 200"), failure.getMessage());
+      String message = failure.getMessage();
+      assertTrue(message.contains("HTTP 200"), message);
+      assertTrue(message.contains("reasoning"), message);
+      assertTrue(message.contains("1500 of them spent thinking"), message);
+      assertTrue(message.contains("maxTokens"), "it must name the setting that fixes it: " + message);
+      assertTrue(message.contains("--vision-max-tokens"), message);
+      assertTrue(message.contains("8192"), "and the budget it just used: " + message);
+    }
+  }
+
+  @Test
+  void aReplyThatFinishedWithNothingInContentIsNotBlamedOnTheBudget() throws Exception {
+    // The other shape: it stopped on its own terms with the answer inside its reasoning. Raising the
+    // budget would change nothing here, and a message that said to raise it would send the reader to
+    // the wrong place — the fix is another model or endpoint.
+    String reply =
+        "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\","
+            + "\"reasoning\":\"the picture shows a red square\"},"
+            + "\"finish_reason\":\"stop\"}],"
+            + "\"usage\":{\"completion_tokens\":12}}";
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.json(200, reply));
+        VisionClient client = new VisionClient(server.url(), "sk-vision", "vision-test")) {
+      AgentException failure =
+          assertThrows(AgentException.class, () -> client.describe(png(), "image/png"));
+
+      String message = failure.getMessage();
+      assertTrue(message.contains("not the budget"), message);
+      assertTrue(message.contains("another endpoint or model"), message);
+      assertFalse(message.contains("maxTokens"), "the budget is not the problem here: " + message);
     }
   }
 
@@ -94,6 +128,28 @@ class VisionClientTest {
           assertThrows(AgentException.class, () -> client.describe(png(), "image/png"));
 
       assertTrue(failure.getMessage().contains("gateway splash"), failure.getMessage());
+    }
+  }
+
+  @Test
+  void aConfiguredBudgetIsWhatTheEndpointIsAsked() throws Exception {
+    // 1500 was this repository's first answer and it is too small for a real screenshot: the model
+    // spent all of it thinking. The number is the configured one, not a constant.
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.json(200, DESCRIPTION));
+        VisionClient client = new VisionClient(server.url(), "sk-vision", "vision-test", 4096)) {
+      assertEquals("a red square", client.describe(png(), "image/png"));
+      assertEquals(4096, Json.parse(server.body(0)).get("max_tokens").asInt());
+    }
+  }
+
+  @Test
+  void theConfiguredBudgetTravelsFromTheVisionBlock() throws Exception {
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.json(200, DESCRIPTION));
+        VisionClient client =
+            VisionClient.from(
+                new VisionConfig(server.url(), "sk-vision", null, "vision-test", 16384), Map.of())) {
+      client.describe(png(), "image/png");
+      assertEquals(16384, Json.parse(server.body(0)).get("max_tokens").asInt());
     }
   }
 

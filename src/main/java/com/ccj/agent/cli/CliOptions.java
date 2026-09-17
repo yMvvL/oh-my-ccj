@@ -23,6 +23,7 @@ public record CliOptions(
     String visionApiKey,
     String visionApiKeyEnv,
     String visionModel,
+    Integer visionMaxTokens,
     Double temperature,
     Integer maxTokens,
     Integer maxContextTokens,
@@ -89,7 +90,7 @@ public record CliOptions(
    */
   public VisionConfig vision() {
     VisionConfig vision =
-        new VisionConfig(visionBaseUrl, visionApiKey, visionApiKeyEnv, visionModel);
+        new VisionConfig(visionBaseUrl, visionApiKey, visionApiKeyEnv, visionModel, visionMaxTokens);
     return vision.isEmpty() ? null : vision;
   }
 
@@ -104,6 +105,7 @@ public record CliOptions(
     String visionApiKey = null;
     String visionApiKeyEnv = null;
     String visionModel = null;
+    Integer visionMaxTokens = null;
     Double temperature = null;
     Integer maxTokens = null;
     Integer maxContextTokens = null;
@@ -245,6 +247,10 @@ public record CliOptions(
           visionApiKeyEnv = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
+        case "--vision-max-tokens" -> {
+          visionMaxTokens = integer(name, take(args, i, name, inline));
+          i += inline == null ? 2 : 1;
+        }
         case "--max-tokens" -> {
           maxTokens = integer(name, take(args, i, name, inline));
           i += inline == null ? 2 : 1;
@@ -308,6 +314,7 @@ public record CliOptions(
         visionApiKey,
         visionApiKeyEnv,
         visionModel,
+        visionMaxTokens,
         temperature,
         maxTokens,
         maxContextTokens,
@@ -372,6 +379,9 @@ public record CliOptions(
               --vision-model <name>      model identifier on that endpoint
               --vision-api-key <key>     API key literal for it
               --vision-api-key-env <var> environment variable holding that key
+              --vision-max-tokens <n>    room one description may take (default 8192). A reasoning
+                                   model spends this before it writes anything, so too little
+                                   returns an empty answer rather than a short one
                                    With none of these set, describing pictures is off. The main
                                    provider is not reused: reading a screenshot and writing code
                                    are different choices, and a local model is right for a private

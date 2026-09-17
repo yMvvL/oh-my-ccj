@@ -163,8 +163,18 @@ a turn that cannot happen.
   on disk under `<id>.attachments/`, and the refusals (not a picture, over the limit, busy
   conversation, no vision model) each with the vision endpoint provably not called.
 - The measurements the design quotes — a 2.1 MB PNG producing a 2.9 MB request body, `max_tokens` at
-  100 returning empty while 1500 works, `image_tokens` reading `0` on a call that plainly saw the
-  image — come from the session that wrote this document, against the relay already configured.
+  100 returning empty, `image_tokens` reading `0` on a call that plainly saw the image — come from the
+  session that wrote this document, against the relay already configured.
+- **The budget needed a second measurement, and this document's first number was wrong.** 1500 was
+  enough for the picture the design was written against and not enough for a phone screenshot of a
+  busy page, which is the case the whole feature exists for. Measured against the same relay with a
+  phone-shaped screenshot (390×844, long article): at 1500 → `finish_reason: length`, 1500 of 1500
+  tokens on reasoning, `content` empty; at 4096 → `stop`, 2882 tokens used, a 2225-character
+  description; at 8192 → `stop`, 1084 tokens, 2419 characters. The default is now 8192, and the
+  failure is diagnosed from the reply itself (`finish_reason`, reasoning tokens) so the message says
+  which setting fixes it rather than printing a wall of JSON. A ceiling is not a spend, so a generous
+  default is nearly free; `vision.maxTokens`, `--vision-max-tokens` and `CCJ_VISION_MAX_TOKENS` are
+  there for the endpoints where it is not enough, or too much.
 - **Not verified here:** the picker's behaviour on a real phone (no phone was involved; the `capture`
   decision above is reasoning from platform behaviour, not a measurement), and a real vision endpoint
   rather than a stub — the suite is offline by convention, so no API key is used by any test.

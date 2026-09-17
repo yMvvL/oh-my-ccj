@@ -197,7 +197,8 @@ public record Config(
         pick(lower.baseUrl(), higher.baseUrl()),
         pick(lower.apiKey(), higher.apiKey()),
         pick(lower.apiKeyEnv(), higher.apiKeyEnv()),
-        pick(lower.model(), higher.model()));
+        pick(lower.model(), higher.model()),
+        pick(lower.maxTokens(), higher.maxTokens()));
   }
 
   /**
@@ -621,9 +622,9 @@ public record Config(
   }
 
   /**
-   * The {@code vision} block: the endpoint, credential and model of the model that describes
-   * pictures. Absent, null or empty all mean the feature is off, and a block that is not an object is
-   * a typo worth reporting rather than a setting to ignore silently.
+   * The {@code vision} block: the endpoint, credential, model and reply ceiling of the model that
+   * describes pictures. Absent, null or empty all mean the feature is off, and a block that is not an
+   * object is a typo worth reporting rather than a setting to ignore silently.
    */
   private static VisionConfig readVision(JsonNode root) {
     JsonNode node = root.get("vision");
@@ -635,7 +636,11 @@ public record Config(
     }
     VisionConfig vision =
         new VisionConfig(
-            text(node, "baseUrl"), text(node, "apiKey"), text(node, "apiKeyEnv"), text(node, "model"));
+            text(node, "baseUrl"),
+            text(node, "apiKey"),
+            text(node, "apiKeyEnv"),
+            text(node, "model"),
+            integer(node, "maxTokens"));
     return vision.isEmpty() ? null : vision;
   }
 
@@ -698,7 +703,8 @@ public record Config(
             env.get("CCJ_VISION_BASE_URL"),
             env.get("CCJ_VISION_API_KEY"),
             env.get("CCJ_VISION_API_KEY_ENV"),
-            env.get("CCJ_VISION_MODEL"));
+            env.get("CCJ_VISION_MODEL"),
+            parseInteger(env.get("CCJ_VISION_MAX_TOKENS")));
     return vision.isEmpty() ? null : vision;
   }
 
@@ -819,6 +825,7 @@ public record Config(
     putText(block, "apiKey", vision.apiKey());
     putText(block, "apiKeyEnv", vision.apiKeyEnv());
     putText(block, "model", vision.model());
+    putNumber(block, "maxTokens", vision.maxTokens());
   }
 
   private static String chosenBaseUrl(Config config) {

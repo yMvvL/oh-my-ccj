@@ -587,7 +587,8 @@ class ConfigTest {
         file,
         """
         {"provider":"openai",
-         "vision":{"baseUrl":"http://127.0.0.1:8080/v1","apiKey":"sk-vision","model":"llava"}}
+         "vision":{"baseUrl":"http://127.0.0.1:8080/v1","apiKey":"sk-vision","model":"llava",
+                   "maxTokens":4096}}
         """);
 
     Config read = Config.fromFile(file);
@@ -596,8 +597,13 @@ class ConfigTest {
     assertEquals("llava", read.vision().model());
     assertTrue(read.vision().isConfigured());
 
+    assertEquals(4096, read.vision().maxTokens().intValue(), "the budget is part of the block");
     Config.writeInto(file, read);
     assertEquals("llava", Config.fromFile(file).vision().model(), "a save keeps the block it was given");
+    assertEquals(
+        4096,
+        Config.fromFile(file).vision().maxTokens().intValue(),
+        "and the budget with it: 1500 came back empty on a real screenshot");
 
     // No block, and a block that names nothing, both mean one thing: the feature is off.
     Path none = tmp.resolve("none.json");
@@ -625,6 +631,10 @@ class ConfigTest {
     assertEquals("http://127.0.0.1:9000/v1", env.vision().baseUrl());
     assertEquals("llava", env.vision().model());
     assertEquals("k-1234", env.vision().resolvedApiKey(Map.of("MY_VISION_KEY", "k-1234")));
+    assertNull(env.vision().maxTokens(), "absent means the default the client applies");
+    assertEquals(
+        6000,
+        Config.fromEnv(Map.of("CCJ_VISION_MAX_TOKENS", "6000")).vision().maxTokens().intValue());
     assertNull(env.vision().resolvedApiKey(Map.of()), "an unset variable is no key");
     assertNull(Config.fromEnv(Map.of()).vision(), "no variables, no vision");
   }
@@ -645,6 +655,13 @@ class ConfigTest {
     assertEquals("internvl", layered.vision().model());
     assertEquals("http://127.0.0.1:8080/v1", layered.vision().baseUrl());
     assertEquals("sk-vision", layered.vision().apiKey());
+
+    // And a layer that names only the budget leaves the rest alone too.
+    Config budgeted =
+        Config.layered(file, Map.of("CCJ_VISION_MAX_TOKENS", "16384", "CCJ_VISION_MODEL", "internvl"), null);
+    assertEquals(16384, budgeted.vision().maxTokens().intValue());
+    assertEquals("http://127.0.0.1:8080/v1", budgeted.vision().baseUrl());
+    assertEquals("sk-vision", budgeted.vision().apiKey());
   }
 
   private static Config reasoning(String level) {

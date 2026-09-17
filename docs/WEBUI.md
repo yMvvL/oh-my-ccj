@@ -295,6 +295,15 @@ Three things about that text are deliberate:
 | `400` | the bytes are not PNG, JPEG, WebP or GIF (the type is read from the magic number, never the name or the `Content-Type`) | what the first bytes actually were |
 | `413` | the body is over 8 MB, refused on its declared length and bounded again while reading | the limit and the declared size |
 | `409` | the conversation on screen already has a turn running, or no vision model is configured | what to abort, or which block/flag to set |
+| `500` | the vision endpoint failed, or answered with no description | the endpoint, the status, and — when the reply stopped on `length` — that the budget ran out while the model was still reasoning, with the setting that raises it |
+
+That last refusal is the one worth reading. A reasoning model spends the completion budget *before* it
+writes anything, so a budget that is too small does not shorten a description, it deletes it: a busy
+phone screenshot at `maxTokens: 1500` came back HTTP 200 with `finish_reason: length`, all 1500 tokens
+spent thinking, 6224 characters of reasoning and an empty `content`. The default is 8192, which costs
+nothing extra because a ceiling is not a spend, and `vision.maxTokens` / `--vision-max-tokens` /
+`CCJ_VISION_MAX_TOKENS` raises or lowers it per endpoint — lower for a model that refuses a budget it
+thinks is too large.
 
 The picture is stored under `<sessions>/<session-id>.attachments/`, beside the session and never in the
 project — a photo of a receipt is not project content, and a file that shows up in `git status` because
