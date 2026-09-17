@@ -57,6 +57,95 @@ Rules that keep it that way:
 - **No magic numbers without a name.** `CANCEL_POLL_MILLIS = 150` with a sentence about why 150 is
   enough, not `Thread.sleep(150)`.
 
+### Names
+
+The name is the documentation that cannot go stale, so it carries the meaning and the comment does not
+have to. One pattern per kind of thing, and it is the pattern the rest of the tree already uses:
+
+| Kind | Shape | Examples |
+|---|---|---|
+| Class, record, enum | `PascalCase`, a noun — what the thing *is*, never `Manager`/`Helper`/`Util` | `ContextBudget`, `AttachmentStore`, `VisionConfig`, `SubAgentRole` |
+| Method | `camelCase`, a verb phrase — what it *does*, no `get`/`set` prefix | `resolved()`, `forgetProviderSettings()`, `describePicture()`, `readBounded()` |
+| Boolean-returning method / boolean field | `is`/`has`/`can` + the property, phrased as the question it answers | `isConfigured()`, `hasKey()`, `settingsBelongTo(provider)`, `isEmpty()` |
+| Constant | `SCREAMING_SNAKE_CASE` with the unit or the bound in the name | `DEFAULT_MAX_TOKENS`, `MAX_REPLY_BYTES`, `HEARTBEAT_MILLIS` |
+| Field | the noun it holds, no prefix, no `m_` | `vision`, `remembered`, `maxTokens` |
+| Local, parameter | the name a reader would say out loud; short only where the scope is one screen | `provider`, `budget`, `settings` — `i`, `e`, `p` inside a loop or a `catch` |
+| Test | the claim, as a sentence in the present tense, so a failure reads as the bug | `aPictureOverTheLimitIsRefusedWithoutBeingHeld` |
+| JSON key on the wire | `camelCase`, and the same word on both sides | `visionMaxTokens`, `apiKeySource`, `sessionId` |
+| DOM id, CSS class | `kebab-case` for ids, `kebab-case` for classes; a `cfg-` prefix for anything inside the settings form | `cfg-vision-maxtokens`, `photo-hint`, `ev-user` |
+
+Three rules that come out of the table, because they are the ones that get broken:
+
+- **A name that lies is worse than a long name.** `normalizeLanguage` returning null for "auto" is a
+  method that does more than the name says; `withoutVisionKey` says exactly what it did.
+- **The same thing keeps the same word everywhere** — code, javadoc, HTTP field, config key, docs. A
+  second word for one concept is how the docs and the code drift apart.
+- **Do not name a thing after its implementation.** `remembered` is what the map means to the reader;
+  a `hashMapOfKeys` would name today's data structure.
+
+### Comments
+
+- **A comment earns its place by explaining a *why* the code cannot show**: a choice made against the
+  obvious alternative, a failure that was measured, a boundary that is load-bearing, a word about what
+  a caller must not do. Everything else is noise, and noise is what hides the comments that matter.
+- **Restating the signature is forbidden.** `/** Reads the file. */` on `readFile` adds nothing; the
+  paragraph about *bounded* reading — that the limit only limits if it applies to the read — is the
+  part a future reader needs.
+- **Measured means measured.** Give the number and what produced it: "measured: 1500 of 1500 tokens on
+  reasoning, `content` empty", not "may be too small".
+- **Comments go with the code they describe**, in the same change, including when the code is removed.
+  A paragraph describing a guard that no longer exists is trusted by the next reader, which is worse
+  than no paragraph.
+- **No commented-out code, no `TODO` without a home.** Something not being done now is a
+  [ROADMAP](ROADMAP.md) item with an acceptance line, not a comment that will outlive its context.
+- **Section banners are for the browser files only.** `app.js` is one 5k-line classic script whose
+  cases lift functions out of the shipped source by name, so `/* ---- transcript */` markers are part
+  of the test harness. Java files get package, class and method javadoc instead.
+
+### Errors
+
+- **The message says what to do next.** `EditTool`: "`old_string` matched three times; pass a longer
+  snippet or `replace_all`". `VisionClient`: "the model ran out of room while still reasoning (1500
+  tokens, 1500 of them spent thinking) … Raise it with `maxTokens` …". The reader is a person pressing
+  a button, or a model with one more attempt in it.
+- **Name the thing that failed, with its identity**: the file and line, the endpoint and status, the
+  provider and model, the variable or flag that sets it. "invalid input" is a bug report about the
+  error message.
+- **Never swallow a failure to keep a path simple.** A refusal that a caller cannot see, or a
+  placeholder that looks like a success, is worse than a stopped turn: the empty vision reply is
+  exactly this, and it is why `describe` throws instead of returning "".
+- **Throw the type the caller maps to a status.** `IllegalArgumentException` → 400,
+  `IllegalStateException` → 409, `PayloadTooLargeException` → 413, anything else → 500. An endpoint that
+  wants a different answer returns it itself.
+
+### The front end
+
+- **One classic script, no build step, no framework.** `app.js` is served as written, so it must parse
+  in a browser without a bundler and use no modules.
+- **The page reads the server's vocabulary, not its own.** Provider names, reasoning levels and
+  languages come from the API; a list invented in the page is a list of choices nothing acts on.
+- **Model output is rendered as text** — DOM nodes, never HTML source — and a link only gets an `href`
+  after its scheme is filtered.
+- **A control that hides its label keeps an accessible name.** Below 720px the composer's buttons drop
+  their words and keep their glyphs, so each of them carries an `aria-label`; the visible text is not
+  the only name a screen reader can read.
+- **Empty means "leave it as it is"** for every text field in the settings form, so anything that is a
+  *removal* — clearing a key, turning a feature off — is sent as a flag of its own rather than as an
+  empty string.
+
+### Spelling and voice
+
+- **British English**, in prose, comments, identifiers and messages: `normalise`, `summarise`,
+  `serialise`, `behaviour`, `colour`. The codebase is written that way and a second spelling of one word
+  is drift with no benefit.
+- **Except where a platform owns the spelling**: CSS properties (`color`, `text-align: center`),
+  browser APIs (`overscroll-behavior`, `behavior: 'smooth'`), JDK/Maven/vendor names (`Path.normalize`,
+  `maven-shade-plugin`, a vendor's JSON field). Those are quoted, not translated.
+- **Voice: terse, concrete, second person in docs, no marketing.** Say what was measured and what was
+  not. A bare number ("542 tests pass") is true only until somebody adds one, which makes it a claim
+  about a run nobody can reproduce; a number that names its run and its conditions — which command,
+  on which platform, and whether the browser cases ran or skipped — stays a fact.
+
 ## Security
 
 The product runs commands as the user. Everything here is load-bearing.
@@ -112,6 +201,19 @@ The product runs commands as the user. Everything here is load-bearing.
   reproduce it. When something was not verified on the machine doing the work, the change says so.
 - **`Limitations` is not an apology section.** Every entry is a trade the reader needs in order to
   decide whether to trust the tool, written as the trade it is.
+
+## How a rule here is checked
+
+A rule nobody can check is a preference. Where a rule can be made mechanical it is, and the mechanism
+is named next to it:
+
+| Rule | Checked by |
+|---|---|
+| Names, comments, spelling | `mvn test`: `core/ConventionsTest` scans `src/main/java` for the American spellings this house does not use and fails with the file and the line |
+| The page never builds HTML from a string | `WebMarkdownTest`, over the shipped `app.js` between its banners |
+| The browser cases run the shipped source | `src/test/js/*.test.mjs`, run by `Web*Test` through node, reported as *skipped* when node is absent |
+| Approval is the only guard | `SECURITY.md` says it, and the tests that remove a guard fail when the guard goes |
+| Docs agree with the code | Review, and the entries in [CHANGELOG.md](CHANGELOG.md) and [ROADMAP.md](ROADMAP.md) that name the version — a README row that no longer matches is a bug |
 
 ## Making a change
 

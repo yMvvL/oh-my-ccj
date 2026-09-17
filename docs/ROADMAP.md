@@ -117,6 +117,31 @@ weakening the approval story. Anything that would need a sandbox to be safe does
   not a bash script. Today WSL is the documented answer, which is honest but limits the audience.
   *Acceptance:* a turn runs on Windows without WSL, with the shell named in the config.
 
+## Phase 2.5 — The loop around the loop
+
+**Why here.** Phase 2 answers "what can it do"; this answers "why is using it worse than it should
+be". Every item below came out of using the tool and finding the friction, and they are ordered by
+what a person feels first, not by what is most interesting to build.
+
+| # | What | Why it is first | Status |
+|---|---|---|---|
+| 2.5.1 | **A check runs itself after an edit.** A command declared in the config (`checks`: a command, an optional file pattern) runs after a successful `edit`/`write` that matched it, and a bounded tail of its output is appended to the tool result — so the model is told what it broke without having to decide to go and look | The single largest difference from an IDE-backed agent: a compiler error arrives in the same step as the edit instead of three turns later, and a weak model converges in one pass instead of four | `doing` |
+| 2.5.2 | **Permission rules, not one boolean.** `approvals.json` with allow rules (tool name, command prefix, path glob), plus "allow this one for the session" on the prompt. The prompt's only current answers are "yes, this once" and "yes, everything, all session" | This is the root of the felt friction: the choice today is being interrupted or turning the guard off, and people turn the guard off | `todo` |
+| 2.5.3 | **Messages queue instead of 409.** Typing while a turn runs queues the next message, with the composer saying so | A 409 turns a thinking pause into a dead stop, and "it feels slow" is partly this rather than token speed | `todo` |
+| 2.5.4 | **`edit` takes several hunks, and retries once with the error.** One approval, one write, and a failed match comes back with the file's neighbourhood attached | The exact-match single hunk is the tool a model fails most often, and every failure is a whole round trip | `todo` |
+| 2.5.5 | **A networking tool.** `fetch` (URL → text, size- and scheme-checked) so "what changed in this library" is answerable | Without it the model guesses at APIs, which is when answers get confidently wrong | `todo` |
+| 2.5.6 | **An MCP client** — see 2.1, which this depends on being honest about: remote tools enter through `ToolRegistry` and the same approver | The ecosystem gap; it is 2.5.6 rather than 2.1 because the four items above change the daily experience more | `todo` |
+| 2.5.7 | **Prompt caching and automatic compaction.** Anthropic's `cache_control` breakpoint on the stable prefix; compact when the projection crosses a threshold rather than only when asked | Long sessions get slower and more expensive than they need to be, and the user is the one who has to notice | `todo` |
+| 2.5.8 | **Checkpoints.** A per-turn snapshot of the files a turn touched, and a way back to it | Trust is what lets somebody leave auto-approve off *and* let the agent work | `todo` |
+
+**2.5.1 needs a decision, and it is recorded here rather than discovered later.** A check command is a
+command, and [CONVENTIONS](CONVENTIONS.md) says approval is the only guard for anything that executes.
+The command is one the user wrote into their own config file, which is the same act as writing it in
+`CCJ.md` or typing it — so it runs without a prompt, and that is a deliberate widening of the approval
+model, written down in [SECURITY.md](../SECURITY.md) as one. What it may not do is become a general
+escape: the hook runs the configured command, with the session's working directory, and nothing else.
+When 2.5.2 lands, the check becomes an ordinary allow rule and this exemption goes away.
+
 ## Phase 3 — Distribution
 
 - **3.1 Releases** — `todo`. Versioned tags, notes that say what changed and what it cost, and a

@@ -10,12 +10,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Serializes {@link Message} to and from the JSON shape stored in a session file.
+ * Serialises {@link Message} to and from the JSON shape stored in a session file.
  *
  * <p>The format is one flat object per message with a {@code type} discriminator, so a session log
  * stays readable with ordinary JSON tooling and stays throwable away by any reader that does not
  * know a new message kind. Tool call arguments are kept verbatim as a raw string: the core never
- * parses them, and re-serializing the model's bytes would change what the next request sends.
+ * parses them, and re-serialising the model's bytes would change what the next request sends.
  *
  * <p>Decoding is deliberately strict. A session file is history the loop will feed back to a
  * provider, so a silent coercion (missing text becoming {@code ""}, an object accepted where a

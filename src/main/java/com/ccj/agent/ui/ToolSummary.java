@@ -16,11 +16,11 @@ public final class ToolSummary {
 
   private ToolSummary() {}
 
-  public static String summarize(Message.ToolCall call) {
-    return summarize(call, WIDTH);
+  public static String summarise(Message.ToolCall call) {
+    return summarise(call, WIDTH);
   }
 
-  public static String summarize(Message.ToolCall call, int width) {
+  public static String summarise(Message.ToolCall call, int width) {
     String raw = call.arguments();
     if (raw == null || raw.isBlank()) {
       return "";

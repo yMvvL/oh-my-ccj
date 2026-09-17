@@ -472,7 +472,7 @@ public final class AgentHub implements AutoCloseable {
                     .put("id", call.id())
                     .put("name", call.name())
                     .put("state", "start")
-                    .put("summary", ToolSummary.summarize(call)));
+                    .put("summary", ToolSummary.summarise(call)));
           }
         }
         case Message.ToolResult result ->
@@ -2140,7 +2140,7 @@ public final class AgentHub implements AutoCloseable {
           .put("id", call.id())
           .put("name", call.name())
           .put("state", state)
-          .put("summary", ToolSummary.summarize(call));
+          .put("summary", ToolSummary.summarise(call));
     }
   }
 

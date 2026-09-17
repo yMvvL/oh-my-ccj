@@ -21,7 +21,7 @@ public final class ConsoleRenderer implements AgentListener {
 
   private final PrintStream out;
   private final PrintStream err;
-  private final boolean color;
+  private final boolean colour;
   private final Spinner spinner;
 
   private final Set<String> rendered = new LinkedHashSet<>();
@@ -37,10 +37,10 @@ public final class ConsoleRenderer implements AgentListener {
     this(System.out, System.err, Ansi.enabled());
   }
 
-  public ConsoleRenderer(PrintStream out, PrintStream err, boolean color) {
+  public ConsoleRenderer(PrintStream out, PrintStream err, boolean colour) {
     this.out = out;
     this.err = err;
-    this.color = color;
+    this.colour = colour;
     this.spinner = new Spinner();
   }
 
@@ -74,7 +74,7 @@ public final class ConsoleRenderer implements AgentListener {
       ensureNewline();
       reasoningStarted = true;
     }
-    out.print(Ansi.style("2", delta, color));
+    out.print(Ansi.style("2", delta, colour));
     out.flush();
     lineOpen = !delta.endsWith("\n");
   }
@@ -123,7 +123,7 @@ public final class ConsoleRenderer implements AgentListener {
     // would read as a measurement.
     String timing = elapsedMillis < 0 ? "(not run)" : "(" + elapsedMillis + " ms)";
     String line = (failed ? "✖ " : "✔ ") + call.name() + " " + timing;
-    out.println(Ansi.style(failed ? "31" : "32", line, color));
+    out.println(Ansi.style(failed ? "31" : "32", line, colour));
     printResultBody(result.content());
     out.flush();
   }
@@ -134,7 +134,7 @@ public final class ConsoleRenderer implements AgentListener {
       return;
     }
     ensureNewline();
-    out.println(Ansi.style("2", "· " + text, color));
+    out.println(Ansi.style("2", "· " + text, colour));
     out.flush();
   }
 
@@ -187,11 +187,11 @@ public final class ConsoleRenderer implements AgentListener {
   private void printToolCard(Message.ToolCall call) {
     ensureNewline();
     StringBuilder line = new StringBuilder();
-    line.append(Ansi.style("33", "⚙", color)).append(' ');
-    line.append(Ansi.style("1", call.name(), color));
-    String summary = ToolSummary.summarize(call);
+    line.append(Ansi.style("33", "⚙", colour)).append(' ');
+    line.append(Ansi.style("1", call.name(), colour));
+    String summary = ToolSummary.summarise(call);
     if (!summary.isEmpty()) {
-      line.append(' ').append(Ansi.style("2", summary, color));
+      line.append(' ').append(Ansi.style("2", summary, colour));
     }
     out.println(line.toString());
     out.flush();
@@ -204,11 +204,11 @@ public final class ConsoleRenderer implements AgentListener {
     String[] lines = content.stripTrailing().split("\n", -1);
     int shown = Math.min(RESULT_LINES, lines.length);
     for (int i = 0; i < shown; i++) {
-      out.println(Ansi.style("2", "    " + lines[i], color));
+      out.println(Ansi.style("2", "    " + lines[i], colour));
     }
     int remaining = lines.length - shown;
     if (remaining > 0) {
-      out.println(Ansi.style("2", "    … (" + remaining + " more lines)", color));
+      out.println(Ansi.style("2", "    … (" + remaining + " more lines)", colour));
     }
   }
 
@@ -245,7 +245,7 @@ public final class ConsoleRenderer implements AgentListener {
           Thread.currentThread().interrupt();
         }
       }
-      err.print(color ? "\r\u001b[2K" : "\r        \r");
+      err.print(colour ? "\r\u001b[2K" : "\r        \r");
       err.flush();
     }
 

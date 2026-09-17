@@ -5,7 +5,7 @@ import java.util.List;
 /**
  * Provider-agnostic conversation message.
  *
- * <p>Tool call arguments stay raw JSON text: the core never interprets them, providers serialize
+ * <p>Tool call arguments stay raw JSON text: the core never interprets them, providers serialise
  * them onto the wire and tools parse them when invoked. That keeps the model of the conversation
  * independent from any particular vendor API.
  */

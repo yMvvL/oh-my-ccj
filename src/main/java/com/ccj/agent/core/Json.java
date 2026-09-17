@@ -41,7 +41,7 @@ public final class Json {
     try {
       return MAPPER.writeValueAsString(node);
     } catch (JsonProcessingException e) {
-      throw new IllegalStateException("failed to serialize JSON", e);
+      throw new IllegalStateException("failed to serialise JSON", e);
     }
   }
 
@@ -49,7 +49,7 @@ public final class Json {
     try {
       return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
     } catch (JsonProcessingException e) {
-      throw new IllegalStateException("failed to serialize JSON", e);
+      throw new IllegalStateException("failed to serialise JSON", e);
     }
   }
 }
