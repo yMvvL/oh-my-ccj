@@ -37,6 +37,22 @@ Also: `edit` and `write` re-read before they write and refuse a file that change
 waited, both write through a temp file and an atomic rename, the SSE keep-alive is a real event the
 page can hear, and an error body is read bounded rather than truncated after the fact.
 
+**A check runs itself after an edit, and the conventions became a document.** `checks` in the config
+file names commands that run inside the `edit`/`write` call that matches their glob, so the compiler's
+verdict arrives with the change rather than three turns later — see the README row and
+[SECURITY.md](../SECURITY.md) for the one place this deliberately runs something without asking. The
+process plumbing `bash` already had (closed stdin, bounded capture, deadline, process-tree kill) moved
+to `tool/ProcessRunner` so both callers share it, with `BashTool`'s eleven tests as the net. Two things
+came out of trying it on this repository rather than from writing it: a check's glob decides *when* it
+runs and not what the command looks at, so `mvn compile` reported `exit 0` for a broken file at the
+root it never compiled — the passing line now says `exit 0` instead of "clean", because "clean" is a
+claim the command did not make — and a pattern written `**/*.java` has to match a file at the project
+root, which `PathMatcher` alone does not do. Alongside:
+[docs/CONVENTIONS.md](CONVENTIONS.md) gained the naming table, the comment rules, error shape, the
+front end's own rules and spelling; [ROADMAP](ROADMAP.md) gained Phase 2.5, the experience work, with
+2.5.1 done; and the spelling pass that came out of writing the rules down is enforced by
+`core/ConventionsTest`.
+
 ## 2026-09-14 — the second front end gets serious
 
 **`/compact`.** The older turns are replaced by a summary the model writes, as the next *generation*

@@ -4,6 +4,7 @@ import com.ccj.agent.core.AgentLoop;
 import com.ccj.agent.core.AgentOptions;
 import com.ccj.agent.core.AppPaths;
 import com.ccj.agent.core.Approver;
+import com.ccj.agent.core.Checks;
 import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Message;
@@ -158,17 +159,6 @@ public final class Cli {
       return 0;
     }
 
-    ToolRegistry tools;
-    try {
-      tools = Tools.standard();
-    } catch (RuntimeException e) {
-      return fail(err, e);
-    }
-    if (options.tools()) {
-      printTools(tools, out);
-      return 0;
-    }
-
     Config config;
     Path configFile;
     try {
@@ -181,6 +171,21 @@ public final class Cli {
       }
     } catch (RuntimeException e) {
       return fail(err, e);
+    }
+
+    ToolRegistry tools;
+    try {
+      // The config file is read before the tools are built, because the editing tools carry the
+      // post-edit checks this file declares. Checks.from() holds the path, not the parsed list: a
+      // check added while the session runs takes effect on the next edit rather than on the next
+      // restart.
+      tools = Tools.standard(Checks.from(configFile));
+    } catch (RuntimeException e) {
+      return fail(err, e);
+    }
+    if (options.tools()) {
+      printTools(tools, out);
+      return 0;
     }
 
     // No flag, no prompt: the web UI is the default front end, and --repl is the terminal one.

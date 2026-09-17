@@ -125,7 +125,7 @@ what a person feels first, not by what is most interesting to build.
 
 | # | What | Why it is first | Status |
 |---|---|---|---|
-| 2.5.1 | **A check runs itself after an edit.** A command declared in the config (`checks`: a command, an optional file pattern) runs after a successful `edit`/`write` that matched it, and a bounded tail of its output is appended to the tool result — so the model is told what it broke without having to decide to go and look | The single largest difference from an IDE-backed agent: a compiler error arrives in the same step as the edit instead of three turns later, and a weak model converges in one pass instead of four | `doing` |
+| 2.5.1 | **A check runs itself after an edit.** `{"checks": [{"glob": "**/*.java", "command": "mvn -q -o -DskipTests compile"}]}` in the config file: the first check whose glob matches the edited path runs inside the `edit`/`write` call, and its verdict — one line when it passes, a bounded excerpt when it fails — is appended to the tool result | Same reason as above | `done` |
 | 2.5.2 | **Permission rules, not one boolean.** `approvals.json` with allow rules (tool name, command prefix, path glob), plus "allow this one for the session" on the prompt. The prompt's only current answers are "yes, this once" and "yes, everything, all session" | This is the root of the felt friction: the choice today is being interrupted or turning the guard off, and people turn the guard off | `todo` |
 | 2.5.3 | **Messages queue instead of 409.** Typing while a turn runs queues the next message, with the composer saying so | A 409 turns a thinking pause into a dead stop, and "it feels slow" is partly this rather than token speed | `todo` |
 | 2.5.4 | **`edit` takes several hunks, and retries once with the error.** One approval, one write, and a failed match comes back with the file's neighbourhood attached | The exact-match single hunk is the tool a model fails most often, and every failure is a whole round trip | `todo` |
@@ -134,7 +134,20 @@ what a person feels first, not by what is most interesting to build.
 | 2.5.7 | **Prompt caching and automatic compaction.** Anthropic's `cache_control` breakpoint on the stable prefix; compact when the projection crosses a threshold rather than only when asked | Long sessions get slower and more expensive than they need to be, and the user is the one who has to notice | `todo` |
 | 2.5.8 | **Checkpoints.** A per-turn snapshot of the files a turn touched, and a way back to it | Trust is what lets somebody leave auto-approve off *and* let the agent work | `todo` |
 
-**2.5.1 needs a decision, and it is recorded here rather than discovered later.** A check command is a
+**2.5.1 as built**, in `core/Checks` + `tool/PostEditCheck`, sharing the process plumbing with `bash`
+through `tool/ProcessRunner` (extracted from `BashTool`, which is why its eleven tests were the
+regression net for that refactor). Bounded four ways so it can run on every edit: one check per edit,
+a 4 KiB report, a per-check timeout that kills the process tree, and nothing at all after a failed
+edit or an aborted turn. A third thing came from running it against this repository rather than from
+writing it: the glob decides when the check runs, not what the command looks at, so `mvn compile`
+reported success about a file at the project root it never compiled. The passing line is `exit 0`
+rather than "clean" for that reason, and the caveat is in `Checks`' javadoc, the README and
+SECURITY.md. Two things the tests pinned that would otherwise have been bugs: a check
+never runs for a file outside the session's working directory, and a pattern beginning `**/` matches
+at the project root as well as inside it — `PathMatcher` alone does not do that, and a check that
+silently never fires looks exactly like a check with nothing to report.
+
+**The decision that came with it, recorded rather than discovered later.** A check command is a
 command, and [CONVENTIONS](CONVENTIONS.md) says approval is the only guard for anything that executes.
 The command is one the user wrote into their own config file, which is the same act as writing it in
 `CCJ.md` or typing it — so it runs without a prompt, and that is a deliberate widening of the approval

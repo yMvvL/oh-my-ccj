@@ -272,6 +272,68 @@ class CliEndToEndTest {
   }
 
   @Test
+  void aCheckDeclaredInTheConfigFileRunsAfterAnEditAndItsVerdictReachesTheModel() throws IOException {
+    // The whole feature, end to end and offline: the CLI reads the config file, builds the tools
+    // with the checks it declares, the model's edit triggers one, and the verdict is in the next
+    // request — in the same step as the change, which is the entire point of having it.
+    Files.writeString(workspace.resolve("Foo.java"), "class Foo {}\n");
+    writeConfig("openai", server.openAiBaseUrl(), true);
+    Files.writeString(
+        home.resolve("config.json"),
+        Files.readString(home.resolve("config.json"))
+            .replace(
+                "\"autoApprove\": true",
+                "\"autoApprove\": true,\n  \"checks\": [{\"glob\": \"**/*.java\","
+                    + " \"command\": \"echo 'Foo.java:1: error: cannot find symbol'; exit 1\"}]"));
+    server.enqueue(
+        MockModelServer.openAiToolCall(
+            "call_1",
+            "edit",
+            "{\"path\":\"Foo.java\",\"old_string\":\"class Foo {}\","
+                + "\"new_string\":\"class Foo { int x = missing; }\"}"));
+    server.enqueue(MockModelServer.openAiText("fixed it"));
+
+    Run run = runCli(args("break Foo.java"));
+
+    assertEquals(0, run.exitCode(), run.err());
+    String toModel = server.lastRequest().body();
+    assertTrue(
+        toModel.contains("cannot find symbol"),
+        "the check's verdict must be in the request that follows the edit: " + toModel);
+    assertTrue(toModel.contains("[check] echo "), toModel);
+    assertTrue(
+        Files.readString(workspace.resolve("Foo.java")).contains("missing"),
+        "the edit itself still happened");
+  }
+
+  @Test
+  void aFileNoCheckIsAboutIsEditedWithoutRunningAnything() throws IOException {
+    // The default stays free: a project that declares no checks, or a file none of them match, gets
+    // exactly the result the model already knew how to read.
+    Files.writeString(workspace.resolve("notes.md"), "old text\n");
+    writeConfig("openai", server.openAiBaseUrl(), true);
+    Files.writeString(
+        home.resolve("config.json"),
+        Files.readString(home.resolve("config.json"))
+            .replace(
+                "\"autoApprove\": true",
+                "\"autoApprove\": true,\n  \"checks\": [{\"glob\": \"**/*.java\","
+                    + " \"command\": \"echo should-not-run\"}]"));
+    server.enqueue(
+        MockModelServer.openAiToolCall(
+            "call_1",
+            "edit",
+            "{\"path\":\"notes.md\",\"old_string\":\"old text\",\"new_string\":\"new text\"}"));
+    server.enqueue(MockModelServer.openAiText("done"));
+
+    Run run = runCli(args("edit the notes"));
+
+    assertEquals(0, run.exitCode(), run.err());
+    assertFalse(server.lastRequest().body().contains("should-not-run"), server.lastRequest().body());
+    assertFalse(server.lastRequest().body().contains("[check]"), server.lastRequest().body());
+  }
+
+  @Test
   void theCwdFlagIsStillHonouredAndSaysSo() throws IOException {
     // -C stays a per-run override, but it is no longer silent: a session whose tools run somewhere
     // other than the active workspace has to say which directory that is.

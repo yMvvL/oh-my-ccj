@@ -58,6 +58,19 @@ exactly as you would treat an open terminal.
   base64 blob, and the picture itself is a file on disk whose path the model may `read` — which is
   the ordinary read tool, in the ordinary transcript.
 
+- **A check declared in the config file runs without a prompt.** `"checks"` names commands that run
+  after an edit — a compile, a type check, a test — and they are the user's commands, written into the
+  user's own file, which is the same act as typing them. That is a deliberate widening of "approval is
+  the only guard" and it is written down here as one. What bounds it: only commands that file
+  declares run, in the session's working directory, with a per-check timeout, a bounded report, never
+  after a refused or failed edit, and never after an abort. A passing check says `exit 0` rather than
+  "clean", because the command's own scope can be narrower than the glob that ran it: measured,
+  `mvn -q -o -DskipTests compile` exits 0 for a broken file at the repository root, since Maven only
+  compiles `src/main/java`. A check is a report, not a proof. What it means in practice: a process that
+  can write the config file can make a command run without a prompt — one approval on that write,
+  which is the same exposure a project's `CCJ.md` already has, and which the allow rules in
+  [ROADMAP](docs/ROADMAP.md) 2.5.2 are intended to replace with something narrower.
+
 ## What is not defended
 
 - **The agent can do anything you can**, including `rm -rf`, `git push`, and reading your SSH keys.

@@ -19,6 +19,17 @@ import java.nio.file.StandardCopyOption;
  */
 public final class WriteTool implements Tool {
 
+  /** The check that runs after a successful "write": nothing unless the user declared one. */
+  private final PostEditCheck check;
+
+  public WriteTool() {
+    this(com.ccj.agent.core.Checks.none());
+  }
+
+  public WriteTool(com.ccj.agent.core.Checks checks) {
+    this.check = new PostEditCheck(checks);
+  }
+
   private static final int PREVIEW_CONTEXT = 3;
   private static final int PREVIEW_MAX_LINES = 24;
   private static final long PREVIEW_MAX_BYTES = 1024L * 1024;
@@ -31,7 +42,8 @@ public final class WriteTool implements Tool {
   @Override
   public String description() {
     return "Write a UTF-8 file, creating parent directories as needed. Overwrites the whole file; "
-        + "prefer edit for changing part of an existing file.";
+        + "prefer edit for changing part of an existing file. If the project configures a check for "
+        + "this file type, it runs after the write and its verdict is appended to this result.";
   }
 
   @Override
@@ -113,7 +125,8 @@ public final class WriteTool implements Tool {
             + bytes.length
             + " bytes to "
             + label
-            + (replacing ? " (replaced existing file)" : " (created new file)"));
+            + (replacing ? " (replaced existing file)" : " (created new file)")
+            + check.afterEditing(file, ctx));
   }
 
   /**

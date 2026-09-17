@@ -22,6 +22,17 @@ import java.util.List;
 public final class EditTool implements Tool {
 
   private static final long MAX_EDIT_BYTES = 32L * 1024 * 1024;
+  /** The check that runs after a successful "edit": nothing unless the user declared one. */
+  private final PostEditCheck check;
+
+  public EditTool() {
+    this(com.ccj.agent.core.Checks.none());
+  }
+
+  public EditTool(com.ccj.agent.core.Checks checks) {
+    this.check = new PostEditCheck(checks);
+  }
+
   private static final int PREVIEW_CONTEXT = 3;
   private static final int PREVIEW_MAX_LINES = 30;
 
@@ -33,7 +44,8 @@ public final class EditTool implements Tool {
   @Override
   public String description() {
     return "Replace an exact string in a UTF-8 file. old_string must match the file literally and "
-        + "be unique unless replace_all is true.";
+        + "be unique unless replace_all is true. If the project configures a check for this file "
+        + "type, it runs after the write and its verdict is appended to this result.";
   }
 
   @Override
@@ -168,7 +180,8 @@ public final class EditTool implements Tool {
             + label
             + "; file now has "
             + ToolSupport.lineCount(updated)
-            + " lines");
+            + " lines"
+            + check.afterEditing(file, ctx));
   }
 
   /**
