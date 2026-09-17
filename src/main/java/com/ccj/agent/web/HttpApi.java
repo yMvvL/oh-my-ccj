@@ -1,6 +1,7 @@
 package com.ccj.agent.web;
 
 import com.ccj.agent.core.Json;
+import com.ccj.agent.session.AttachmentStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.Headers;
@@ -230,6 +231,7 @@ public final class HttpApi implements AutoCloseable {
         case "/api/history" -> get(exchange, hub.historyJson());
         case "/api/events" -> events(exchange);
         case "/api/message" -> message(exchange);
+        case "/api/attachment" -> attachment(exchange);
         case "/api/abort" -> abort(exchange);
         case "/api/compact" -> compact(exchange);
         case "/api/approval" -> approval(exchange);
@@ -272,6 +274,45 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     respond(exchange, 202, Json.object().put("accepted", true));
+  }
+
+  /**
+   * One picture, and the turn it becomes.
+   *
+   * <p>The body is the image itself rather than a JSON envelope with base64 in it, so the bytes are
+   * never encoded on the client and re-decoded here: the upload is one request with the picture in
+   * it, and the name it is to be stored under is the {@code name} query parameter.
+   *
+   * <p>Reading is bounded twice over, and both times before the bytes are held: a declared length
+   * over the limit is refused outright, and the read itself stops at the limit so a body that lies
+   * about its length — or streams with no length at all — cannot turn the limit into a suggestion.
+   * The refusal is a 413 with the size in it, which is what a client can act on.
+   */
+  private void attachment(HttpExchange exchange) throws IOException {
+    if (!"POST".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "POST required");
+      return;
+    }
+    byte[] bytes;
+    try {
+      bytes = AttachmentStore.readBounded(exchange.getRequestBody(), declaredLength(exchange));
+    } catch (IOException e) {
+      error(exchange, 413, e.getMessage());
+      return;
+    }
+    respond(exchange, 202, hub.describePicture(queryParam(exchange, "name"), bytes));
+  }
+
+  /** {@code Content-Length} when the client sent one, or -1 for a chunked body. */
+  private static long declaredLength(HttpExchange exchange) {
+    try {
+      String header = exchange.getRequestHeaders().getFirst("Content-Length");
+      return header == null || header.isBlank() ? -1 : Long.parseLong(header.strip());
+    } catch (NumberFormatException e) {
+      // A length that does not parse is no worse than one that was not sent: the read is bounded
+      // either way, and a refusal here would reject a body that is perfectly readable.
+      return -1;
+    }
   }
 
   private void abort(HttpExchange exchange) throws IOException {

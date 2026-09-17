@@ -24,7 +24,9 @@ import com.ccj.agent.core.SessionRepair;
 import com.ccj.agent.provider.ModelCatalog;
 import com.ccj.agent.provider.Providers;
 import com.ccj.agent.provider.ProviderStore;
+import com.ccj.agent.provider.VisionClient;
 import com.ccj.agent.workspace.WorkspaceStore;
+import com.ccj.agent.session.AttachmentStore;
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
 import com.ccj.agent.ui.ToolSummary;
@@ -1028,7 +1030,8 @@ public final class AgentHub implements AutoCloseable {
         reasoning,
         null, // maxContextTokens
         null, // settingsFor
-        java.util.Map.of());
+        java.util.Map.of(),
+        null); // vision: not managed by this form, so the block in the file stays as it was
   }
 
   private static String text(JsonNode node, String field) {
@@ -1090,19 +1093,113 @@ public final class AgentHub implements AutoCloseable {
     if (current == null) {
       throw new IllegalStateException("no session is open");
     }
-    String id = current.id();
-    Conversation conversation = conversations.computeIfAbsent(id, key -> new Conversation(key, current));
+    Conversation conversation =
+        conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current));
     if (!conversation.begin()) {
       return false;
     }
+    startTurn(conversation, text);
+    return true;
+  }
+
+  /**
+   * Publishes the user's message and hands the turn to the pool.
+   *
+   * <p>Split out of {@link #submit} for the one caller that has to claim the conversation earlier
+   * than it starts the turn: a picture is described by another model <em>between</em> the claim and
+   * the turn, and a claim taken after that call would either spend a description on a conversation
+   * that already has a turn running, or take the claim away from the turn already holding it.
+   */
+  private void startTurn(Conversation conversation, String text) {
     // Where this turn's tools will run, decided now: the user pressed send while looking at this
     // workspace, and switching to another one later must not move the work they already started.
     conversation.useCurrentCwd();
+    FileSession current = conversation.session();
     current.totals(current.totals().plus(0, 0, null, 1, 0, 0, 0, 0));
-    publish(id, "user", Json.object().put("text", text));
+    publish(current.id(), "user", Json.object().put("text", text));
     publishStatus();
     turns.submit(() -> runTurn(conversation, text));
-    return true;
+  }
+
+  /**
+   * Saves one picture beside the session, has the vision model describe it, and starts a turn on
+   * that description.
+   *
+   * <p>The main model never receives an image. What it receives is text — the description, and where
+   * the file is, so a detail the description dropped can be read back with the {@code read} tool —
+   * and the session on disk stays readable text with a picture beside it. That is the whole reason
+   * the vision model is a separate call: neither wire protocol grows an image branch, and
+   * {@code Message}, both providers, compaction and every renderer stay exactly as they were.
+   *
+   * <p>A failure here refuses the picture and starts no turn. Nothing has reached the main model, so
+   * a "the picture could not be described" turn would be a turn the user did not ask for, about a
+   * picture nobody looked at.
+   */
+  public ObjectNode describePicture(String name, byte[] bytes) {
+    if (closed) {
+      throw new IllegalStateException("the web session is shutting down");
+    }
+    if (provider.get() == null) {
+      throw new IllegalStateException("no model configured — open Settings and add one");
+    }
+    FileSession current = session();
+    if (current == null) {
+      throw new IllegalStateException("no session is open");
+    }
+    // The bytes decide, and they decide first: an upload that is not a picture is refused before a
+    // claim is taken, before anything is written, and before the vision endpoint is called.
+    String mediaType = AttachmentStore.mediaTypeOf(bytes);
+    Config active = config;
+    if (active.vision() == null || !active.vision().isConfigured()) {
+      throw new IllegalStateException(
+          "no vision model is configured, so a picture cannot be described — set the \"vision\""
+              + " block in "
+              + settings.configFile()
+              + " (baseUrl, model and a key), or pass --vision-base-url and --vision-model");
+    }
+    Conversation conversation =
+        conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current));
+    if (!conversation.begin()) {
+      // Refused before the description, not after: describing first would spend a multi-megabyte
+      // upload and a vision call on a turn that can never start.
+      throw new IllegalStateException(
+          "a turn is still running in this conversation; abort it first");
+    }
+    AttachmentStore.Saved saved;
+    String description;
+    try (VisionClient client = VisionClient.from(active.vision(), settings.env())) {
+      description = client.describe(bytes, mediaType);
+      saved = AttachmentStore.forSession(current.file()).save(name, bytes);
+    } catch (RuntimeException e) {
+      // The claim is given back, so a refused picture does not leave the conversation busy for a
+      // turn that does not exist.
+      conversation.end();
+      throw e;
+    }
+    startTurn(conversation, pictureMessage(saved, description));
+    return Json.object()
+        .put("accepted", true)
+        .put("attachment", saved.path().toString())
+        .put("mediaType", saved.mediaType())
+        .put("description", description);
+  }
+
+  /**
+   * What a picture becomes in the conversation: what it shows, and where the file is.
+   *
+   * <p>Marked rather than passed off as typing. A reader — and the model — should know this message
+   * was a picture, and the path is what makes the description checkable: the picture is still on
+   * disk, {@code read} needs no approval, and asking about a detail the description dropped is one
+   * tool call rather than another upload.
+   */
+  private static String pictureMessage(AttachmentStore.Saved saved, String description) {
+    return "[picture "
+        + saved.path().getFileName()
+        + "] "
+        + description
+        + "\n\n(The picture this describes is saved at "
+        + saved.path()
+        + "; read it if a detail the description dropped matters.)";
   }
 
   /**

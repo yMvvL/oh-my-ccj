@@ -192,7 +192,17 @@
           </div>
         </div>
           <span class="hint" id="composer-hint"></span>
-          <button type="button" class="btn ghost sm" id="btn-compact"
+          <span class="hint" id="photo-hint" role="status" hidden></span>
+          <!-- A picture never reaches the model: the server saves it, has the
+               vision model describe it, and the description becomes the message.
+               `accept="image/*"` without `capture` on purpose — `capture` takes
+               the camera on iOS and the library on Android, and the library has
+               to stay reachable from the same button on both. -->
+          <button type="button" class="btn ghost sm" id="btn-photo" aria-label="Send a picture"
+                  title="Send a picture: a vision model describes it and the description becomes your message">
+            <span class="btn-glyph" aria-hidden="true">▣</span><span class="btn-label">Photo</span></button>
+          <input type="file" id="photo-input" accept="image/*" hidden>
+          <button type="button" class="btn ghost sm" id="btn-compact" aria-label="Compact the conversation"
                   title="Replace earlier turns with a summary, freeing context. The full conversation stays on disk.">
             <span class="btn-glyph" aria-hidden="true">⤓</span><span class="btn-label">Compact</span></button>
           <button type="button" class="btn danger" id="btn-abort" hidden

@@ -1924,6 +1924,14 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
    * and the composer is what they cover. */
   .composer { padding: 0 12px max(10px, env(safe-area-inset-bottom)); }
   .composer-row { gap: 8px; }
+  /* At 390px the picker, the picture, compact and send do not fit with their
+   * words attached. The glyphs stay and the words go — and each of those buttons
+   * carries its own `aria-label`, so the name a screen reader reads is not the
+   * label that was hidden. If the picture is refused for want of a vision model,
+   * the notice in the transcript says so; the button does not have to. */
+  .composer-row .btn-label { display: none; }
+  .composer-row .btn.sm { padding: 8px 10px; }
+  #photo-hint { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 /* Motion is decoration here: the pulse, the tool spinner, the arrival rise and

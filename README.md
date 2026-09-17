@@ -4,7 +4,7 @@
 
 A coding agent runtime written from scratch in plain Java 21. No agent framework, no HTTP client
 library, no CLI library — `java.net.http` for transport, `com.sun.net.httpserver` for the web UI and
-the test doubles — 14.1k lines of Java plus a 7.2k-line vanilla page, with 11.5k more lines of tests
+the test doubles — 16.6k lines of Java plus an 8.0k-line vanilla page, with 14.8k more lines of tests
 alongside them.
 
 `ccj` streams a conversation with a model, lets the model call tools that touch your filesystem,
@@ -49,8 +49,9 @@ a place where a long session or an interrupted one goes wrong:
   addresses — loopback plus your tailnet — never a wildcard, and every non-loopback address needs a
   token. Cross-origin requests that would change state are refused.
 
-What it deliberately does not have: MCP, plugins, a sandbox, images, or multi-user accounts. See
-[Limitations](#limitations) for the full list and the reasoning.
+What it deliberately does not have: MCP, plugins, a sandbox, or multi-user accounts. Pictures arrive
+as a description rather than as an image — see the `Picture` row below — and everything else is in
+[Limitations](#limitations).
 
 ## Read this before you run it
 
@@ -254,6 +255,7 @@ hostname rather than loopback.
 | Markdown | An answer is markdown and is rendered as such in the browser: headings, lists (nested, with task boxes), fenced code with its language, tables with alignment, quotes, inline code, emphasis and links — parsed from the streaming deltas, so a half-arrived answer is readable and the blocks above the one still being written are never re-drawn. Raw HTML in an answer is shown as text, images are not fetched, and a link's scheme is filtered. |
 | Themes | Light/dark/system, remembered per browser, applied before the first paint. |
 | Thinking language | One setting in Settings, kept in `config.json` (or `--language` / `CCJ_LANGUAGE` for a run). The answer always comes back in the chosen language, whatever language you wrote in, and the prompt asks for the *thinking* in it too — which some models honour and some do not; the settings hint says so rather than promising it. `auto` says nothing at all. |
+| Pictures | The composer's picture button (or `POST /api/attachment`) sends one image, up to 8 MB, PNG/JPEG/WebP/GIF — the type is read from the bytes, not from the file name. A **separate vision model** describes it, and the description becomes your message: `[picture photo.jpg] …` plus the path, so a detail the description dropped can be read back. The main model never receives an image and no session file ever holds one, which is why no wire format, renderer or compaction step grew an image branch. Own endpoint, own key, own model, set in the config file's `vision` block or with `--vision-base-url`, `--vision-model`, `--vision-api-key`/`--vision-api-key-env`: absent means the feature is off, and a picture sent while it is off is refused with what to set. The picture itself is stored under `<sessions>/<session-id>.attachments/` — beside the session, so deleting the conversation deletes it — and never in your project. See [docs/VISION.md](docs/VISION.md). |
 | Effort tiers | A picker above the message box: provider → model → `default`/`low`/`high`/`max`, translated per protocol (`reasoning_effort` for OpenAI-shaped APIs, extended-thinking budgets for Anthropic). `default` sends nothing, so ordinary models are unaffected. |
 | Folder picker | "Add workspace" *is* the folder picker: one click opens the desktop's own chooser (`zenity`, `kdialog` or Swing) and the folder that comes back becomes the workspace under its own name, with a suffix if that name is taken. A machine with no chooser falls back to the form the same click opens, so typing a path — or browsing to one with the same chooser — always works. |
 | Workspaces | A VS Code-style sidebar: every workspace is a folder that expands to its own sessions, with lazy loading, per-row delete and per-node remove. A row is labelled by the first thing it was asked and is one click target end to end, and a finished turn re-reads the list so the conversation you just had is at the top. Named directories with their own session history — the workspace `ccj` starts in keeps the original sessions directory, added ones get their own under `<home>/workspaces/<name>/`. Switching changes the working directory *and* the history in one move, the active workspace is where the tools run no matter where the process was started, and reading a folded folder never moves the session you are in. |
@@ -348,6 +350,7 @@ command-line flags.
 | `CCJ_TEMPERATURE`, `CCJ_MAX_TOKENS`, `CCJ_OUTPUT_LIMIT_BYTES` | sampling and output limits |
 | `CCJ_REASONING`, `CCJ_MAX_CONTEXT_TOKENS` | reasoning effort, prompt budget |
 | `CCJ_AUTO_APPROVE`, `CCJ_SYSTEM_PROMPT` | approval mode and prompt override |
+| `CCJ_VISION_BASE_URL`, `CCJ_VISION_MODEL`, `CCJ_VISION_API_KEY`, `CCJ_VISION_API_KEY_ENV` | the model that describes pictures (its own endpoint and key; unset means the feature is off) |
 | `CCJ_WALLPAPERS` | pictures the page rotates as its background |
 | `CCJ_WEB_TOKEN` | the token the network addresses must carry (without `--web-token`, which wins; otherwise `~/.oh-my-ccj/web-token`) |
 | `CCJ_HOME` | application home directory |
@@ -519,7 +522,11 @@ written here is in [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
   unless `--subagents` is passed, because a delegated run spends tokens the user did not type a
   message for. Inside a conversation, only read-only tools run concurrently: they are the only ones
   whose overlap cannot change what the transcript means. See [docs/SUBAGENTS.md](docs/SUBAGENTS.md).
-- Text only: no image or file attachments on the wire.
+- Pictures go one way and one step removed: an image is described by a vision model and the
+  *description* joins the conversation. The main model never receives the image, so "what does this
+  error say" and "transcribe this whiteboard" work while "is this pixel the right shade of blue" does
+  not — ask again on a detail the description dropped, or `read` the file, which is where it is told
+  to look. One picture per turn, up to 8 MB, and a second upload starts a second turn.
 - No MCP, no plugins, no sandboxing — approval is the only guard, and `--yolo` removes it.
 - Bash runs as the current user with your full environment.
 - Sessions grow without bound on disk. What does not fit the context budget is elided or dropped;

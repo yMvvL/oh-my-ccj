@@ -42,7 +42,8 @@ public record Config(
     String reasoning,
     Integer maxContextTokens,
     String settingsFor,
-    Map<String, ProviderSettings> remembered) {
+    Map<String, ProviderSettings> remembered,
+    VisionConfig vision) {
 
   /**
    * The fields as they existed before context budgeting, so a caller that does not care about it does
@@ -75,7 +76,8 @@ public record Config(
         reasoning,
         null,
         null,
-        Map.of());
+        Map.of(),
+        null);
   }
 
   /**
@@ -110,13 +112,15 @@ public record Config(
         reasoning,
         maxContextTokens,
         null,
-        Map.of());
+        Map.of(),
+        null);
   }
 
   /**
    * The map of remembered pairs is normalised here: keys are lower-cased because provider names are
    * matched case-insensitively everywhere else, and an entry with nothing in it is dropped rather
-   * than kept as an empty promise.
+   * than kept as an empty promise. The vision block is normalised the same way: one that names
+   * nothing is the absence of a configuration, and two representations of "off" is one too many.
    */
   public Config {
     Map<String, ProviderSettings> clean = new LinkedHashMap<>();
@@ -129,6 +133,9 @@ public record Config(
           });
     }
     remembered = Map.copyOf(clean);
+    if (vision != null && vision.isEmpty()) {
+      vision = null;
+    }
   }
 
   public static final String DEFAULT_PROVIDER = "openai";
@@ -167,7 +174,30 @@ public record Config(
         pick(reasoning, higher.reasoning),
         pick(maxContextTokens, higher.maxContextTokens),
         pick(settingsFor, higher.settingsFor),
-        mergeRemembered(remembered, higher.remembered));
+        mergeRemembered(remembered, higher.remembered),
+        mergeVision(vision, higher.vision));
+  }
+
+  /**
+   * The vision block from both layers, field by field.
+   *
+   * <p>Field by field rather than whole-block, for the same reason every other field is picked
+   * individually: a layer that names only the model — {@code CCJ_VISION_MODEL}, a
+   * {@code --vision-model} flag — must not erase the endpoint underneath it. Replacing the block
+   * wholesale would turn "use this model instead" into "forget the endpoint and the key".
+   */
+  private static VisionConfig mergeVision(VisionConfig lower, VisionConfig higher) {
+    if (higher == null || higher.isEmpty()) {
+      return lower;
+    }
+    if (lower == null || lower.isEmpty()) {
+      return higher;
+    }
+    return new VisionConfig(
+        pick(lower.baseUrl(), higher.baseUrl()),
+        pick(lower.apiKey(), higher.apiKey()),
+        pick(lower.apiKeyEnv(), higher.apiKeyEnv()),
+        pick(lower.model(), higher.model()));
   }
 
   /**
@@ -245,7 +275,8 @@ public record Config(
         reasoning,
         maxContextTokens,
         settingsFor,
-        remembered);
+        remembered,
+        vision);
   }
 
   /**
@@ -270,7 +301,7 @@ public record Config(
   public Config forgetProviderSettings() {
     return new Config(
         provider, model, null, null, null, temperature, maxTokens, autoApprove, outputLimitBytes,
-        systemPrompt, language, reasoning, maxContextTokens, null, remembered);
+        systemPrompt, language, reasoning, maxContextTokens, null, remembered, vision);
   }
 
   /** The same configuration, with its endpoint and credential fields marked as {@code provider}'s. */
@@ -290,7 +321,8 @@ public record Config(
         reasoning,
         maxContextTokens,
         provider,
-        remembered);
+        remembered,
+        vision);
   }
 
   /** The pair remembered for {@code provider}, if any. */
@@ -338,7 +370,8 @@ public record Config(
         reasoning,
         maxContextTokens,
         settingsFor,
-        remembered);
+        remembered,
+        vision);
   }
 
   /** Forgets what is remembered for {@code provider}. */
@@ -393,7 +426,8 @@ public record Config(
             reasoning,
             maxContextTokens,
             provider,
-            next)
+            next,
+            vision)
         .resolved();
   }
 
@@ -444,13 +478,14 @@ public record Config(
     return new Config(
         provider, model, baseUrl, key, apiKeyEnv, temperature, maxTokens, autoApprove,
         outputLimitBytes, systemPrompt, language, reasoning, maxContextTokens, settingsFor,
-        remembered);
+        remembered, vision);
   }
 
   private Config withRemembered(Map<String, ProviderSettings> next) {
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
-        outputLimitBytes, systemPrompt, language, reasoning, maxContextTokens, settingsFor, next);
+        outputLimitBytes, systemPrompt, language, reasoning, maxContextTokens, settingsFor, next,
+        vision);
   }
 
   /** Fills in defaults that depend on the chosen provider. */
@@ -478,7 +513,8 @@ public record Config(
         normaliseReasoning(reasoning),
         maxContextTokens,
         settingsFor,
-        remembered);
+        remembered,
+        vision);
   }
 
   /**
@@ -580,7 +616,27 @@ public record Config(
         text(root, "reasoning"),
         integer(root, "maxContextTokens"),
         text(root, "settingsFor"),
-        readRemembered(root));
+        readRemembered(root),
+        readVision(root));
+  }
+
+  /**
+   * The {@code vision} block: the endpoint, credential and model of the model that describes
+   * pictures. Absent, null or empty all mean the feature is off, and a block that is not an object is
+   * a typo worth reporting rather than a setting to ignore silently.
+   */
+  private static VisionConfig readVision(JsonNode root) {
+    JsonNode node = root.get("vision");
+    if (node == null || node.isNull()) {
+      return null;
+    }
+    if (!node.isObject()) {
+      throw new IllegalArgumentException("config field 'vision' must be an object");
+    }
+    VisionConfig vision =
+        new VisionConfig(
+            text(node, "baseUrl"), text(node, "apiKey"), text(node, "apiKeyEnv"), text(node, "model"));
+    return vision.isEmpty() ? null : vision;
   }
 
   /** The {@code remembered} map: provider name to the endpoint and credential entered for it. */
@@ -625,7 +681,25 @@ public record Config(
         env.get("CCJ_REASONING"),
         parseInteger(env.get("CCJ_MAX_CONTEXT_TOKENS")),
         null,
-        Map.of());
+        Map.of(),
+        readEnvVision(env));
+  }
+
+  /**
+   * The {@code CCJ_VISION_*} variables, as one block or null.
+   *
+   * <p>Named after the block they fill rather than after the main provider's variables, because the
+   * model they configure is a different one: {@code CCJ_API_KEY} must not double as the key for a
+   * picture-describer, which is the whole reason vision is configured separately.
+   */
+  private static VisionConfig readEnvVision(Map<String, String> env) {
+    VisionConfig vision =
+        new VisionConfig(
+            env.get("CCJ_VISION_BASE_URL"),
+            env.get("CCJ_VISION_API_KEY"),
+            env.get("CCJ_VISION_API_KEY_ENV"),
+            env.get("CCJ_VISION_MODEL"));
+    return vision.isEmpty() ? null : vision;
   }
 
   /**
@@ -684,6 +758,7 @@ public record Config(
     // for it to be about, and a stale name would only invite the next reader to file them wrongly.
     putText(root, "settingsFor", managed.setsProviderSettings() ? managed.settingsFor() : null);
     writeRemembered(root, managed.remembered());
+    writeVision(root, managed.vision());
     // The step ceiling is gone, and a key ccj no longer reads would advertise a
     // setting that does nothing, so an old file is cleaned up as it is rewritten.
     root.remove("maxSteps");
@@ -724,6 +799,26 @@ public record Config(
           putText(body, "apiKey", settings.apiKey());
           putText(body, "apiKeyEnv", chosenKeyEnv(name, settings.apiKeyEnv()));
         });
+  }
+
+  /**
+   * Writes the vision block as it stands, or removes it when there is none.
+   *
+   * <p>Unlike the provider fields there is no default to compare against: the endpoint is whatever
+   * the user named, so every field that is set is recorded and nothing is left out for looking
+   * ordinary. Fields are written individually, because a block that names only a model is a real
+   * configuration — of the endpoint it inherits from the file.
+   */
+  private static void writeVision(ObjectNode root, VisionConfig vision) {
+    if (vision == null || vision.isEmpty()) {
+      root.remove("vision");
+      return;
+    }
+    ObjectNode block = root.putObject("vision");
+    putText(block, "baseUrl", vision.baseUrl());
+    putText(block, "apiKey", vision.apiKey());
+    putText(block, "apiKeyEnv", vision.apiKeyEnv());
+    putText(block, "model", vision.model());
   }
 
   private static String chosenBaseUrl(Config config) {
@@ -796,7 +891,24 @@ public record Config(
     out.put(
         "maxContextTokens",
         maxContextTokens == null ? "(no budget)" : String.valueOf(maxContextTokens));
+    out.put("vision", describeVision(env));
     return out;
+  }
+
+  /**
+   * The vision model as one line: off, or where it is, which model, and whether a key was found —
+   * never the key itself, which is the rule for every key this class reports.
+   */
+  private String describeVision(Map<String, String> env) {
+    if (vision == null || !vision.isConfigured()) {
+      return "(off)";
+    }
+    String key = vision.resolvedApiKey(env);
+    return vision.baseUrl()
+        + " · "
+        + vision.model()
+        + " · "
+        + (key == null ? "(no key)" : "***" + tail(key));
   }
 
   private static String tail(String key) {

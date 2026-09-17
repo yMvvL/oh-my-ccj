@@ -19,7 +19,8 @@ fiction.
 | Real and working | The loop, both wire protocols, the seven tools, approval, sessions and resume, context projection, compaction with generations, the web UI, workspaces, cross-origin refusal, sub-agents with the conversation's approver |
 | Checked by CI | `./mvnw -B -ntp verify` on Linux and macOS with JDK 21 and Node 20, then packaging the jar and starting it. The Node case files report as skipped when they cannot run, rather than passing |
 | Real but unverified *here* | A change made on the maintainer's Windows machine. There is no JDK, no Maven and no `~/.m2` there, so nothing in this list can be run locally — CI is the only evidence, and a change that never reaches a push has no evidence at all |
-| Missing | MCP, image input, native Windows support, any sandbox |
+| Missing | MCP, native Windows support, any sandbox |
+| Recently landed | Pictures: one image per turn, described by a **separate** vision model whose endpoint, key and model are configured on their own; the description joins the conversation as ordinary text and the file is stored beside the session. The main model never receives an image, which is why neither wire format, nor `Message`, nor compaction changed. See [VISION.md](VISION.md) |
 | Recently removed | The sub-agent staging directory (`<cwd>/.ccj-work`), and with it the promote step. Approval replaced it — see [SUBAGENTS.md](SUBAGENTS.md) |
 
 ## Phase 0 — Make the claims checkable — `done`, with three loose ends
@@ -30,10 +31,11 @@ starts it — which is the only thing that turns "542 tests pass" from a claim i
 Node case files now report as *skipped* when they cannot run instead of passing, with a test that pins
 that behaviour through `TestAbortedException`.
 
-Loose ends, each small and each the same kind of defect the phase existed to remove:
+Loose ends, each small and each the same kind of defect the phase existed to remove. The first one is
+closed since this was written: neither the README nor the workflow names a test count any more, and
+the workflow's comment says why — the number drifts with every test added, and the badge is the live
+answer.
 
-- **The numbers disagree.** The README says 542 tests; the workflow's own comment says 535. One is
-  stale, and a reader cannot tell which. Fix by generating the count from a run rather than typing it.
 - **The compiler plugin is still implicit.** The wrapper pins Maven, so the default binding is stable
   in practice, but no version is written down for a reader to check.
 - **Two cases still return early when `app.js` is missing** (`theAnswerIsRenderedAsMarkdown`,
@@ -86,6 +88,13 @@ machine this list was written on.
 **Why this order.** Each item is judged by how much it expands what the agent can do *without*
 weakening the approval story. Anything that would need a sandbox to be safe does not belong here yet.
 
+- **2.0 Pictures** — `done`. The first capability in this list to land: one image per turn, described
+  by a vision model configured separately from the main provider, with the description — not the image
+  — joining the conversation, and the file stored beside the session rather than in the project.
+  *Acceptance, met:* `POST /api/attachment` with a real PNG produces a turn whose message is the
+  description, the picture is on disk under `<id>.attachments/`, and every refusal (not a picture,
+  over 8 MB, busy conversation, no vision model configured) leaves the vision endpoint uncalled. The
+  design, the measurements and what was not verified are in [VISION.md](VISION.md).
 - **2.1 An MCP client** — `todo`. The largest gap against the ecosystem: today the tool set is
   compiled in, so a user cannot bring their own. The shape matters more than the protocol — remote
   tools must enter through the same `ToolRegistry` and the same approver, and a server's tools must be

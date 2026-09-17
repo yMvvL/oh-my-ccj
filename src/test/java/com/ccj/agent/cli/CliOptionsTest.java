@@ -49,6 +49,10 @@ class CliOptionsTest {
               "--temperature", "0.5",
               "--reasoning", "high",
               "--max-context-tokens", "100",
+              "--vision-base-url", "http://x",
+              "--vision-model", "vm",
+              "--vision-api-key-env", "VV",
+              "--vision-api-key", "vk",
             });
 
     assertTrue(all.subAgents(), "--subagents is a switch, and the one that was broken");
@@ -60,6 +64,34 @@ class CliOptionsTest {
     assertEquals("English", all.language());
     assertEquals(10, all.maxTokens());
     assertEquals(100, all.maxContextTokens());
+    assertEquals("http://x", all.visionBaseUrl());
+    assertEquals("vm", all.visionModel(), "the last one still gets its value");
+    assertEquals("vk", all.visionApiKey());
+  }
+
+  @Test
+  void theVisionFlagsBecomeAVisionBlock() {
+    Config overrides =
+        CliOptions.parse(
+                new String[] {
+                  "--vision-base-url", "http://127.0.0.1:8080/v1",
+                  "--vision-model", "llava",
+                  "--vision-api-key", "sk-vision",
+                  "--vision-api-key-env", "MY_VISION_KEY",
+                })
+            .overrides();
+
+    assertEquals("http://127.0.0.1:8080/v1", overrides.vision().baseUrl());
+    assertEquals("llava", overrides.vision().model());
+    assertEquals("sk-vision", overrides.vision().apiKey());
+    assertEquals("MY_VISION_KEY", overrides.vision().apiKeyEnv());
+
+    assertNull(CliOptions.parse(new String[0]).overrides().vision(), "no flags, no block");
+    // One flag is a block naming one field, so the endpoint in the file underneath it survives the
+    // merge rather than being cleared by a flag that never mentioned it.
+    Config modelOnly = CliOptions.parse(new String[] {"--vision-model", "internvl"}).overrides();
+    assertEquals("internvl", modelOnly.vision().model());
+    assertNull(modelOnly.vision().baseUrl());
   }
 
   @Test

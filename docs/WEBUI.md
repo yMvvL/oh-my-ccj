@@ -21,6 +21,7 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `POST` | `/api/message` | `{"text": "..."}` — start a turn in the session on screen; `409` when *that* session is already running (other conversations are unaffected) |
 | `POST` | `/api/abort` | stop the running turn at the next safe point; add `?id=<session>` to stop a turn in a conversation you are not looking at |
 | `POST` | `/api/compact` | compact the session on screen: the older turns become a summary, written to the next generation file. `409` while a turn is running or when the summary would not be smaller than what it replaces |
+| `POST` | `/api/attachment` | one picture as the raw body, `?name=<file name>` — the vision model describes it and the description starts a turn; `400` when the bytes are not a PNG/JPEG/WebP/GIF, `413` over 8 MB, `409` while that conversation is running or when no vision model is configured |
 | `POST` | `/api/approval` | `{"id": "...", "allow": true, "remember": false}` — answer a pending approval |
 | `POST` | `/api/auto-approve` | `{"enabled": true}` — flip the whole session to auto-approve |
 | `POST` | `/api/session` | `{"action": "new"}` or `{"action": "resume", "id": "..."}` |
@@ -243,11 +244,62 @@ reason above.
 | rows revealed by hover (session and workspace actions) | revealed always, since there is no hover to reveal them |
 | 32px tree rows, 28px `.btn.sm`, 12px form fields | 42px rows, larger buttons, and 16px fields — the last one because Safari zooms the page when a focused field is under 16px |
 | `show all` is a bare 12px word | padded into a real target |
+| the composer's own buttons carry their words (`Photo`, `Compact`) | the words go and the glyphs stay: the picker, the picture, compact and send do not fit one 390px row with their labels attached. Each of those buttons has an `aria-label`, so the name a screen reader reads is not the label that was hidden |
 | composer padding is fixed | `env(safe-area-inset-bottom)`, so the home bar does not sit on the send button |
 
 The scrim is one element below both sheets and below every dialog, so a dialog opened from a sheet
 still lands on top. The sheets do not survive a resize back to a wide window: they are a phone's
 layout, and the columns keep their own state.
+
+## Pictures
+
+The composer's **Photo** button sends one picture, and what joins the conversation is a *description*
+of it written by a separate vision model — the main model never receives an image. The full design,
+including why it is shaped that way, is in [VISION.md](VISION.md); this is what the page and the
+endpoint do.
+
+```js
+// The file itself is the request body; the name travels in the query, because only the bytes can
+// say what the file is.
+fetch('/api/attachment?name=' + encodeURIComponent(file.name), {
+  method: 'POST',
+  headers: { 'Content-Type': file.type },
+  body: file
+});
+```
+
+The server answers `202` with `{accepted, attachment, mediaType, description}` and starts a turn whose
+first message is:
+
+```
+[picture whiteboard.png] a whiteboard with a red arrow and the words 'ship it'
+
+(The picture this describes is saved at /home/you/.oh-my-ccj/…/20260918-101500-ab12.attachments/whiteboard.png; read it if a detail the description dropped matters.)
+```
+
+Three things about that text are deliberate:
+
+- **The description is ordinary text**, so it compacts, replays and renders like anything else typed.
+  Nothing downstream of the composer knows a picture was involved.
+- **The marker says a picture was described** rather than passed off as typing, and the path is what
+  makes the description checkable: `read` needs no approval, so asking about a detail the description
+  dropped costs one tool call rather than another upload.
+- **Nothing is written before the turn can start.** The bytes are sniffed first, the conversation is
+  claimed second, and only then is the vision model asked — so a picture sent into a conversation that
+  is already running is refused without spending an upload and a description on a turn that cannot
+  happen, and a vision model that cannot be reached refuses the picture instead of starting a turn
+  about a picture nobody looked at.
+
+| Refusal | When | Body |
+|---|---|---|
+| `400` | the bytes are not PNG, JPEG, WebP or GIF (the type is read from the magic number, never the name or the `Content-Type`) | what the first bytes actually were |
+| `413` | the body is over 8 MB, refused on its declared length and bounded again while reading | the limit and the declared size |
+| `409` | the conversation on screen already has a turn running, or no vision model is configured | what to abort, or which block/flag to set |
+
+The picture is stored under `<sessions>/<session-id>.attachments/`, beside the session and never in the
+project — a photo of a receipt is not project content, and a file that shows up in `git status` because
+somebody photographed something is a surprise nobody asked for. Deleting the session deletes them, and
+so does deleting every session in a workspace.
 
 ## Custom providers
 

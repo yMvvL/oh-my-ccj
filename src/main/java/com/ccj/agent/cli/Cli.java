@@ -456,7 +456,7 @@ public final class Cli {
   private static Config demoConfig() {
     return new Config(
         "demo", "demo", null, null, null, null, null, null, null, null, null, null, null, null,
-        null);
+        null, null);
   }
 
   /** The directory this run starts in: {@code -C} wins, otherwise the process directory. */

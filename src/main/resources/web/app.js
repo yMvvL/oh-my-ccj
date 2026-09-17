@@ -129,6 +129,9 @@
     input: $('input'),
     send: $('send'),
     hint: $('composer-hint'),
+    photoHint: $('photo-hint'),
+    btnPhoto: $('btn-photo'),
+    photoInput: $('photo-input'),
     side: $('side'),
     toolList: $('tool-list'),
     usage: $('usage'),
@@ -4585,6 +4588,50 @@
   }
 
   dom.btnCompact.addEventListener('click', compactNow);
+
+  /* A picture does not travel as a message body. The server saves it under the
+   * session's own directory, asks the vision model to describe it, and starts a
+   * turn on the description — so what runs is an ordinary turn on ordinary text,
+   * and what is stored is readable text beside a file on disk.
+   *
+   * The description is asked for inside this request, which is why the composer
+   * is not put into the busy state here: the server's own status event says when
+   * a turn is really running. A vision model that is unreachable refuses the
+   * picture with a reason instead of leaving the page waiting on a turn that was
+   * never started, and nothing was sent to the main model in the meantime.
+   */
+  async function sendPhoto(file) {
+    if (!file) { return; }
+    state.stick = true;
+    setPhotoHint('describing ' + file.name + '…');
+    try {
+      await request('/api/attachment?name=' + encodeURIComponent(file.name), {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file
+      });
+    } catch (err) {
+      appendError('picture refused: ' + err.message);
+    } finally {
+      setPhotoHint('');
+      refreshStatus();
+    }
+  }
+
+  function setPhotoHint(text) {
+    dom.photoHint.textContent = text;
+    dom.photoHint.hidden = !text;
+  }
+
+  dom.btnPhoto.addEventListener('click', function () { dom.photoInput.click(); });
+
+  dom.photoInput.addEventListener('change', function () {
+    const file = dom.photoInput.files && dom.photoInput.files[0];
+    /* Cleared before the upload, so choosing the same picture twice in a row is
+     * two uploads rather than one upload and one silence. */
+    dom.photoInput.value = '';
+    sendPhoto(file);
+  });
 
   dom.composer.addEventListener('submit', function (event) {
     event.preventDefault();

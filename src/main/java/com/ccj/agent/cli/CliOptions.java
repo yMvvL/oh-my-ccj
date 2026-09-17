@@ -1,6 +1,7 @@
 package com.ccj.agent.cli;
 
 import com.ccj.agent.core.Config;
+import com.ccj.agent.core.VisionConfig;
 import java.util.Map;
 
 /**
@@ -18,6 +19,10 @@ public record CliOptions(
     String baseUrl,
     String apiKey,
     String apiKeyEnv,
+    String visionBaseUrl,
+    String visionApiKey,
+    String visionApiKeyEnv,
+    String visionModel,
     Double temperature,
     Integer maxTokens,
     Integer maxContextTokens,
@@ -71,7 +76,21 @@ public record CliOptions(
         reasoning,
         maxContextTokens,
         null,
-        Map.of());
+        Map.of(),
+        vision());
+  }
+
+  /**
+   * The vision flags as one block, or null when none of them was given.
+   *
+   * <p>Null rather than an empty block: an empty one would merge as "nothing said here" and a block
+   * would be indistinguishable from the file's, while a block naming one field has to reach the
+   * file's endpoint and key underneath it. Which of the four is unset is not this class's business.
+   */
+  public VisionConfig vision() {
+    VisionConfig vision =
+        new VisionConfig(visionBaseUrl, visionApiKey, visionApiKeyEnv, visionModel);
+    return vision.isEmpty() ? null : vision;
   }
 
   public static CliOptions parse(String[] args) {
@@ -81,6 +100,10 @@ public record CliOptions(
     String baseUrl = null;
     String apiKey = null;
     String apiKeyEnv = null;
+    String visionBaseUrl = null;
+    String visionApiKey = null;
+    String visionApiKeyEnv = null;
+    String visionModel = null;
     Double temperature = null;
     Integer maxTokens = null;
     Integer maxContextTokens = null;
@@ -206,6 +229,22 @@ public record CliOptions(
           apiKeyEnv = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
+        case "--vision-base-url" -> {
+          visionBaseUrl = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
+        case "--vision-model" -> {
+          visionModel = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
+        case "--vision-api-key" -> {
+          visionApiKey = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
+        case "--vision-api-key-env" -> {
+          visionApiKeyEnv = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
         case "--max-tokens" -> {
           maxTokens = integer(name, take(args, i, name, inline));
           i += inline == null ? 2 : 1;
@@ -265,6 +304,10 @@ public record CliOptions(
         baseUrl,
         apiKey,
         apiKeyEnv,
+        visionBaseUrl,
+        visionApiKey,
+        visionApiKeyEnv,
+        visionModel,
         temperature,
         maxTokens,
         maxContextTokens,
@@ -323,6 +366,16 @@ public record CliOptions(
               --system <text>      system prompt for this run
               --language <name>    think and answer in this language, whatever the user writes in
                                    ("auto" leaves it to the model); see the list in Settings
+
+    Vision (a picture is described by this model before it reaches the conversation):
+              --vision-base-url <url>    endpoint of the vision model
+              --vision-model <name>      model identifier on that endpoint
+              --vision-api-key <key>     API key literal for it
+              --vision-api-key-env <var> environment variable holding that key
+                                   With none of these set, describing pictures is off. The main
+                                   provider is not reused: reading a screenshot and writing code
+                                   are different choices, and a local model is right for a private
+                                   photo. Set these in config.json's "vision" block to keep them.
 
         Sessions:
               --resume <id>        reopen a session by id

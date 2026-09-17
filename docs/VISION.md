@@ -118,26 +118,68 @@ is the ordinary one, with the ordinary approvals.
 Each step is separately verifiable and leaves the build green. Nothing here changes the main
 conversation path until step 4.
 
-| # | What | Done when |
-|---|---|---|
-| 1 | `Config.vision` — the record, file round-trip, `--vision-*` flags and env vars | A config file with a `vision` block round-trips; without one the feature reports itself off |
-| 2 | `VisionClient` — one call, base64 `data:` URL, bounded response | Against a local stub server: a PNG goes out, text comes back, a 500 is reported as a failed description rather than a crash |
-| 3 | `AttachmentStore` — save under the session's directory, sniff the type, refuse what it cannot identify | A real PNG/JPEG round-trips; a text file named `.png` is refused; a 9 MB body is refused before it is read |
-| 4 | `POST /api/attachment` + the `describe` step, wired into the composer | From a browser: pick a picture, see the description appear in the transcript as the message, and see the turn run on it |
-| 5 | The phone: CSS at phone widths, the picker button, `capture` | The page is usable at 390×844; the button opens the library or the camera on a real phone |
-| 6 | Docs: README row, `docs/WEBUI.md`, the security section | The limits, the storage location and what leaves the machine are written down |
+| # | What | Done when | Status |
+|---|---|---|---|
+| 1 | `Config.vision` — the record, file round-trip, `--vision-*` flags and env vars | A config file with a `vision` block round-trips; without one the feature reports itself off | **done** — `VisionConfig`, `Config.merge`/`fromFile`/`fromEnv`/`writeInto`, `--vision-base-url`/`--vision-model`/`--vision-api-key`/`--vision-api-key-env`, `CCJ_VISION_*`, and `describe()` reporting `(off)` |
+| 2 | `VisionClient` — one call, base64 `data:` URL, bounded response | Against a local stub server: a PNG goes out, text comes back, a 500 is reported as a failed description rather than a crash | **done** — `provider/VisionClient`, six cases in `VisionClientTest`, all offline |
+| 3 | `AttachmentStore` — save under the session's directory, sniff the type, refuse what it cannot identify | A real PNG/JPEG round-trips; a text file named `.png` is refused; a 9 MB body is refused before it is read | **done** — `session/AttachmentStore`, twelve cases; deleting a session deletes its pictures |
+| 4 | `POST /api/attachment` + the `describe` step, wired into the composer | From a browser: pick a picture, see the description appear in the transcript as the message, and see the turn run on it | **done** — `AgentHub.describePicture`, the endpoint, the composer's Photo button; five cases in `WebApiTest` against a stub vision endpoint |
+| 5 | The phone: CSS at phone widths, the picker button, `capture` | The page is usable at 390×844; the button opens the library or the camera on a real phone | **done, with `capture` deliberately left off** — see *Two decisions taken differently* |
+| 6 | Docs: README row, `docs/WEBUI.md`, the security section | The limits, the storage location and what leaves the machine are written down | **done** — README feature/env/limitations rows, `WEBUI.md` *Pictures*, `SECURITY.md` both lists |
+
+### Two decisions taken differently, and why
+
+- **`capture` is not on the file input.** The step above says `accept="image/*" capture`, and it is
+  worth saying why the shipped markup is `accept="image/*"` alone: `capture` takes the camera on iOS
+  and opens the camera app directly on Android, which is the half of "the library *or* the camera"
+  that this step's done-when asks for — the library is then only reachable if the platform's own
+  chooser offers it anyway. Without `capture` both platforms offer the camera and the library from
+  the same button. The cost is one extra tap on Android.
+- **The marker lives in the message text, not in the rendering.** The transcript line proposed below
+  would have to be reconstructed from something the session file does not hold, and the file is what
+  a resumed conversation, a `/compact` and a history replay are built from. So the message itself is
+  `[picture photo.jpg] <description>` followed by a line naming the file, which survives all three
+  and tells the model where to look. This settles the first open question below.
 
 Step 4 is the one that needs care: it is the first time a picture becomes part of a conversation, and
 the decisions that matter are what the message text looks like (the description plus a path the model
 can `read` again) and what happens when the vision model is unreachable (the turn is refused with a
 reason, not sent with a placeholder).
 
-## Open questions, to settle as they come up
+Both are settled as built. The message is `[picture <name>] <description>` followed by a line naming
+the file. An unreachable, misconfigured or unconfigured vision model refuses the picture with what to
+fix (`AgentException` naming the endpoint and status, or a `409` naming the `vision` block and the
+flags), no turn starts, nothing is written, and — because the conversation is claimed *before* the
+vision call — a picture sent into a running conversation is refused without spending a description on
+a turn that cannot happen.
 
-- **Does the description get a marker in the transcript?** So a reader can tell a picture was described
-  rather than typed. Proposed: the message says where the file is, and the transcript shows the
-  description under a small "described from photo.jpg" line.
-- **What happens to `--compact`?** The description is ordinary text, so it compacts like anything else,
-  and the picture stays on disk. That is the point of this design and needs no special case.
-- **Multiple pictures in one message?** Out of scope for the first pass: one picture per turn. The
-  endpoint takes one file, and a second upload starts a second turn.
+## What was verified, and what was not
+
+- The full suite is green: **549 tests, 0 failures, 0 skipped** (`./mvnw -o test`, node present, so
+  the browser cases ran rather than skipping).
+- The end-to-end path is exercised through the real server in `WebApiTest`: a real PNG over HTTP to
+  `/api/attachment`, a stub vision endpoint on loopback that receives the `data:` URL and the prompt
+  guard, the description in the response and in the `user` event, the turn running on it, the picture
+  on disk under `<id>.attachments/`, and the refusals (not a picture, over the limit, busy
+  conversation, no vision model) each with the vision endpoint provably not called.
+- The measurements the design quotes — a 2.1 MB PNG producing a 2.9 MB request body, `max_tokens` at
+  100 returning empty while 1500 works, `image_tokens` reading `0` on a call that plainly saw the
+  image — come from the session that wrote this document, against the relay already configured.
+- **Not verified here:** the picker's behaviour on a real phone (no phone was involved; the `capture`
+  decision above is reasoning from platform behaviour, not a measurement), and a real vision endpoint
+  rather than a stub — the suite is offline by convention, so no API key is used by any test.
+
+## Open questions, settled by the implementation
+
+- **Does the description get a marker in the transcript?** Yes, in the message text itself:
+  `[picture photo.jpg] …` plus a line naming the file. In the text rather than added at render time
+  because the text is what the session file holds, and a resumed conversation, a `/compact` and a
+  history replay are all built from the file — a render-time marker would be there live and gone
+  afterwards.
+- **What happens to `--compact`?** Nothing special was needed, as predicted: the description is
+  ordinary text and compacts like anything else, and the picture stays on disk. What changes is only
+  what the summary says about it, and the file is still where the message said it was.
+- **Multiple pictures in one message?** Still one per turn: the endpoint takes one body, and a second
+  upload starts a second turn. A picture sent while the first turn is running is now refused before
+  the vision call rather than after it, which is the version of "one per turn" that does not spend
+  money to discover it was not allowed.

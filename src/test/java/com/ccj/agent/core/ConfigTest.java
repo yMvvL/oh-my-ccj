@@ -96,6 +96,12 @@ class ConfigTest {
     Path broken = tmp.resolve("broken.json");
     Files.writeString(broken, "{oops");
     assertThrows(IllegalArgumentException.class, () -> Config.fromFile(broken));
+
+    Path wrongVision = tmp.resolve("vision.json");
+    Files.writeString(wrongVision, "{\"vision\": \"llava\"}");
+    IllegalArgumentException visionError =
+        assertThrows(IllegalArgumentException.class, () -> Config.fromFile(wrongVision));
+    assertTrue(visionError.getMessage().contains("vision"), visionError.getMessage());
   }
 
   @Test
@@ -572,6 +578,73 @@ class ConfigTest {
     Config merged = Config.empty().merge(reasoning("low")).merge(reasoning("max"));
 
     assertEquals("max", merged.resolved().reasoning());
+  }
+
+  @Test
+  void aVisionBlockRoundTripsAndIsOffWithoutOne() throws IOException {
+    Path file = tmp.resolve("config.json");
+    Files.writeString(
+        file,
+        """
+        {"provider":"openai",
+         "vision":{"baseUrl":"http://127.0.0.1:8080/v1","apiKey":"sk-vision","model":"llava"}}
+        """);
+
+    Config read = Config.fromFile(file);
+    assertEquals("http://127.0.0.1:8080/v1", read.vision().baseUrl());
+    assertEquals("sk-vision", read.vision().apiKey());
+    assertEquals("llava", read.vision().model());
+    assertTrue(read.vision().isConfigured());
+
+    Config.writeInto(file, read);
+    assertEquals("llava", Config.fromFile(file).vision().model(), "a save keeps the block it was given");
+
+    // No block, and a block that names nothing, both mean one thing: the feature is off.
+    Path none = tmp.resolve("none.json");
+    assertNull(Config.fromFile(none).vision());
+    assertEquals("(off)", Config.fromFile(none).resolved().describe(Map.of()).get("vision"));
+    Path emptyBlock = tmp.resolve("empty-vision.json");
+    Files.writeString(emptyBlock, "{\"vision\": {}}");
+    assertNull(Config.fromFile(emptyBlock).vision());
+
+    // The picture-describer's key is reported the way every other key is: never in full.
+    String reported = read.describe(Map.of()).get("vision");
+    assertTrue(reported.contains("***sion"), reported);
+    assertFalse(reported.contains("sk-vision"), reported);
+  }
+
+  @Test
+  void theVisionBlockIsReadFromTheEnvironmentToo() {
+    Config env =
+        Config.fromEnv(
+            Map.of(
+                "CCJ_VISION_BASE_URL", "http://127.0.0.1:9000/v1",
+                "CCJ_VISION_MODEL", "llava",
+                "CCJ_VISION_API_KEY_ENV", "MY_VISION_KEY"));
+
+    assertEquals("http://127.0.0.1:9000/v1", env.vision().baseUrl());
+    assertEquals("llava", env.vision().model());
+    assertEquals("k-1234", env.vision().resolvedApiKey(Map.of("MY_VISION_KEY", "k-1234")));
+    assertNull(env.vision().resolvedApiKey(Map.of()), "an unset variable is no key");
+    assertNull(Config.fromEnv(Map.of()).vision(), "no variables, no vision");
+  }
+
+  @Test
+  void aLaterSourceOverridesOneVisionFieldWithoutLosingTheRest() throws IOException {
+    // A layer that names only the model must not erase the endpoint and the key underneath it:
+    // "use this model instead" is not "forget where the endpoint is".
+    Path file = tmp.resolve("config.json");
+    Files.writeString(
+        file,
+        """
+        {"vision":{"baseUrl":"http://127.0.0.1:8080/v1","apiKey":"sk-vision","model":"llava"}}
+        """);
+
+    Config layered = Config.layered(file, Map.of("CCJ_VISION_MODEL", "internvl"), null);
+
+    assertEquals("internvl", layered.vision().model());
+    assertEquals("http://127.0.0.1:8080/v1", layered.vision().baseUrl());
+    assertEquals("sk-vision", layered.vision().apiKey());
   }
 
   private static Config reasoning(String level) {

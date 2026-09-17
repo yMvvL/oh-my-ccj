@@ -92,6 +92,9 @@ public final class SessionStore {
     } catch (IOException e) {
       throw new UncheckedIOException("cannot delete session " + id, e);
     }
+    // Its pictures go with it. Deleting the conversation and leaving the photographs it was sent
+    // behind is how a directory of unlisted files accumulates that nothing will ever read again.
+    removed |= AttachmentStore.deleteFor(FileSession.fileFor(sessionsDir, id));
     return removed;
   }
 
@@ -107,7 +110,14 @@ public final class SessionStore {
     int deleted = 0;
     try (Stream<Path> entries = Files.list(sessionsDir)) {
       for (Path file : entries.toList()) {
-        if (!idOf(file.getFileName().toString()).isEmpty()) {
+        String name = file.getFileName().toString();
+        if (name.endsWith(AttachmentStore.DIRECTORY_SUFFIX)) {
+          // A session's pictures: they are not sessions, they are counted with the one they belong
+          // to, and leaving them would leave the whole point of this cleanup behind.
+          AttachmentStore.deleteDirectory(file);
+          continue;
+        }
+        if (!idOf(name).isEmpty()) {
           Files.deleteIfExists(file);
           deleted++;
         }

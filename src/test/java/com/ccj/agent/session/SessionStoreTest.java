@@ -279,6 +279,39 @@ class SessionStoreTest {
   }
 
   @Test
+  void deletingASessionTakesItsPicturesWithIt() throws IOException {
+    // The pictures live beside the session so that this can be true. A deleted conversation that
+    // left its photographs behind would grow a directory nobody lists and nobody ever cleans.
+    Path sessions = Files.createDirectories(dir.resolve("sessions"));
+    FileSession kept = FileSession.create(sessions);
+    kept.append(new Message.User("keep me"));
+    FileSession dropped = FileSession.create(sessions);
+    dropped.append(new Message.User("drop me"));
+
+    AttachmentStore store = AttachmentStore.forSession(dropped.file());
+    store.save("whiteboard.png", png());
+    assertTrue(Files.exists(store.directory()));
+
+    assertTrue(SessionStore.delete(sessions, dropped.id()));
+
+    assertFalse(Files.exists(store.directory()), "the pictures went with the conversation");
+    assertTrue(SessionStore.list(sessions).stream().anyMatch(s -> s.id().equals(kept.id())));
+
+    // And the bulk path, which is what a workspace's "delete all" calls.
+    AttachmentStore other = AttachmentStore.forSession(kept.file());
+    other.save("board.png", png());
+    assertEquals(1, SessionStore.deleteAll(sessions));
+    assertFalse(
+        Files.exists(kept.file().getParent().resolve(kept.id() + AttachmentStore.DIRECTORY_SUFFIX)),
+        "delete all is not a session file loop that forgot the pictures");
+  }
+
+  /** The smallest thing that is really a PNG: the magic number is what the store reads. */
+  private static byte[] png() {
+    return new byte[] {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0};
+  }
+
+  @Test
   void deletingEverythingClearsTheWorkspace() throws IOException {
     Path sessions = Files.createDirectories(dir.resolve("sessions"));
     for (int i = 0; i < 3; i++) {

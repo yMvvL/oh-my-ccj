@@ -16,7 +16,11 @@ import com.ccj.agent.core.Message;
 import com.ccj.agent.core.ProjectPrompt;
 import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.UsageTotals;
+import com.ccj.agent.session.AttachmentStore;
 import com.ccj.agent.session.FileSession;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.sun.net.httpserver.HttpServer;
+import java.net.URLEncoder;
 import java.util.Optional;
 import com.ccj.agent.session.SessionStore;
 import com.ccj.agent.workspace.WorkspaceStore;
@@ -78,6 +82,8 @@ class WebApiTest {
   private AgentHub hub;
   private HttpApi api;
   private String origin;
+  /** The stand-in vision endpoint, when a test starts one. */
+  private HttpServer vision;
 
   @BeforeEach
   void setUp() throws IOException {
@@ -96,6 +102,9 @@ class WebApiTest {
     }
     if (hub != null) {
       hub.close();
+    }
+    if (vision != null) {
+      vision.stop(0);
     }
   }
 
@@ -2586,12 +2595,218 @@ class WebApiTest {
     assertEquals(200, response.statusCode(), response.body());
   }
 
+  // ------------------------------------------------------------------ pictures
+
+  @Test
+  void aPictureBecomesATurnOnItsDescription() throws Exception {
+    List<String> asked = new CopyOnWriteArrayList<>();
+    AtomicInteger visionCalls = new AtomicInteger();
+    startVision("a whiteboard with a red arrow and the words 'ship it'", visionCalls, asked);
+    restartWithVision();
+    provider.reply(Message.Assistant.text("I see the arrow"));
+    JsonNode response;
+
+    try (Sse sse = watch()) {
+      HttpResponse<String> posted = postPicture("whiteboard.png", pngBytes());
+      assertEquals(202, posted.statusCode(), posted.body());
+      response = Json.parse(posted.body());
+      assertEquals(
+          "a whiteboard with a red arrow and the words 'ship it'",
+          response.path("description").asText());
+
+      // The message the model is asked about is the description plus where the picture is, so a
+      // detail the description dropped can be read back with the read tool.
+      JsonNode user = sse.await("user", 5000);
+      String text = user.path("text").asText();
+      assertTrue(text.contains("a whiteboard with a red arrow"), text);
+      assertTrue(text.startsWith("[picture whiteboard.png]"), text);
+      assertTrue(text.contains(response.path("attachment").asText()), text);
+      assertTrue(
+          sse.await("done", 5000).path("finalText").asText().contains("arrow"),
+          "the description is what the turn ran on");
+
+      // No image ever reaches the main model: the request holds text and nothing else.
+      String toMainModel = provider.requests().get(0).messages().toString();
+      assertTrue(toMainModel.contains("a whiteboard with a red arrow"), toMainModel);
+      assertFalse(toMainModel.contains("base64"), "the picture itself stays out of the conversation");
+    }
+
+    assertEquals(1, visionCalls.get(), "one picture, one description");
+    assertEquals(1, asked.size());
+    assertTrue(asked.get(0).contains("data:image/png;base64,"), asked.get(0));
+    assertTrue(
+        asked.get(0).contains("not from the user"),
+        "the picture is described as data, so text inside it is not a turn from the user");
+
+    Path stored = Path.of(response.path("attachment").asText());
+    assertTrue(Files.exists(stored), "the picture is kept: " + stored);
+    assertTrue(
+        stored.getParent().getFileName().toString().endsWith(".attachments"),
+        "beside the session, not in the project: " + stored);
+  }
+
+  @Test
+  void aPngThatIsNotAPngIsRefusedWithoutAskingTheVisionModel() throws Exception {
+    AtomicInteger visionCalls = new AtomicInteger();
+    startVision("never asked", visionCalls, new CopyOnWriteArrayList<>());
+    restartWithVision();
+
+    HttpResponse<String> posted =
+        postPicture("receipt.png", "this is not a png".getBytes(StandardCharsets.UTF_8));
+
+    assertEquals(400, posted.statusCode(), posted.body());
+    assertTrue(posted.body().contains("magic number"), posted.body());
+    assertEquals(0, visionCalls.get(), "the bytes decide, before the vision endpoint is asked");
+    assertEquals(List.of(), attachmentDirectories(), "nothing was written");
+  }
+
+  @Test
+  void aPictureOverTheLimitIsRefusedWithoutBeingHeld() throws Exception {
+    AtomicInteger visionCalls = new AtomicInteger();
+    startVision("never asked", visionCalls, new CopyOnWriteArrayList<>());
+    restartWithVision();
+
+    // Nine megabytes, which the endpoint refuses on the advertised length. What this pins is that
+    // the refusal is a refusal and not a crash, and that nothing is written or described on the way
+    // to it; that the limit applies to the read rather than to what was already buffered is pinned
+    // in AttachmentStoreTest, where a stream that fails the test if it is read at all makes it
+    // checkable.
+    byte[] big = new byte[(int) AttachmentStore.MAX_BYTES + 1];
+    System.arraycopy(pngBytes(), 0, big, 0, 8);
+
+    HttpResponse<String> posted = postPicture("huge.png", big);
+
+    assertEquals(413, posted.statusCode(), posted.body());
+    assertTrue(posted.body().contains("8 MB"), posted.body());
+    assertEquals(0, visionCalls.get());
+    assertEquals(List.of(), attachmentDirectories(), "and nothing was written");
+  }
+
+  @Test
+  void aPictureIsRefusedWhileThatConversationIsBusyBeforeTheVisionCall() throws Exception {
+    AtomicInteger visionCalls = new AtomicInteger();
+    startVision("a description nobody should pay for", visionCalls, new CopyOnWriteArrayList<>());
+    restartWithVision();
+    provider.reply(Message.Assistant.text("slow answer"));
+    provider.gate(new CountDownLatch(1));
+
+    try (Sse sse = watch()) {
+      assertEquals(202, post("/api/message", "{\"text\":\"first\"}").statusCode());
+      HttpResponse<String> posted = postPicture("photo.png", pngBytes());
+      assertEquals(409, posted.statusCode(), posted.body());
+      assertTrue(posted.body().contains("still running"), posted.body());
+
+      provider.release();
+      sse.await("done", 5000);
+    }
+    // Claiming the conversation first is what makes this true: describing first would spend a
+    // multi-megabyte upload and a vision call on a turn that can never start.
+    assertEquals(0, visionCalls.get());
+    assertEquals(List.of(), attachmentDirectories(), "and nothing was written either");
+  }
+
+  @Test
+  void withoutAVisionModelAPictureIsRefusedWithWhatToSet() throws Exception {
+    // The default test configuration has no vision block: the feature reports itself off, and the
+    // refusal names the block and the flags that turn it on rather than failing obscurely.
+    HttpResponse<String> posted = postPicture("photo.png", pngBytes());
+
+    assertEquals(409, posted.statusCode(), posted.body());
+    assertTrue(posted.body().contains("no vision model is configured"), posted.body());
+    assertTrue(posted.body().contains("--vision-base-url"), posted.body());
+    assertEquals(List.of(), attachmentDirectories(), "and nothing was written");
+  }
+
+  /** A stand-in vision endpoint on loopback: one canned description, and a count of the calls. */
+  private void startVision(String description, AtomicInteger calls, List<String> asked)
+      throws IOException {
+    if (vision != null) {
+      vision.stop(0);
+    }
+    vision = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    vision.createContext(
+        "/v1/chat/completions",
+        exchange -> {
+          asked.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+          calls.incrementAndGet();
+          ObjectNode reply = Json.object();
+          reply.putArray("choices").addObject().putObject("message").put("content", description);
+          byte[] body = Json.write(reply).getBytes(StandardCharsets.UTF_8);
+          try {
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var out = exchange.getResponseBody()) {
+              out.write(body);
+            }
+          } catch (IOException ignored) {
+            // The client hung up; the count is what this stub is for.
+          }
+        });
+    vision.start();
+  }
+
+  /** The hub again, on a configuration that carries a vision block, as the config file would. */
+  private void restartWithVision() throws IOException {
+    Files.writeString(
+        configFile,
+        """
+        {"provider":"openai","model":"mock-model","baseUrl":"http://mock.invalid/v1",
+         "apiKey":"sk-test",
+         "vision":{"baseUrl":"http://127.0.0.1:%d/v1","model":"mock-vision","apiKey":"sk-vision"}}
+        """
+            .formatted(vision.getAddress().getPort()));
+
+    Config layered = Config.layered(configFile, Map.of(), null);
+    api.close();
+    hub.close();
+    hub = hub(provider, layered);
+    api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), null);
+    origin = "http://127.0.0.1:" + api.port();
+  }
+
+  private HttpResponse<String> postPicture(String name, byte[] bytes) throws Exception {
+    return client.send(
+        HttpRequest.newBuilder(
+                URI.create(
+                    origin
+                        + "/api/attachment?name="
+                        + URLEncoder.encode(name, StandardCharsets.UTF_8)))
+            .header("Content-Type", "image/png")
+            .POST(HttpRequest.BodyPublishers.ofByteArray(bytes))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  /** Every {@code <id>.attachments} directory under the sessions directory, by name. */
+  private List<String> attachmentDirectories() throws IOException {
+    if (!Files.isDirectory(sessions)) {
+      return List.of();
+    }
+    try (var entries = Files.list(sessions)) {
+      return entries
+          .map(entry -> entry.getFileName().toString())
+          .filter(name -> name.endsWith(AttachmentStore.DIRECTORY_SUFFIX))
+          .sorted()
+          .toList();
+    }
+  }
+
+  private static byte[] pngBytes() throws IOException {
+    java.awt.image.BufferedImage image =
+        new java.awt.image.BufferedImage(4, 4, java.awt.image.BufferedImage.TYPE_INT_RGB);
+    image.setRGB(0, 0, 0xFF0000);
+    java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+    assertTrue(javax.imageio.ImageIO.write(image, "png", out), "the test needs a real PNG");
+    return out.toByteArray();
+  }
+
   @Test
   void everyStateChangingEndpointRefusesAnotherSite() throws Exception {
     // The defence is by method, not by a list of paths, precisely so a new endpoint cannot forget to
     // opt in. This checks the ones that exist today actually behave that way.
-    for (String path : List.of("/api/message", "/api/abort", "/api/compact", "/api/session",
-        "/api/workspaces", "/api/workspace", "/api/config", "/api/auto-approve", "/api/approval")) {
+    for (String path : List.of("/api/message", "/api/attachment", "/api/abort", "/api/compact",
+        "/api/session", "/api/workspaces", "/api/workspace", "/api/config", "/api/auto-approve",
+        "/api/approval")) {
       HttpResponse<String> refused = postFrom(HttpExchangeOrigin.EVIL, path, "{}");
       assertEquals(
           403,
