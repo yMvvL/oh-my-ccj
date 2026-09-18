@@ -1,5 +1,7 @@
 package com.ccj.agent.core;
 
+import com.ccj.agent.core.ApprovalAnswer;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -426,9 +428,9 @@ class SubAgentRunnerTest {
     // transcript the user is already watching — and a refusal stops the write.
     java.util.List<String> asked = new java.util.ArrayList<>();
     Approver refusing =
-        (title, detail) -> {
-          asked.add(title);
-          return false;
+        request -> {
+          asked.add(request.title());
+          return ApprovalAnswer.DENY;
         };
     ScriptedProvider provider =
         new ScriptedProvider()
@@ -451,9 +453,9 @@ class SubAgentRunnerTest {
     java.util.concurrent.atomic.AtomicInteger asked =
         new java.util.concurrent.atomic.AtomicInteger();
     Approver counting =
-        (title, detail) -> {
+        request -> {
           asked.incrementAndGet();
-          return true;
+          return ApprovalAnswer.ALLOW_ONCE;
         };
     ScriptedProvider provider =
         new ScriptedProvider()

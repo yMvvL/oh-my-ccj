@@ -37,6 +37,16 @@ Also: `edit` and `write` re-read before they write and refuse a file that change
 waited, both write through a temp file and an atomic rename, the SSE keep-alive is a real event the
 page can hear, and an error body is read bounded rather than truncated after the fact.
 
+**Approval has four answers, and one of them can be written down.** Deny, allow once, allow for this
+session, allow from now on. The last writes a rule into `<home>/approvals.json` keyed by project, and
+that rule answers the next identical request without a prompt. This removes the friction that made
+people run `--yolo`: "stop asking me about this" used to mean "stop asking me about anything", because
+the only other answer the gate had was a session-wide switch. Rules match a command exactly, or widen
+it by one trailing ` *`, and a widened rule never covers a command containing `;`, `&&`, `|`, a
+substitution or a redirect. Deny wins over everything, a path rule cannot leave the project, an
+unreadable rules file asks instead of allowing, and every automatic answer is in the transcript as
+`allowed by rule — …`. See [SECURITY.md](../SECURITY.md).
+
 **A check runs itself after an edit, and the conventions became a document.** `checks` in the config
 file names commands that run inside the `edit`/`write` call that matches their glob, so the compiler's
 verdict arrives with the change rather than three turns later — see the README row and

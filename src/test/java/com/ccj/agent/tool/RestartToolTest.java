@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ccj.agent.core.ApprovalAnswer;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
@@ -26,7 +27,11 @@ class RestartToolTest {
 
   private static ToolContext context(Path cwd, boolean approve, AtomicBoolean ended) {
     return new ToolContext(
-        cwd, (title, detail) -> approve, 0, () -> false, () -> ended.set(true));
+        cwd,
+        request -> approve ? ApprovalAnswer.ALLOW_ONCE : ApprovalAnswer.DENY,
+        0,
+        () -> false,
+        () -> ended.set(true));
   }
 
   /** A directory shaped like the project: an installed jar and a scratch build beside it. */
@@ -125,9 +130,9 @@ class RestartToolTest {
     ToolContext ctx =
         new ToolContext(
             project,
-            (title, text) -> {
-              detail.append(text);
-              return false;
+            request -> {
+              detail.append(request.detail());
+              return ApprovalAnswer.DENY;
             },
             0,
             () -> false,

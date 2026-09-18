@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
@@ -143,7 +144,19 @@ class WebApiTest {
     return hub(initial, config, SessionStore.create(sessions));
   }
 
+  /** The approvals file these tests write rules into; the chain reads it on every decision. */
+  private Path approvalsFile() {
+    return tmp.resolve("approvals.json");
+  }
+
   private AgentHub hub(Provider initial, Config config, FileSession session) {
+    AgentHub built = hubWithoutRules(initial, config, session);
+    // Wired exactly as the CLI does it: rules for this project, in the application home.
+    built.setApprovalRules(ApprovalRules.open(approvalsFile(), cwd));
+    return built;
+  }
+
+  private AgentHub hubWithoutRules(Provider initial, Config config, FileSession session) {
     return new AgentHub(
         initial,
         config,
@@ -400,27 +413,121 @@ class WebApiTest {
   }
 
   @Test
-  void rememberingAnApprovalFlipsTheSessionToAutoApprove() throws Exception {
+  void allowingForTheSessionStopsAskingAboutThatCommandAndNothingElse() throws Exception {
+    // What "remember" means now, and the difference is the point. It used to switch the whole
+    // session to auto-approve — so answering a question about one command decided every future
+    // question — which is why the toggle that did that was the one nobody dared touch. The answer is
+    // now as narrow as the button the user pressed: this command, for this session, and the gate
+    // stays on for everything else.
+    // Replies are enqueued per turn rather than all at once: the turns are different commands, and a
+    // queue filled up front would hand the second turn the third turn's answer.
     provider.reply(bashCall("printf a > one.txt"));
     provider.reply(Message.Assistant.text("first"));
-    provider.reply(bashCall("printf b > two.txt"));
-    provider.reply(Message.Assistant.text("second"));
 
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"one\"}");
       JsonNode approval = sse.await("approval", 5000);
       post(
           "/api/approval",
-          "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true,\"remember\":true}");
+          "{\"id\":\"" + approval.path("id").asText() + "\",\"answer\":\"session\"}");
       sse.await("done", 5000);
-      assertTrue(hub.autoApprove());
-      assertEquals(1, sse.ofType("approval").size());
+      assertFalse(hub.autoApprove(), "the question was about one command, not about every command");
 
-      post("/api/message", "{\"text\":\"two\"}");
+      // The same command again: answered by what was remembered, so no second prompt.
+      provider.reply(bashCall("printf a > one.txt"));
+      provider.reply(Message.Assistant.text("same command"));
+      post("/api/message", "{\"text\":\"same again\"}");
       sse.awaitAtLeast("done", 2, 5000);
-      assertTrue(Files.exists(cwd.resolve("two.txt")), "the second call must have skipped approval");
-      assertEquals(1, sse.ofType("approval").size(), "only the first call should have asked");
+      assertEquals(1, sse.ofType("approval").size(), "the same command must not ask twice");
+
+      // A different command is a different question, and it is still asked.
+      provider.reply(bashCall("printf c > three.txt"));
+      provider.reply(Message.Assistant.text("different command"));
+      post("/api/message", "{\"text\":\"something else\"}");
+      JsonNode second = sse.awaitAtLeast("approval", 2, 5000);
+      assertNotNull(second, "a command nobody allowed must still be asked about");
+      assertEquals("bash", second.path("tool").asText());
+      assertEquals("printf c > three.txt", second.path("command").asText(),
+          "and the prompt carries the command as a field, so it can be matched by a rule");
+      post("/api/approval", "{\"id\":\"" + second.path("id").asText() + "\",\"answer\":\"deny\"}");
+      sse.awaitAtLeast("done", 3, 5000);
+      assertFalse(Files.exists(cwd.resolve("three.txt")), "the denied command must not have run");
     }
+  }
+
+  @Test
+  void alwaysAllowWritesARuleAndAProjectPicksItUp() throws Exception {
+    // The "Always allow" answer is a file write, so it is the one to be careful about: what is
+    // written has to be no wider than what was asked about, and it has to actually work afterwards —
+    // including for a process that starts later and reads the file fresh.
+    provider.reply(bashCall("printf a > one.txt"));
+    provider.reply(Message.Assistant.text("first"));
+
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"one\"}");
+      JsonNode approval = sse.await("approval", 5000);
+      post(
+          "/api/approval",
+          "{\"id\":\"" + approval.path("id").asText() + "\",\"answer\":\"always\"}");
+      sse.await("done", 5000);
+    }
+
+    String written = Files.readString(approvalsFile());
+    assertTrue(written.contains("printf a > one.txt"), written);
+    assertTrue(written.contains(cwd.toString()), "filed under the project it was granted in: " + written);
+    assertTrue(
+        written.contains("one.txt"),
+        "the rule is the command that was approved, verbatim: " + written);
+    assertFalse(
+        written.contains("\"command\" : \"*\"") || written.contains("\"tool\" : \"bash\"\n    }"),
+        "and nothing that would allow every command: " + written);
+
+    // A fresh hub over the same file, as the next process would have: the command is not asked about.
+    api.close();
+    hub.close();
+    hub = hub(provider, testConfig());
+    api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), null);
+    origin = "http://127.0.0.1:" + api.port();
+
+    provider.reply(bashCall("printf a > one.txt"));
+    provider.reply(Message.Assistant.text("again"));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"again\"}");
+      sse.await("done", 5000);
+      assertEquals(0, sse.ofType("approval").size(), "the rule in the file answers for it now");
+      assertTrue(Files.exists(cwd.resolve("one.txt")));
+    }
+  }
+
+  @Test
+  void aRuleThatForbidsIsRefusedWithoutAskingAnybody() throws Exception {
+    // Deny wins, and it must not turn into a prompt: the point of writing a rule is that it decides.
+    Files.createDirectories(approvalsFile().getParent());
+    Files.writeString(
+        approvalsFile(),
+        "{\"projects\": {\""
+            + cwd
+            + "\": {\"deny\": [{\"tool\": \"bash\", \"command\": \"printf a > one.txt\"}]}}}");
+    provider.reply(bashCall("printf a > one.txt"));
+    provider.reply(Message.Assistant.text("tried"));
+
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"one\"}");
+      JsonNode done = sse.await("done", 5000);
+      assertEquals(0, sse.ofType("approval").size(), "the rule answers, so nobody is asked");
+      assertFalse(Files.exists(cwd.resolve("one.txt")), "and the command did not run");
+      assertTrue(done.toString().contains("tried"), done.toString());
+    }
+    // The transcript says a rule said no, rather than reporting a person's refusal: the two are
+    // different events in a session nobody was watching.
+    assertTrue(
+        sseText().contains("denied by a rule"),
+        "a rule's refusal has to read as one: " + sseText());
+  }
+
+  private String sseText() throws Exception {
+    // Whatever the transcript holds for this session, as the page would have rendered it.
+    return json("/api/history").toString();
   }
 
   @Test

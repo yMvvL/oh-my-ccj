@@ -350,11 +350,12 @@ public final class HttpApi implements AutoCloseable {
     String id = body.path("id").asText("");
     boolean allow = body.path("allow").asBoolean(false);
     boolean remember = body.path("remember").asBoolean(false);
+    String answer = body.path("answer").asText(null);
     if (id.isBlank()) {
       error(exchange, 400, "field 'id' is required");
       return;
     }
-    if (!hub.resolveApproval(id, allow, remember)) {
+    if (!hub.resolveApproval(id, AgentHub.answerOf(allow, remember, answer))) {
       error(exchange, 404, "no pending approval with id " + id);
       return;
     }

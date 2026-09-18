@@ -1884,8 +1884,7 @@
     }
 
     if (autoApproveOn() && !rec.resolved) {
-      rec.remember.checked = true;
-      rec.answer(true);
+      rec.answer('once');
       rec.stateEl.textContent = 'Approved automatically (Approve all)';
     }
     refreshLive();
@@ -1906,26 +1905,27 @@
     const detailNode = el('pre', 'approval-detail', str(detail) || '(no detail)');
     root.appendChild(detailNode);
 
+    /* Four answers, because there are four: no, yes once, yes for this session, and yes from now on
+     * — written into the approvals file as a rule. Before this there were two, and the only way to
+     * say "stop asking about this" was the whole-session toggle in the header, which is the switch
+     * nobody dares touch. The words on the buttons are the words the server acts on. */
     const actions = el('div', 'approval-actions');
-    const rememberLabel = el('label', 'remember');
-    const remember = el('input');
-    remember.type = 'checkbox';
-    rememberLabel.appendChild(remember);
-    rememberLabel.appendChild(el('span', null, 'always allow'));
     const stateEl = el('span', 'approval-state', 'waiting for an answer');
     const deny = el('button', 'btn danger', 'Deny');
-    deny.type = 'button';
-    const approve = el('button', 'btn primary', 'Approve');
-    approve.type = 'button';
-    actions.appendChild(rememberLabel);
+    const once = el('button', 'btn primary', 'Allow');
+    const session = el('button', 'btn', 'Allow for session');
+    const always = el('button', 'btn', 'Always allow');
+    [deny, once, session, always].forEach(function (button) { button.type = 'button'; });
     actions.appendChild(deny);
-    actions.appendChild(approve);
+    actions.appendChild(once);
+    actions.appendChild(session);
+    actions.appendChild(always);
     actions.appendChild(stateEl);
     root.appendChild(actions);
 
     const rec = {
-      id: id, root: root, approve: approve, deny: deny,
-      remember: remember, stateEl: stateEl, resolved: false,
+      id: id, root: root, approve: once, deny: deny,
+      session: session, always: always, stateEl: stateEl, resolved: false,
       at: Date.now()
     };
 
@@ -1935,7 +1935,8 @@
       rec.root.classList.add(allow ? 'approved' : 'denied');
       rec.approve.disabled = true;
       rec.deny.disabled = true;
-      rec.remember.disabled = true;
+      rec.session.disabled = true;
+      rec.always.disabled = true;
       rec.stateEl.textContent = label;
       rec.stateEl.className = 'approval-state ' + cls;
       refreshLive();
@@ -1943,21 +1944,31 @@
       setBusy(state.busy);
     };
 
-    rec.answer = function (allow) {
+    rec.answer = function (choice) {
       if (rec.resolved) { return; }
-      const useRemember = allow && rec.remember.checked;
-      rec.settle(allow, allow ? (useRemember ? 'Approved (always allow)' : 'Approved') : 'Denied',
-        allow ? 'ok' : 'bad');
-      answerApproval(id, allow, useRemember);
+      const allowed = choice !== 'deny';
+      rec.settle(allowed, APPROVAL_LABELS[choice] || 'Answered', allowed ? 'ok' : 'bad');
+      answerApproval(id, choice);
     };
 
-    approve.addEventListener('click', function () { rec.answer(true); });
-    deny.addEventListener('click', function () { rec.answer(false); });
+    deny.addEventListener('click', function () { rec.answer('deny'); });
+    once.addEventListener('click', function () { rec.answer('once'); });
+    session.addEventListener('click', function () { rec.answer('session'); });
+    always.addEventListener('click', function () { rec.answer('always'); });
 
     state.approvals.set(id, rec);
     appendToTranscript(root);
     return rec;
   }
+
+  /* What each answer means, in the words the card shows after it has been given. `once` is the
+   * primary button and the one the auto-approve toggle takes on the user's behalf. */
+  const APPROVAL_LABELS = {
+    deny: 'Denied',
+    once: 'Allowed once',
+    session: 'Allowed for this session',
+    always: 'Allowed from now on (rule saved)'
+  };
 
   /* Requests the server says are still outstanding for the conversation on screen.
    *
@@ -1990,12 +2001,15 @@
     const rec = approvalRecord(str(ev.id));
     if (!rec || rec.resolved) { return; }
     const allow = ev.allow === true;
-    rec.settle(allow, allow ? 'Approved' : 'Denied', allow ? 'ok' : 'bad');
+    // The server says which of the four answers it was, so a card answered somewhere else reads the
+    // same here as it does there.
+    const label = APPROVAL_LABELS[str(ev.answer)] || (allow ? 'Approved' : 'Denied');
+    rec.settle(allow, label, allow ? 'ok' : 'bad');
   }
 
-  async function answerApproval(id, allow, remember) {
+  async function answerApproval(id, choice) {
     try {
-      await postJSON('/api/approval', { id: id, allow: !!allow, remember: !!remember });
+      await postJSON('/api/approval', { id: id, answer: str(choice) || 'deny' });
     } catch (err) {
       const rec = approvalRecord(id);
       if (rec) {
@@ -2004,7 +2018,8 @@
         rec.root.classList.add('pending');
         rec.approve.disabled = false;
         rec.deny.disabled = false;
-        rec.remember.disabled = false;
+        rec.session.disabled = false;
+        rec.always.disabled = false;
         rec.stateEl.textContent = 'Could not send the answer — try again';
         rec.stateEl.className = 'approval-state bad';
       }
@@ -2014,11 +2029,13 @@
     }
   }
 
+  /* The header's auto-approve toggle, for prompts that are already on screen: each is answered the
+   * narrow way. It used to set "remember", which meant the whole session — answering a question
+   * about one command by deciding about every command is how the toggle earned its reputation. */
   function approvePending() {
     state.approvals.forEach(function (rec) {
       if (!rec.resolved) {
-        rec.remember.checked = true;
-        rec.answer(true);
+        rec.answer('once');
       }
     });
   }

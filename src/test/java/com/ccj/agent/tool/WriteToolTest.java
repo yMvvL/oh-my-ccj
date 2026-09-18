@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ccj.agent.core.ApprovalAnswer;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
@@ -39,9 +40,9 @@ class WriteToolTest {
     ToolContext ctx =
         new ToolContext(
             dir,
-            (title, detail) -> {
-              approvals.add(title + "|" + detail);
-              return true;
+            request -> {
+              approvals.add(request.title() + "|" + request.detail());
+              return ApprovalAnswer.ALLOW_ONCE;
             },
             4096);
 
@@ -63,9 +64,9 @@ class WriteToolTest {
     ToolContext ctx =
         new ToolContext(
             dir,
-            (title, detail) -> {
-              approvals.add(detail);
-              return true;
+            request -> {
+              approvals.add(request.detail());
+              return ApprovalAnswer.ALLOW_ONCE;
             },
             4096);
 
@@ -88,13 +89,13 @@ class WriteToolTest {
     // the one they consented to.
     Path file = dir.resolve("appeared.txt");
     Approver creatingBehindOurBack =
-        (title, detail) -> {
+        request -> {
           try {
             Files.writeString(file, "somebody else's work");
           } catch (IOException e) {
             throw new UncheckedIOException(e);
           }
-          return true;
+          return ApprovalAnswer.ALLOW_ONCE;
         };
 
     ToolResult result =

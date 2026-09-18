@@ -3,7 +3,10 @@ package com.ccj.agent.cli;
 import com.ccj.agent.core.AgentLoop;
 import com.ccj.agent.core.AgentOptions;
 import com.ccj.agent.core.AppPaths;
+import com.ccj.agent.core.ApprovalAnswer;
+import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Approver;
+import com.ccj.agent.core.RuleApprover;
 import com.ccj.agent.core.Checks;
 import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
@@ -272,6 +275,7 @@ public final class Cli {
             session,
             agentOptions,
             cwd,
+            paths.home(),
             config,
             autoApprove,
             renderer,
@@ -287,6 +291,7 @@ public final class Cli {
               tools,
               sessionsDir,
               cwd,
+              paths.home(),
               config,
               env,
               session,
@@ -331,6 +336,7 @@ public final class Cli {
       FileSession session,
       AgentOptions agentOptions,
       Path cwd,
+      Path home,
       Config config,
       boolean autoApprove,
       ConsoleRenderer renderer,
@@ -339,7 +345,9 @@ public final class Cli {
       PrintStream out,
       PrintStream err) {
     AgentLoop loop =
-        newLoop(provider, tools, session, agentOptions, cwd, config, autoApprove, renderer, in, out, err);
+        newLoop(
+            provider, tools, session, agentOptions, cwd, home, config, autoApprove, renderer, in, out,
+            err);
     try {
       loop.run(prompt);
       return RestartTool.restartRequested() ? RestartTool.RESTART_EXIT : 0;
@@ -356,6 +364,7 @@ public final class Cli {
       FileSession session,
       AgentOptions agentOptions,
       Path cwd,
+      Path home,
       Config config,
       boolean autoApprove,
       ConsoleRenderer renderer,
@@ -364,8 +373,29 @@ public final class Cli {
       PrintStream err) {
     ToolContext context =
         new ToolContext(
-            cwd, approver(autoApprove, in, out, err, renderer), config.outputLimitBytes());
+            cwd, gatedApprover(autoApprove, in, out, err, renderer, cwd, home), config.outputLimitBytes());
     return new AgentLoop(provider, tools, session, agentOptions, context, renderer);
+  }
+
+  /**
+   * The terminal's gate with the user's rules in front of it, announcing every automatic answer on
+   * stdout so a decision nobody was asked about is still a decision somebody can see.
+   */
+  private Approver gatedApprover(
+      boolean autoApprove,
+      BufferedReader in,
+      PrintStream out,
+      PrintStream err,
+      ConsoleRenderer renderer,
+      Path cwd,
+      Path home) {
+    Approver interactive = approver(autoApprove, in, out, err, renderer);
+    if (autoApprove) {
+      // --yolo is "ask me nothing": rules would only be a slower way to the same answer.
+      return interactive;
+    }
+    return new RuleApprover(
+        ApprovalRules.open(home.resolve("approvals.json"), cwd), interactive, out::println);
   }
 
   /**
@@ -381,27 +411,37 @@ public final class Cli {
     if (autoApprove) {
       return Approver.ALWAYS;
     }
-    return (title, detail) -> {
+    return request -> {
       if (in == null || System.console() == null) {
-        err.println("denied " + title + ": " + detail);
+        err.println("denied " + request.title() + ": " + request.detail());
         err.println(
             "stdin is not a terminal, so ccj cannot ask for confirmation;"
                 + " re-run with --yolo to approve tool calls automatically");
         err.flush();
-        return false;
+        return ApprovalAnswer.DENY;
       }
       renderer.pauseSpinner();
       try {
-        out.print("approve " + title + " — " + detail + "? [y/N] ");
+        out.print(
+            "approve "
+                + request.title()
+                + " — "
+                + request.detail()
+                + "? [y/N/s=this session/a=always] ");
         out.flush();
         String answer = in.readLine();
         if (answer == null) {
-          return false;
+          return ApprovalAnswer.DENY;
         }
         String normalized = answer.strip().toLowerCase(Locale.ROOT);
-        return normalized.equals("y") || normalized.equals("yes");
+        return switch (normalized) {
+          case "y", "yes" -> ApprovalAnswer.ALLOW_ONCE;
+          case "s", "session" -> ApprovalAnswer.ALLOW_SESSION;
+          case "a", "always" -> ApprovalAnswer.ALLOW_ALWAYS;
+          default -> ApprovalAnswer.DENY;
+        };
       } catch (IOException e) {
-        return false;
+        return ApprovalAnswer.DENY;
       } finally {
         renderer.resumeSpinner();
       }
@@ -565,6 +605,9 @@ public final class Cli {
             Boolean.TRUE.equals(config.autoApprove()) || options.yolo(),
             options.subAgents());
     AgentHub hub = new AgentHub(provider, config, tools, settings, session);
+    // The rules file lives in the application home, keyed by project: a repository cannot ship a
+    // decision about what runs without asking, because a repository cannot write here.
+    hub.setApprovalRules(ApprovalRules.open(home.resolve("approvals.json"), cwd));
     Wallpapers wallpapers = Wallpapers.from(env, options.wallpapers());
     try (HttpApi api = HttpApi.start(hub, binds, token, wallpapers)) {
       List<String> urls = api.urls();
@@ -750,6 +793,7 @@ public final class Cli {
     private final ToolRegistry tools;
     private final Path sessionsDir;
     private final Path cwd;
+    private final Path home;
     private final Config config;
     private final Map<String, String> env;
     private final ConsoleRenderer renderer;
@@ -768,6 +812,7 @@ public final class Cli {
         ToolRegistry tools,
         Path sessionsDir,
         Path cwd,
+        Path home,
         Config config,
         Map<String, String> env,
         FileSession session,
@@ -781,6 +826,7 @@ public final class Cli {
       this.tools = tools;
       this.sessionsDir = sessionsDir;
       this.cwd = cwd;
+      this.home = home;
       this.config = config;
       this.env = env;
       this.session = session;
@@ -796,7 +842,10 @@ public final class Cli {
 
     private void rebuild() {
       ToolContext context =
-          new ToolContext(cwd, approver(autoApprove, in, out, err, renderer), config.outputLimitBytes());
+          new ToolContext(
+              cwd,
+              gatedApprover(autoApprove, in, out, err, renderer, cwd, home),
+              config.outputLimitBytes());
       this.loop = new AgentLoop(provider, tools, session, agentOptions, context, renderer);
     }
 

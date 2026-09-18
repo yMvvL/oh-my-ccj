@@ -12,6 +12,12 @@ your `$HOME` and your credentials, and it can read and write anything you can. A
 guard before it acts, and `--yolo` (or auto-approve) removes that guard by design. Treat a running ccj
 exactly as you would treat an open terminal.
 
+Approval has four answers now rather than two — deny, allow once, allow for this session, and allow
+from now on — because the alternative was a single switch that turned the guard off for the whole
+session, and a guard people switch off is not a guard. What each one does is written in
+**Approval rules** below, and so is the part that matters: an automatic answer is only as wide as the
+thing it was granted for.
+
 ## What is defended
 
 - **Never a wildcard bind.** The server binds loopback plus, when the machine has one, its tailnet
@@ -70,6 +76,55 @@ exactly as you would treat an open terminal.
   can write the config file can make a command run without a prompt — one approval on that write,
   which is the same exposure a project's `CCJ.md` already has, and which the allow rules in
   [ROADMAP](docs/ROADMAP.md) 2.5.2 are intended to replace with something narrower.
+
+## Approval rules
+
+An approval is a question with four answers, and three of them can be recorded:
+
+| Answer | What it remembers | Where it lives |
+|---|---|---|
+| Deny | nothing | — |
+| Allow | nothing | — |
+| Allow for session | this command, or this path, for this process | memory, gone when ccj exits |
+| Allow from now on | the same, and it survives a restart | `<home>/approvals.json`, `0600` |
+
+The file is keyed by project, and it lives in the application home rather than in the repository:
+
+```json
+{ "projects": {
+    "/home/you/api": {
+      "allow": [ {"tool": "bash", "command": "mvn -q -o test"},
+                 {"tool": "bash", "command": "git diff *"},
+                 {"tool": "edit", "path": "src/**"} ],
+      "deny":  [ {"tool": "bash", "command": "git push *"} ] } } }
+```
+
+- **A rule names one command exactly, or widens it with one trailing ` *`.** Nothing else in a pattern
+  is a wildcard; a rule that says `git * status` is refused when the file is read, because a pattern
+  whose meaning depends on where the star is cannot be audited. `git diff *` means `git diff` plus
+  further arguments — and only when the command contains none of the shell's compounding characters
+  (`;`, `&`, `|`, `>`, `<`, `` ` ``, `$`, `(`, `)`, `{`, `}`, `[`, `]`, `*`, `?`, `!`, backslash, a
+  newline). `git diff HEAD; rm -rf /` starts with `git diff HEAD` and is not it, and neither is
+  `git diff $(cat /etc/passwd)`. An *exact* rule is matched verbatim instead, which is why
+  "allow for this session" keeps working for commands with redirects in them — an equality check
+  cannot be widened by anything inside it.
+- **Deny wins, always**, including over a session allow: one press of "allow for this session" must
+  not be able to undo a rule that forbids a command.
+- **A path rule is scoped to the project**, matched relative to it, and a path outside it — including
+  one that walks out with `..` — matches nothing.
+- **An unreadable or malformed rules file asks rather than allows.** "No rules" and "rules I could
+  not parse" look the same to the person, and only one of them is safe, so a file with a typo in it
+  falls back to asking with the error in the transcript.
+- **Every automatic answer is said out loud**: `allowed by rule — bash mvn -q -o test`, or
+  `denied by rule — …`. An approval nobody was asked about is one nobody can audit, and the line is
+  what makes "why did it not stop?" answerable after the fact.
+- **What a rule must not become.** The model can write files, and a rules file it can write is a rule
+  it can grant itself — one approval on that write. It is the same exposure a project's `CCJ.md` has,
+  and it is why the file lives in the application home: a repository cannot ship a decision about what
+  runs without asking, because a repository cannot write there.
+
+`--yolo` (and the auto-approve toggle) skips all of this by design: the rules are consulted first, and
+with the guard off there is nothing left for them to answer.
 
 ## What is not defended
 

@@ -128,7 +128,7 @@ what a person feels first, not by what is most interesting to build.
 | # | What | Why it is first | Status |
 |---|---|---|---|
 | 2.5.1 | **A check runs itself after an edit.** `{"checks": [{"glob": "**/*.java", "command": "mvn -q -o -DskipTests compile"}]}` in the config file: the first check whose glob matches the edited path runs inside the `edit`/`write` call, and its verdict — one line when it passes, a bounded excerpt when it fails — is appended to the tool result | Same reason as above | `done` |
-| 2.5.2 | **Permission rules, not one boolean.** `approvals.json` with allow rules (tool name, command prefix, path glob), plus "allow this one for the session" on the prompt. The prompt's only current answers are "yes, this once" and "yes, everything, all session" | This is the root of the felt friction: the choice today is being interrupted or turning the guard off, and people turn the guard off | `todo` |
+| 2.5.2 | **Permission rules, not one boolean.** `approvals.json` (keyed by project, in the application home) with allow and deny rules matching a tool, an exact command or one widened by a trailing ` *`, or a path glob — plus **allow for this session** on the prompt. The prompt used to have two answers: yes once, or yes-everything-for-the-session | Same reason as above | `done` |
 | 2.5.3 | **Messages queue instead of 409.** Typing while a turn runs queues the next message, with the composer saying so | A 409 turns a thinking pause into a dead stop, and "it feels slow" is partly this rather than token speed | `todo` |
 | 2.5.4 | **`edit` takes several hunks, and retries once with the error** — 2.3, pulled forward to here. One approval, one write, and a failed match comes back with the file's neighbourhood attached | The exact-match single hunk is the tool a model fails most often, and every failure is a whole round trip | `todo` |
 | 2.5.5 | **A networking tool.** `fetch` (URL → text, size- and scheme-checked) so "what changed in this library" is answerable | Without it the model guesses at APIs, which is when answers get confidently wrong | `todo` |
@@ -148,6 +148,19 @@ SECURITY.md. Two things the tests pinned that would otherwise have been bugs: a 
 never runs for a file outside the session's working directory, and a pattern beginning `**/` matches
 at the project root as well as inside it — `PathMatcher` alone does not do that, and a check that
 silently never fires looks exactly like a check with nothing to report.
+
+**2.5.2 as built.** `Approver` became `ApprovalAnswer approve(ApprovalRequest)` — four answers over a
+structured request (tool, command, path, and the prose for the prompt) — because a boolean could not
+say "this one, not everything", and two strings could not be matched by a rule without matching prose.
+`RuleApprover` puts the rules in front of whoever is watching, and both front ends learned the four
+answers: the browser's prompt has four buttons, the terminal's prompt takes `y`/`s`/`a`/n. Measured on
+the way: two bugs the tests caught that no amount of reading would have — a rule remembered for a
+command containing `>` could never match it (the metacharacter rule was being applied to exact
+comparisons, where nothing can be widened), and the first rule a user ever grants threw
+`UnsupportedOperationException` into the tool call because the empty rules file was an immutable map,
+so "allow from now on" silently did nothing on the very first use. Both are pinned by tests now, and
+the second one is why the third test of that path exists: the two before it started from a file that
+already had a project in it.
 
 **What is left, and what each one needs.** 2.5.2 is next (below). After it, in order: **2.5.3**
 message queueing — the composer holds the next message instead of the server answering 409

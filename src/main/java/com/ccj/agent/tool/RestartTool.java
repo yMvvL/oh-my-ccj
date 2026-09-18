@@ -1,5 +1,6 @@
 package com.ccj.agent.tool;
 
+import com.ccj.agent.core.ApprovalRequest;
 import com.ccj.agent.core.Tool;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
@@ -150,8 +151,9 @@ public final class RestartTool implements Tool {
             + "then this process exits "
             + RESTART_EXIT
             + ", and the launcher starts the new jar";
-    if (!ctx.approve("restart", detail)) {
-      return ToolResult.error("rejected by user");
+    String refusal = ctx.refusal(ApprovalRequest.tool("restart", detail));
+    if (refusal != null) {
+      return ToolResult.error(refusal);
     }
 
     try {

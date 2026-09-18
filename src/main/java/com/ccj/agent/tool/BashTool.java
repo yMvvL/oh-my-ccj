@@ -1,5 +1,6 @@
 package com.ccj.agent.tool;
 
+import com.ccj.agent.core.ApprovalRequest;
 import com.ccj.agent.core.Tool;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
@@ -81,8 +82,9 @@ public final class BashTool implements Tool {
     if (!ctx.insideCwd(directory)) {
       detail.append(" [OUTSIDE session cwd ").append(ctx.cwd()).append(']');
     }
-    if (!ctx.approve("bash", detail.toString())) {
-      return ToolResult.error("rejected by user");
+    String refusal = ctx.refusal(ApprovalRequest.command(command, detail.toString()));
+    if (refusal != null) {
+      return ToolResult.error(refusal);
     }
 
     ProcessRunner.Result result = ProcessRunner.run(command, directory, timeout, ctx.outputLimitBytes(), ctx);

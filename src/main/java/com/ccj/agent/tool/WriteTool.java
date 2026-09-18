@@ -1,5 +1,6 @@
 package com.ccj.agent.tool;
 
+import com.ccj.agent.core.ApprovalRequest;
 import com.ccj.agent.core.Tool;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
@@ -98,8 +99,9 @@ public final class WriteTool implements Tool {
             .append(DiffPreview.unified(existing, content, PREVIEW_CONTEXT, PREVIEW_MAX_LINES));
       }
     }
-    if (!ctx.approve("write", detail.toString())) {
-      return ToolResult.error("rejected by user");
+    String refusal = ctx.refusal(ApprovalRequest.file("write", file, detail.toString()));
+    if (refusal != null) {
+      return ToolResult.error(refusal);
     }
 
     Path parent = file.getParent();

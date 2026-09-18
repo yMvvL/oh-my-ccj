@@ -78,8 +78,16 @@ public record ToolContext(
     return (p.isAbsolute() ? p : cwd.resolve(p)).normalize();
   }
 
-  public boolean approve(String title, String detail) {
-    return approver.approve(title, detail);
+  /**
+   * Asks for permission, and returns the refusal to hand back — or null when it was allowed.
+   *
+   * <p>An answer rather than the request's text, because an approval has four outcomes now: yes once,
+   * yes for this session, yes always, and two kinds of no that read differently to whoever is looking
+   * at the transcript later.
+   */
+  public String refusal(ApprovalRequest request) {
+    ApprovalAnswer answer = approver.approve(request);
+    return answer.allowed() ? null : answer.refusal();
   }
 
   /**

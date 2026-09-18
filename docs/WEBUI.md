@@ -753,6 +753,18 @@ conversation, and the last one wins when a session is reopened.
 
 ## Approval
 
+A prompt carries the tool, the command and the path as fields of its own — `{"id", "title", "detail",
+"tool", "command", "path"}` — and four answers, which the page draws as four buttons: **Deny**,
+**Allow**, **Allow for session**, **Always allow**. The words on the buttons are the words the server
+acts on (`{"id": "…", "answer": "deny|once|session|always"}`), and the two older boolean fields are
+still understood: `allow: false` is a denial, `allow: true`, `remember: true` now means *this request
+for this session* rather than the whole-session auto-approve it used to switch on.
+
+What came back is in the `approval-closed` event as `answer`, so a card answered in another tab reads
+the same here — "Allowed for this session" — instead of guessing from a boolean. Every answer given
+without asking is a `notice` in the transcript: `allowed by rule — bash mvn -q -o test`.
+
+
 `AgentHub.askApproval` publishes an `approval` event and blocks the loop thread, so a tool call that
 needs a human cannot proceed on its own. Timeout is **deny** — the safe default, and the same rule
 the CLI uses when stdin is not a terminal. `remember: true` flips the session to auto-approve, which

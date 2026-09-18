@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ccj.agent.core.ApprovalAnswer;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
@@ -117,9 +118,9 @@ class EditToolTest {
     Files.writeString(dir.resolve("f.txt"), "a\nb");
     StringBuilder detail = new StringBuilder();
     Approver capture =
-        (title, text) -> {
-          detail.append(text);
-          return false;
+        request -> {
+          detail.append(request.detail());
+          return ApprovalAnswer.DENY;
         };
 
     new EditTool()
@@ -157,13 +158,13 @@ class EditToolTest {
     Files.writeString(file, "one\ntwo\nthree\n");
     // The approver changes the file while "thinking", which is exactly what another writer does.
     Approver editingBehindOurBack =
-        (title, detail) -> {
+        request -> {
           try {
             Files.writeString(file, "one\nTWO CHANGED BY SOMEBODY ELSE\nthree\n");
           } catch (IOException e) {
             throw new UncheckedIOException(e);
           }
-          return true;
+          return ApprovalAnswer.ALLOW_ONCE;
         };
 
     ToolResult result =

@@ -114,7 +114,7 @@ const api = new Function(
   () => {},
   () => {},
   () => false,
-  (id, allow, remember) => { answered.push({ id: id, allow: allow, remember: remember }); });
+  (id, choice) => { answered.push({ id: id, choice: choice }); });
 
 function reset() {
   state.approvals.clear();
@@ -151,13 +151,38 @@ function titles() {
 {
   reset();
   api.syncApprovals([{ id: 'ap-1', title: 'bash', detail: 'echo hi' }]);
-  // The primary button is Approve; the danger one beside it is Deny.
+  // The primary button is "Allow"; the danger one beside it is "Deny".
   const actions = appended[0].querySelector('.approval-actions');
   const approve = actions.children.filter((c) => c.classList.contains('primary'))[0];
   approve.fire('click');
-  eq('the answer goes to the server', answered, [{ id: 'ap-1', allow: true, remember: false }]);
+  eq('the answer goes to the server', answered, [{ id: 'ap-1', choice: 'once' }]);
   eq('and the prompt is closed', appended[0].classList.contains('pending'), false);
   eq('and it is marked approved', appended[0].classList.contains('approved'), true);
+}
+
+// 2b. The four answers are four different answers, and each one says what it means.
+{
+  reset();
+  api.syncApprovals([{ id: 'ap-9', title: 'bash', detail: 'mvn test' }]);
+  const byText = (label) => appended[0].querySelector('.approval-actions').children
+    .filter((c) => c.textContent === label)[0];
+  byText('Allow for session').fire('click');
+  eq('session allow is sent as itself', answered, [{ id: 'ap-9', choice: 'session' }]);
+  const state = appended[0].querySelector('.approval-state');
+  eq('and the card says so', state.textContent, 'Allowed for this session');
+
+  reset();
+  api.syncApprovals([{ id: 'ap-10', title: 'write', detail: 'src/Foo.java' }]);
+  appended[0].querySelector('.approval-actions').children
+    .filter((c) => c.textContent === 'Always allow')[0].fire('click');
+  eq('always allow is sent as itself', answered, [{ id: 'ap-10', choice: 'always' }]);
+
+  reset();
+  api.syncApprovals([{ id: 'ap-11', title: 'bash', detail: 'rm -rf /' }]);
+  appended[0].querySelector('.approval-actions').children
+    .filter((c) => c.classList.contains('danger'))[0].fire('click');
+  eq('deny is sent as deny', answered, [{ id: 'ap-11', choice: 'deny' }]);
+  eq('and the card is marked denied', appended[0].classList.contains('denied'), true);
 }
 
 // 3. A request the server no longer knows about is closed, not left hanging.

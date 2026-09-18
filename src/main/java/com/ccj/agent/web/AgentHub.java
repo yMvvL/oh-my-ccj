@@ -3,7 +3,11 @@ package com.ccj.agent.web;
 import com.ccj.agent.core.AgentListener;
 import com.ccj.agent.core.AgentLoop;
 import com.ccj.agent.core.AgentOptions;
+import com.ccj.agent.core.ApprovalAnswer;
+import com.ccj.agent.core.ApprovalRequest;
+import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Approver;
+import com.ccj.agent.core.RuleApprover;
 import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
@@ -218,6 +222,11 @@ public final class AgentHub implements AutoCloseable {
   /** The conversation the browsing front end is looking at. */
   private final Object sessionLock = new Object();
 
+  /**
+   * The user's approval rules for the project on screen, or null until the caller supplies them: a
+   * hub with none asks about everything, which is what the tests and the embedded uses expect.
+   */
+  private volatile ApprovalRules approvalRules;
   private volatile Config config;
   private volatile FileSession session;
   private volatile boolean closed;
@@ -1470,7 +1479,7 @@ public final class AgentHub implements AutoCloseable {
             active.reasoning(),
             active.maxContextTokens());
     ToolContext context =
-        new ToolContext(conversation.cwd(), this::askApproval, active.outputLimitBytes());
+        new ToolContext(conversation.cwd(), gate(), active.outputLimitBytes());
     return new AgentLoop(
         current,
         registryFor(conversation, current, options, active),
@@ -1505,7 +1514,7 @@ public final class AgentHub implements AutoCloseable {
             // The conversation's own approver, so a sub-agent's request for permission arrives in the
             // transcript the user is already watching. It runs on this turn's thread, so
             // `currentTurnSession` attributes it here, and aborting the turn answers it.
-            this::askApproval);
+            gate());
     ToolRegistry registry = new ToolRegistry();
     for (String name : tools.names()) {
       tools.find(name).ifPresent(registry::register);
@@ -1712,16 +1721,38 @@ public final class AgentHub implements AutoCloseable {
 
   // ------------------------------------------------------------------ approvals
 
-  /** Answers a pending approval. Returns false when the id is unknown or already answered. */
-  public boolean resolveApproval(String id, boolean allow, boolean remember) {
+  /**
+   * Answers a pending approval. Returns false when the id is unknown or already answered.
+   *
+   * <p>{@code remember} used to mean "switch the whole session to auto-approve", which is the only
+   * thing it could mean with a boolean gate: the answer to "stop asking me about this" was "stop
+   * asking me about anything". It now means what the person read on the button — this request, for
+   * the rest of this session — and the rules file is where "never again" goes.
+   */
+  public boolean resolveApproval(String id, ApprovalAnswer answer) {
     Pending pending = id == null ? null : pendingApprovals.get(id);
-    if (pending == null) {
+    if (pending == null || answer == null) {
       return false;
     }
-    if (allow && remember) {
-      setAutoApprove(true);
+    return pending.answer().complete(answer);
+  }
+
+  /** The answer a page posted, with the older two boolean fields still understood. */
+  static ApprovalAnswer answerOf(boolean allow, boolean remember, String posted) {
+    if (posted != null && !posted.isBlank()) {
+      return switch (posted.strip().toLowerCase(java.util.Locale.ROOT)) {
+        case "session" -> ApprovalAnswer.ALLOW_SESSION;
+        case "always" -> ApprovalAnswer.ALLOW_ALWAYS;
+        case "allow", "once", "yes" -> ApprovalAnswer.ALLOW_ONCE;
+        case "deny", "no" -> ApprovalAnswer.DENY;
+        default -> throw new IllegalArgumentException(
+            "unknown approval answer '" + posted + "'; use deny, once, session or always");
+      };
     }
-    return pending.answer().complete(allow);
+    if (!allow) {
+      return ApprovalAnswer.DENY;
+    }
+    return remember ? ApprovalAnswer.ALLOW_SESSION : ApprovalAnswer.ALLOW_ONCE;
   }
 
   /**
@@ -1741,7 +1772,11 @@ public final class AgentHub implements AutoCloseable {
    * away and left abort as the only way out.
    */
   private record Pending(
-      String sessionId, String title, String detail, CompletableFuture<Boolean> answer) {}
+      String sessionId,
+      String title,
+      String detail,
+      ApprovalRequest request,
+      CompletableFuture<ApprovalAnswer> answer) {}
 
   public boolean autoApprove() {
     return autoApprove.get();
@@ -1767,14 +1802,14 @@ public final class AgentHub implements AutoCloseable {
    * Blocks the loop thread until a browser answers. Publishing inside the call is what makes the
    * agent's request visible; returning false on timeout is what keeps it from waiting forever.
    */
-  private boolean askApproval(String title, String detail) {
+  private ApprovalAnswer askApproval(ApprovalRequest request) {
     if (autoApprove.get()) {
-      return true;
+      return ApprovalAnswer.ALLOW_ONCE;
     }
     String sessionId = currentTurnSession();
     String id = "ap-" + nextApprovalId.incrementAndGet();
-    CompletableFuture<Boolean> answer = new CompletableFuture<>();
-    pendingApprovals.put(id, new Pending(sessionId, title, detail, answer));
+    CompletableFuture<ApprovalAnswer> answer = new CompletableFuture<>();
+    pendingApprovals.put(id, new Pending(sessionId, request.title(), request.detail(), request, answer));
     // A status too, so a page that is not looking at this conversation still learns that something
     // is waiting — and so a page that *is* looking at it can rebuild the prompt from the status it
     // asks for on the way in.
@@ -1784,29 +1819,40 @@ public final class AgentHub implements AutoCloseable {
         "approval",
         Json.object()
             .put("id", id)
-            .put("title", title)
-            .put("detail", detail)
+            .put("title", request.title())
+            .put("detail", request.detail())
+            .put("tool", request.tool())
+            .put("command", request.command())
+            .put("path", request.path() == null ? null : request.path().toString())
             .put("sessionId", sessionId));
     try {
-      boolean allow =
+      ApprovalAnswer answered =
           APPROVAL_TIMEOUT_SECONDS <= 0
               // No deadline: the question stands until a person answers it, or until the turn is
               // aborted, which answers it from the other side.
               ? answer.get()
               : answer.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-      publish(sessionId, "approval-closed", Json.object().put("id", id).put("allow", allow));
-      return allow;
+      publish(
+          sessionId,
+          "approval-closed",
+          Json.object()
+              .put("id", id)
+              .put("allow", answered.allowed())
+              // Which of the four answers it was: a page that re-renders the transcript says
+              // "allowed for this session" rather than guessing from a boolean.
+              .put("answer", answered.name().toLowerCase(java.util.Locale.ROOT)));
+      return answered;
     } catch (TimeoutException e) {
       publish(
           sessionId,
           "approval-closed",
           Json.object().put("id", id).put("allow", false).put("reason", "timeout"));
-      return false;
+      return ApprovalAnswer.DENY;
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      return false;
+      return ApprovalAnswer.DENY;
     } catch (ExecutionException e) {
-      return false;
+      return ApprovalAnswer.DENY;
     } finally {
       pendingApprovals.remove(id);
     }
@@ -1914,7 +1960,7 @@ public final class AgentHub implements AutoCloseable {
   public void close() {
     closed = true;
     for (Pending waiting : pendingApprovals.values()) {
-      waiting.answer().complete(false);
+      waiting.answer().complete(ApprovalAnswer.DENY);
     }
     pendingApprovals.clear();
     turns.shutdownNow();
@@ -2029,7 +2075,7 @@ public final class AgentHub implements AutoCloseable {
       // it blocked until the approval timed out, which is not "stopped" in any sense the user meant.
       for (Map.Entry<String, Pending> entry : pendingApprovals.entrySet()) {
         if (id.equals(entry.getValue().sessionId())) {
-          entry.getValue().answer().complete(false);
+          entry.getValue().answer().complete(ApprovalAnswer.DENY);
         }
       }
       running.abort();
@@ -2147,6 +2193,31 @@ public final class AgentHub implements AutoCloseable {
   /** Kept for tests that want to assert on the approval contract without a browser. */
   public Approver approver() {
     return this::askApproval;
+  }
+
+  /**
+   * The user's rules for this project, which the caller supplies because it has the application home
+   * and this class does not. Until one is set, every request is put to the browser.
+   */
+  public void setApprovalRules(ApprovalRules rules) {
+    this.approvalRules = rules;
+  }
+
+  /**
+   * The approval chain: the rules answer first, the person second, and every automatic answer is said
+   * out loud in the transcript — an approval that happened silently is one nobody can audit.
+   */
+  private Approver gate() {
+    ApprovalRules rules = approvalRules;
+    if (rules == null) {
+      return this::askApproval;
+    }
+    return new RuleApprover(
+        rules,
+        this::askApproval,
+        text ->
+            publish(
+                currentTurnSession(), "notice", Json.object().put("text", text)));
   }
 
   private static String message(Throwable e) {

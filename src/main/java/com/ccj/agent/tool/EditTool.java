@@ -1,5 +1,6 @@
 package com.ccj.agent.tool;
 
+import com.ccj.agent.core.ApprovalRequest;
 import com.ccj.agent.core.Tool;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
@@ -141,8 +142,9 @@ public final class EditTool implements Tool {
         .append(")\n")
         .append(
             DiffPreview.replacements(text, ranges, newString, PREVIEW_CONTEXT, PREVIEW_MAX_LINES));
-    if (!ctx.approve("edit", detail.toString())) {
-      return ToolResult.error("rejected by user");
+    String refusal = ctx.refusal(ApprovalRequest.file("edit", file, detail.toString()));
+    if (refusal != null) {
+      return ToolResult.error(refusal);
     }
 
     // Re-read before writing, because the approval is a window in which somebody else can change the

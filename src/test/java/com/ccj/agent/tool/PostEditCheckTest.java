@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ccj.agent.core.ApprovalAnswer;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.Checks;
 import com.ccj.agent.core.Json;
@@ -37,7 +38,7 @@ class PostEditCheckTest {
   }
 
   private ToolContext context() {
-    return new ToolContext(cwd, (title, detail) -> true, 32 * 1024);
+    return new ToolContext(cwd, request -> ApprovalAnswer.ALLOW_ONCE, 32 * 1024);
   }
 
   private static String editArgs(String path, String from, String to) {
