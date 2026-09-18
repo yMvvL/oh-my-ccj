@@ -1511,10 +1511,82 @@ public final class AgentHub implements AutoCloseable {
           "done",
           Json.object().put("finalText", result.finalText()).put("aborted", result.aborted()));
     }
+    // A conversation that has outgrown its budget is compacted here, between turns: the next turn is
+    // the one that pays for a long history, and summarising what has happened is kinder to it than
+    // the projection's silent elision. Before the queue moves, so a message that was waiting starts
+    // on the compacted conversation rather than on the one nobody wants to send again.
+    autoCompact(conversation);
     // The queue moves last, after `done` has been published: a client that reacts to the end of a turn
     // sends its next message into a session that is already free, and a message that was waiting
     // starts as a turn of its own.
     drain(conversation);
+  }
+
+  /**
+   * Compacts a conversation that has grown past the budget, if it is worth doing.
+   *
+   * <p>The budget is `maxContextTokens` — the same number the projection trims to — and the condition
+   * is that the *conversation* has passed it. Reaching it is what
+   * {@link com.ccj.agent.core.ContextBudget} answers by eliding old tool output and then dropping
+   * whole exchanges, which is lossy in the dumbest possible way: a compaction replaces the same
+   * history with a summary that says what it was. Both are lossy; only one of them tells the model
+   * what it lost.
+   *
+   * <p>No budget configured means no automatic compaction: there is nothing to be over, and a
+   * compaction nobody asked for that costs a model call is not a thing to do on a guess. A refusal
+   * (a summary no smaller than its input) is remembered so the same call is not paid for again at
+   * the end of every turn.
+   */
+  private void autoCompact(Conversation conversation) {
+    Config active = config;
+    Integer budget = active.maxContextTokens();
+    if (closed || budget == null || budget <= 0 || provider.get() == null) {
+      return;
+    }
+    List<Message> messages = conversation.session().messages();
+    if (!Compaction.possible(messages)) {
+      return;
+    }
+    int estimate = TokenEstimate.of(messages);
+    if (estimate <= budget || estimate <= conversation.autoCompactRefusedAt()) {
+      return;
+    }
+    if (!conversation.begin()) {
+      return;
+    }
+    try {
+      ObjectNode result = runCompaction(conversation, provider.get());
+      publish(
+          conversation.id(),
+          "notice",
+          Json.object()
+              .put(
+                  "text",
+                  "compacted automatically: "
+                      + result.path("summarised").asInt()
+                      + " older messages became a summary ("
+                      + result.path("beforeTokens").asInt()
+                      + " → "
+                      + result.path("afterTokens").asInt()
+                      + " estimated tokens). The full conversation is still on disk."));
+    } catch (RuntimeException e) {
+      // Refused, or the summarising call failed. Either way it is not worth another one at this
+      // size, and saying so is better than a silence that looks like nothing happened.
+      //
+      // The next attempt waits for twice the growth, not ten per cent more. Measured live against a
+      // reasoning model: the summary it writes can be several times the size of the exchanges it
+      // replaces — 866 tokens against 255 — so a refusal is not a near miss, it is a shape that stays
+      // the shape while the conversation grows a little. Retrying every tenth of a conversation is a
+      // model call per few turns that always fails; doubling makes each refusal buy real distance.
+      conversation.autoCompactRefusedAt((long) (estimate * 2));
+      publish(
+          conversation.id(),
+          "notice",
+          Json.object()
+              .put("text", "not compacted automatically: " + message(e)));
+    } finally {
+      conversation.end();
+    }
   }
 
   /**
@@ -2085,6 +2157,15 @@ public final class AgentHub implements AutoCloseable {
      */
     private final Deque<String> queued = new ConcurrentLinkedDeque<>();
     /**
+     * The prompt size at which automatic compaction was last refused, or 0.
+     *
+     * <p>A refusal is a model call that produced nothing usable — a summary no smaller than what it
+     * would replace — and without this the same call would be made again at the end of every turn
+     * while the conversation hovers over the budget. It is retried when the conversation has grown
+     * ten per cent past the size that was refused, which is roughly when a summary starts to pay.
+     */
+    private volatile long autoCompactRefusedAt;
+    /**
      * Where this conversation's tools run, fixed when the turn starts.
      *
      * <p>Read once rather than on every tool call, because the active workspace can change while a
@@ -2154,6 +2235,14 @@ public final class AgentHub implements AutoCloseable {
     /** What is waiting, oldest first, for the status the page draws. */
     List<String> queued() {
       return List.copyOf(queued);
+    }
+
+    long autoCompactRefusedAt() {
+      return autoCompactRefusedAt;
+    }
+
+    void autoCompactRefusedAt(long tokens) {
+      this.autoCompactRefusedAt = tokens;
     }
 
     /** Drops what is waiting; an abort that means "stop, all of it" answers the count. */

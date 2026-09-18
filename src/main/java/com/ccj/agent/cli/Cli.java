@@ -1007,7 +1007,36 @@ public final class Cli {
         err.flush();
       } finally {
         renderer.reset();
+        autoCompact();
       }
+    }
+
+    /**
+     * Compacts here when the conversation has grown past the budget, the way the web UI does.
+     *
+     * <p>Same rule and same reason: past `maxContextTokens` the projection starts eliding tool output
+     * and dropping whole exchanges, and a summary that says what was dropped is better than a silence
+     * about it. No budget configured means no automatic compaction — there is nothing to be over, and
+     * a model call nobody asked for is not something to spend on a guess.
+     */
+    private void autoCompact() {
+      Integer budget = config.maxContextTokens();
+      if (budget == null || budget <= 0 || !Compaction.possible(session.messages())) {
+        return;
+      }
+      int estimate = TokenEstimate.of(session.messages());
+      if (estimate <= budget) {
+        return;
+      }
+      out.println(
+          "the conversation is over its "
+              + budget
+              + "-token budget (about "
+              + estimate
+              + "); compacting it — /compact does this by hand, and the full conversation stays on"
+              + " disk");
+      out.flush();
+      compact();
     }
 
     private boolean command(String input) {

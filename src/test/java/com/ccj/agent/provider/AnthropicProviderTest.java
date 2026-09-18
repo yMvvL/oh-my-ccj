@@ -10,6 +10,7 @@ import com.ccj.agent.core.Message;
 import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.ToolSpec;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -66,7 +67,7 @@ class AnthropicProviderTest {
       {
         "model": "claude-test",
         "max_tokens": 4096,
-        "system": "be nice",
+        "system": [{"type": "text", "text": "be nice", "cache_control": {"type": "ephemeral"}}],
         "messages": [
           {"role": "user", "content": "hi"},
           {"role": "assistant", "content": [
@@ -77,11 +78,14 @@ class AnthropicProviderTest {
             {"type": "tool_result", "tool_use_id": "toolu_1", "content": "boom", "is_error": true},
             {"type": "tool_result", "tool_use_id": "toolu_2", "content": "ok", "is_error": false}
           ]},
-          {"role": "user", "content": "next"}
+          {"role": "user", "content": [
+            {"type": "text", "text": "next", "cache_control": {"type": "ephemeral"}}
+          ]}
         ],
         "tools": [
           {"name": "read", "description": "Read a file",
-           "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}}}}
+           "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}}},
+           "cache_control": {"type": "ephemeral"}}
         ],
         "stream": true,
         "temperature": 0.7
@@ -141,7 +145,9 @@ class AnthropicProviderTest {
       assertEquals(
           Json.parse(
               "{\"model\":\"claude-mini\",\"max_tokens\":512,"
-                  + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}"),
+                  + "\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\","
+                  + "\"text\":\"hi\",\"cache_control\":{\"type\":\"ephemeral\"}}]}],"
+                  + "\"stream\":true}"),
           sent);
       assertFalse(sent.has("system"));
       assertFalse(sent.has("tools"));
@@ -362,7 +368,9 @@ class AnthropicProviderTest {
 
       JsonNode content = Json.parse(server.body(0)).path("messages").path(0).path("content");
       assertEquals(
-          Json.parse("[{\"type\": \"text\", \"text\": \"answer\"}]"),
+          Json.parse(
+              "[{\"type\": \"text\", \"text\": \"answer\","
+                  + " \"cache_control\": {\"type\": \"ephemeral\"}}]"),
           content,
           "no thinking block without a reasoning tier");
       provider.close();
@@ -387,7 +395,12 @@ class AnthropicProviderTest {
           event -> {});
 
       JsonNode content = Json.parse(server.body(1)).path("messages").path(0).path("content");
-      assertEquals(Json.parse("[{\"type\": \"text\", \"text\": \"answer\"}]"), content, content.toString());
+      assertEquals(
+          Json.parse(
+              "[{\"type\": \"text\", \"text\": \"answer\","
+                  + " \"cache_control\": {\"type\": \"ephemeral\"}}]"),
+          content,
+          content.toString());
       provider.close();
     }
   }
@@ -419,7 +432,9 @@ class AnthropicProviderTest {
           event -> {});
 
       assertEquals(
-          Json.parse("[{\"type\": \"redacted_thinking\", \"data\": \"opaque-1\"}]"),
+          Json.parse(
+              "[{\"type\": \"redacted_thinking\", \"data\": \"opaque-1\","
+                  + " \"cache_control\": {\"type\": \"ephemeral\"}}]"),
           Json.parse(server.body(1)).path("messages").path(0).path("content"));
       provider.close();
     }
@@ -439,6 +454,56 @@ class AnthropicProviderTest {
         List.of(new ToolSpec("read", "Read a file", TOOL_SCHEMA)),
         0.7,
         null, null);
+  }
+
+  @Test
+  void cacheBreakpointsLandOnTheSystemTheToolsAndTheEndOfTheConversation() throws Exception {
+    // Prompt caching is the reason a long agent session does not cost its whole history every turn:
+    // turn n+1 sends everything turn n sent plus its answer, so the stable prefix is the system
+    // prompt, the tool set, and the conversation up to now. Those are the three breakpoints, and the
+    // API allows four — a fourth would be spent for nothing.
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(STREAM))) {
+      AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
+      provider.complete(request(), event -> {});
+
+      JsonNode body = Json.parse(server.body(0));
+      assertEquals(3, countCacheControl(body), "three breakpoints: " + body);
+      assertTrue(body.path("system").isArray(), "the system prompt is a block array now: " + body);
+      assertEquals(
+          "ephemeral",
+          body.path("system").get(0).path("cache_control").path("type").asText(),
+          body.toString());
+      JsonNode tools = body.path("tools");
+      assertEquals(
+          "ephemeral",
+          tools.get(tools.size() - 1).path("cache_control").path("type").asText(),
+          "after the last tool, so tools and system cache together: " + body);
+      ArrayNode messages = (ArrayNode) body.path("messages");
+      JsonNode lastContent = messages.get(messages.size() - 1).path("content");
+      assertEquals(
+          "ephemeral",
+          lastContent.get(lastContent.size() - 1).path("cache_control").path("type").asText(),
+          "and at the end of the conversation: " + body);
+      // Nothing earlier carries one: a breakpoint in the middle would be a prefix nobody reuses.
+      for (int i = 0; i < messages.size() - 1; i++) {
+        assertTrue(
+            countCacheControl(messages.get(i)) == 0,
+            "message " + i + " must not carry a breakpoint: " + messages.get(i));
+      }
+      provider.close();
+    }
+  }
+
+  /** How many caching breakpoints a piece of the body carries, at any depth. */
+  private static int countCacheControl(JsonNode node) {
+    if (node == null || node.isNull()) {
+      return 0;
+    }
+    int count = node.has("cache_control") ? 1 : 0;
+    for (JsonNode child : node) {
+      count += countCacheControl(child);
+    }
+    return count;
   }
 
   @Test

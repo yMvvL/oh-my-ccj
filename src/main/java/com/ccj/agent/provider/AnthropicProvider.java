@@ -96,10 +96,17 @@ public final class AnthropicProvider implements Provider {
     root.put("model", model);
     root.put("max_tokens", request.maxTokens() == null ? DEFAULT_MAX_TOKENS : request.maxTokens());
     if (request.system() != null && !request.system().isBlank()) {
-      root.put("system", request.system());
+      // A block array rather than a bare string: prompt caching needs somewhere to put the
+      // breakpoint, and the system prompt is the most stable part of every request this agent makes.
+      ObjectNode block = root.putArray("system").addObject();
+      block.put("type", "text");
+      block.put("text", request.system());
+      block.set("cache_control", ephemeral());
     }
     String effort = request.reasoning();
-    appendMessages(request.messages(), root.putArray("messages"), effort != null);
+    ArrayNode messages = root.putArray("messages");
+    appendMessages(request.messages(), messages, effort != null);
+    markPrefixEnd(messages);
     if (!request.tools().isEmpty()) {
       ArrayNode tools = root.putArray("tools");
       for (ToolSpec tool : request.tools()) {
@@ -108,6 +115,9 @@ public final class AnthropicProvider implements Provider {
         entry.put("description", tool.description());
         entry.set("input_schema", Json.parse(tool.parametersJson()));
       }
+      // The tool set is as stable as the system prompt and as large: a breakpoint after the last of
+      // them is what makes the two of them a cache hit rather than a rewrite on every turn.
+      ((ObjectNode) tools.get(tools.size() - 1)).set("cache_control", ephemeral());
     }
     root.put("stream", true);
     if (effort != null) {
@@ -123,6 +133,56 @@ public final class AnthropicProvider implements Provider {
       root.put("temperature", request.temperature().doubleValue());
     }
     return root;
+  }
+
+  /**
+   * The caching breakpoint sent with every marker.
+   *
+   * <p>Five minutes, refreshed by every hit, which is the only kind the API offers — and the useful
+   * kind for an agent: the wait between two turns of one conversation is seconds.
+   */
+  private static ObjectNode ephemeral() {
+    return Json.object().put("type", "ephemeral");
+  }
+
+  /**
+   * Puts the conversation's caching breakpoint at the end of the conversation.
+   *
+   * <p>This is the one that pays for an agent loop. Turn *n+1* sends everything turn *n* sent, plus
+   * the model's answer and the tool results — so the whole prefix is what a cache is for, and the
+   * breakpoint at last turn's end turns ~all of it into a cache read at a tenth of the input price.
+   * The API allows four breakpoints in total; this uses three, for the system prompt, the tool set,
+   * and here.
+   *
+   * <p>The block has to carry it rather than the message: the wire format takes `cache_control` on a
+   * content block, so a plain text turn becomes a one-block array, and a turn that already has blocks
+   * (tool results) gains it on its last one.
+   */
+  private static void markPrefixEnd(ArrayNode messages) {
+    if (messages.isEmpty()) {
+      return;
+    }
+    ObjectNode last = (ObjectNode) messages.get(messages.size() - 1);
+    JsonNode content = last.get("content");
+    if (content == null || content.isNull()) {
+      return;
+    }
+    if (content.isArray()) {
+      ArrayNode blocks = (ArrayNode) content;
+      if (!blocks.isEmpty()) {
+        ((ObjectNode) blocks.get(blocks.size() - 1)).set("cache_control", ephemeral());
+      }
+      return;
+    }
+    if (content.isTextual()) {
+      ObjectNode block = Json.object();
+      block.put("type", "text");
+      block.put("text", content.asText());
+      block.set("cache_control", ephemeral());
+      ArrayNode blocks = Json.object().putArray("content");
+      blocks.add(block);
+      last.set("content", blocks);
+    }
   }
 
   /** Writes the conversation, merging tool-result runs into the one user turn the API expects. */

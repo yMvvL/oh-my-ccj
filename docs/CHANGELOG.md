@@ -37,6 +37,18 @@ Also: `edit` and `write` re-read before they write and refuse a file that change
 waited, both write through a temp file and an atomic rename, the SSE keep-alive is a real event the
 page can hear, and an error body is read bounded rather than truncated after the fact.
 
+**Prompt caching, and a conversation that compacts itself.** Anthropic requests now carry three
+`cache_control` breakpoints — the system prompt, the tool set, and the end of the conversation — which
+is what makes turn *n+1* a cache read of the prefix turn *n* already paid to write. (Live, on the
+OpenAI-shaped relay this runs against, the same effect is visible without doing anything: turns report
+90-94% of their prompt as cached.) And the budget that
+trims a request also compacts the conversation that outgrew it: between turns, only when the summary is
+genuinely smaller, and with a notice that says what happened. The projection's own elision keeps
+working; this is the version that tells the model what it lost. Measured live: a reasoning model can
+write a summary several times the size of the exchanges it replaces (866 tokens against 255), so
+refusals are normal at first and each one now waits for double the growth before trying again —
+otherwise a refusal would be a paid model call every few turns.
+
 **MCP servers.** A server named in `<home>/mcp.json` contributes its tools to the agent, each named
 `mcp__<server>__<tool>` so the prompt, the transcript and a rule can all say where a capability came
 from. Started the first time one of its tools is called; discovery asks each server once and closes it,

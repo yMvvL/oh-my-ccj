@@ -2603,6 +2603,76 @@ class WebApiTest {
   }
 
   @Test
+  void aConversationOverItsBudgetIsCompactedBetweenTurns() throws Exception {
+    // Past `maxContextTokens` the projection starts eliding tool output and dropping whole exchanges,
+    // and its notices say so ("context: 213 → 26 tokens, 5 earlier exchange(s) dropped") without ever
+    // saying what went. A summary that names what it replaced is the better loss, and it happens
+    // between turns — never inside one, where the model is mid-thought about a history that would
+    // change under it.
+    startWithBudget(50);
+    // Twelve exchanges: a compaction keeps the newest five and summarises the rest, so the part it
+    // replaces has to be larger than the summary prompt itself — measured, one summarised exchange
+    // (52 tokens) against a summary of 74, which is refused with "nothing to gain".
+    for (int i = 0; i < 12; i++) {
+      provider.reply(Message.Assistant.text("answer " + i));
+    }
+    // The seventh call is the summarising one, which asks for no tools and a single message.
+    provider.reply(Message.Assistant.text("Summary."));
+
+    List<String> notices = new java.util.ArrayList<>();
+    String question =
+        "a question with a good many words in it, so that six of them are worth summarising: "
+            + "the point of a compaction is that what it replaces is larger than what it writes";
+    try (Sse sse = watch()) {
+      for (int i = 0; i < 12; i++) {
+        post("/api/message", "{\"text\":\"" + question + " " + i + "\"}");
+        sse.awaitAtLeast("done", i + 1, 5000);
+      }
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (System.nanoTime() < deadline && !conversationWasCompacted()) {
+        Thread.sleep(50);
+      }
+      sse.ofType("notice").forEach(notice -> notices.add(notice.path("text").asText()));
+    }
+
+    // The summarising call is recognisable in the recorded requests: no tools, one message — the
+    // compaction prompt carries the transcript itself.
+    assertTrue(
+        provider.requests().stream()
+            .anyMatch(request -> request.tools().isEmpty() && request.messages().size() == 1),
+        "a summarising call should have been made: " + notices);
+    assertTrue(
+        conversationWasCompacted(),
+        "the session file should have a second generation; notices: " + notices);
+    assertTrue(
+        notices.stream().anyMatch(text -> text.startsWith("compacted automatically")),
+        "and the transcript should say it happened: " + notices);
+  }
+
+  private boolean conversationWasCompacted() throws Exception {
+    String id = json("/api/status").path("sessionId").asText();
+    try (var files = java.nio.file.Files.list(sessions)) {
+      return files.anyMatch(path -> path.getFileName().toString().startsWith(id + ".g"));
+    }
+  }
+
+  /** The hub again, with a prompt budget small enough that a few turns pass it. */
+  private void startWithBudget(int maxContextTokens) throws IOException {
+    api.close();
+    hub.close();
+    // The twelve-argument shape ends in maxContextTokens, which is the only field this test sets.
+    Config budgeted =
+        testConfig()
+            .merge(
+                new Config(
+                    null, null, null, null, null, null, null, null, null, null, null,
+                    maxContextTokens));
+    hub = hub(provider, budgeted);
+    api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), null);
+    origin = "http://127.0.0.1:" + api.port();
+  }
+
+  @Test
   void aTurnIsOverBeforeTheDoneEventAnnouncesIt() throws Exception {
     // A page reacts to `done` by letting the user send again. If the server were still busy at that
     // moment, the next message would be refused with 409 — and the composer would stay disabled
