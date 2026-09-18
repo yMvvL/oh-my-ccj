@@ -37,6 +37,14 @@ Also: `edit` and `write` re-read before they write and refuse a file that change
 waited, both write through a temp file and an atomic rename, the SSE keep-alive is a real event the
 page can hear, and an error body is read bounded rather than truncated after the fact.
 
+**MCP servers.** A server named in `<home>/mcp.json` contributes its tools to the agent, each named
+`mcp__<server>__<tool>` so the prompt, the transcript and a rule can all say where a capability came
+from. Started the first time one of its tools is called; discovery asks each server once and closes it,
+so a server nobody uses costs nothing. Every call goes through the same approver as `bash`, a name that
+would shadow a built-in is refused, every request has a deadline, and every server this run started is
+killed when ccj exits. The transport is the server's own stdin and stdout — HTTP/SSE, resources,
+prompts and sampling are not implemented, and [docs/MCP.md](MCP.md) says so rather than half-doing them.
+
 **`edit` changes several places in one file together, and `fetch` reaches the network.** The `edits`
 form is one approval, one write and a diff of the whole file: nothing is written unless every hunk
 matches, overlapping hunks are refused, and a hunk that misses comes back with the file's numbered

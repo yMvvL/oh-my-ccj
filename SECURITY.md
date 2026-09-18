@@ -136,6 +136,15 @@ The file is keyed by project, and it lives in the application home rather than i
 `--yolo` (and the auto-approve toggle) skips all of this by design: the rules are consulted first, and
 with the guard off there is nothing left for them to answer.
 
+- **An MCP server is a program you installed, and it runs as you.** Its tools are the agent's tools,
+  which means every call goes through the same approver as `bash` and can be answered by a rule — but
+  it also means a server's *own* code runs with your environment the moment it is started, before
+  anything is approved. That is the same exposure as adding a line to your shell profile, and it is
+  why the file that names servers lives in the application home rather than in a project: a repository
+  cannot decide on the user's behalf that its own server should run. What is bounded: the tool names
+  say which server is asking (`mcp__fs__read_file`), a name that would shadow a built-in is refused,
+  every request has a deadline, and every server this run started is killed when ccj exits.
+
 ## What is not defended
 
 - **The agent can do anything you can**, including `rm -rf`, `git push`, and reading your SSH keys.

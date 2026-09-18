@@ -8,6 +8,7 @@ import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.RuleApprover;
 import com.ccj.agent.core.Checks;
+import com.ccj.agent.mcp.McpTools;
 import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Message;
@@ -183,6 +184,15 @@ public final class Cli {
       // check added while the session runs takes effect on the next edit rather than on the next
       // restart.
       tools = Tools.standard(Checks.from(configFile));
+      // The user's own servers, if any. A server that will not start is a warning rather than a
+      // refusal: one broken entry must not stop the agent, and it must not be silent either — a
+      // capability that is missing and one nobody mentioned look the same from in here.
+      McpTools mcp = McpTools.discover(paths.home().resolve("mcp.json"));
+      mcp.registerInto(tools);
+      for (String complaint : mcp.complaints()) {
+        err.println("warning: " + complaint);
+      }
+      err.flush();
     } catch (RuntimeException e) {
       return fail(err, e);
     }

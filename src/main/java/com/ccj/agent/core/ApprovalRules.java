@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The rules that answer an approval before anybody is asked.
@@ -59,6 +60,16 @@ public final class ApprovalRules {
    * expands to a directory, and cannot chain anything.
    */
   private static final String COMPOUNDING = ";|&><`$(){}[]*?!\\\n\r";
+
+  /**
+   * The tools whose *arguments* are the risk, so a rule about them has to name the arguments.
+   *
+   * <p>A rule that names only a tool means "this tool, whatever it is asked to do", which is a
+   * reasonable thing to say about `restart` or an MCP tool — the name is the whole request. For these
+   * three the name says nothing: `{"tool": "bash"}` would allow every command that will ever be run,
+   * and that is auto-approve with a file in between.
+   */
+  private static final Set<String> CONTENT_BEARING = Set.of("bash", "edit", "write");
 
   private final Path file;
   private final Path project;
@@ -156,7 +167,7 @@ public final class ApprovalRules {
   }
 
   private boolean matches(Rule rule, ApprovalRequest request) {
-    if (rule.tool() == null || !rule.tool().equals(request.tool())) {
+    if (rule.tool() == null || !toolMatches(rule.tool(), request.tool())) {
       return false;
     }
     if (rule.command() != null) {
@@ -231,6 +242,21 @@ public final class ApprovalRules {
       return command.startsWith(head);
     }
     return pattern.equals(command);
+  }
+
+  /**
+   * True when the rule's tool names this request's.
+   *
+   * <p>A trailing `*` is allowed here without the separator requirement the command patterns carry:
+   * {@code mcp__fs__read_file} has no separator before its last word to hang the check on, and the
+   * prefix cannot be a *different* name's prefix by accident — the names are ours, not addresses. So
+   * `mcp__fs__*` means one server's tools, which is what a user wants to write once they trust one.
+   */
+  private static boolean toolMatches(String pattern, String tool) {
+    if (pattern.endsWith("*")) {
+      return tool.startsWith(pattern.substring(0, pattern.length() - 1));
+    }
+    return pattern.equals(tool);
   }
 
   /**
@@ -370,9 +396,16 @@ public final class ApprovalRules {
       if (tool == null) {
         throw new IllegalArgumentException("an approval rule needs a 'tool' in " + file + ": " + entry);
       }
-      if (command == null && path == null && !tool.equals("restart")) {
+      if (command == null && path == null && CONTENT_BEARING.contains(tool)) {
         throw new IllegalArgumentException(
-            "an approval rule for '" + tool + "' needs a 'command' or a 'path' in " + file + ": " + entry);
+            "a rule for '"
+                + tool
+                + "' must name a 'command' or a 'path': '"
+                + tool
+                + "' alone would allow every one of them, which is what auto-approve is for — "
+                + file
+                + ": "
+                + entry);
       }
       if (command != null) {
         trailingWildcard(command, file);

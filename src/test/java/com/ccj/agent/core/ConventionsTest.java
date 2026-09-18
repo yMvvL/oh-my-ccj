@@ -48,8 +48,16 @@ class ConventionsTest {
       // list: a rule against it would be a rule against the language.
       "behavior", "color", "center", "flavor", "license");
 
-  /** Where a borrowed spelling is the correct one: names inside quotes, or a platform API. */
+  /**
+   * Where a borrowed spelling is the correct one: names inside quotes, or a platform API.
+   *
+   * <p>`initialize` and `notifications/initialized` are the MCP protocol's method names — the wire
+   * says them, not this tree — so a line quoting one is not a line spelling anything of ours wrong.
+   */
   private static final List<String> BORROWED = List.of(
+      "\"initialize\"",
+      "`initialize`",
+      "notifications/initialized",
       "overscroll-behavior",
       "blockedEntities",
       "Path.normalize",

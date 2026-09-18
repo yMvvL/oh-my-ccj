@@ -119,6 +119,29 @@ class ApprovalRulesTest {
   }
 
   @Test
+  void aRuleMayNameOnlyAToolWhenTheNameIsTheWholeRequest() throws IOException {
+    // An MCP tool is called by its name and its arguments are the model's business; `restart` is the
+    // same shape. `bash`, `edit` and `write` are not: for those the name says nothing, and a rule
+    // naming only the tool would be auto-approve wearing a file.
+    ApprovalRules rules =
+        rules("{\"projects\": {\"%s\": {\"allow\": [{\"tool\": \"mcp__fs__read_file\"}, {\"tool\": \"restart\"}]}}}");
+
+    assertEquals(
+        Optional.of(true),
+        rules.verdict(new ApprovalRequest("mcp__fs__read_file", null, null, "mcp__fs__read_file", "d")));
+    assertEquals(Optional.of(true), rules.verdict(ApprovalRequest.tool("restart", "d")));
+    assertEquals(
+        Optional.empty(),
+        rules.verdict(new ApprovalRequest("mcp__fs__write_file", null, null, "x", "d")),
+        "one tool of a server is not the server");
+
+    ApprovalRules tooBroad = rules("{\"projects\": {\"%s\": {\"allow\": [{\"tool\": \"bash\"}]}}}");
+    IllegalArgumentException refused =
+        assertThrows(IllegalArgumentException.class, () -> tooBroad.verdict(cmd("anything at all")));
+    assertTrue(refused.getMessage().contains("auto-approve"), refused.getMessage());
+  }
+
+  @Test
   void denyWinsOverAllowIncludingOverASessionAllow() throws IOException {
     ApprovalRules rules =
         rules(
