@@ -1258,6 +1258,46 @@ class WebApiTest {
   }
 
   @Test
+  void aHandWrittenConfigCanBeSavedFromTheForm() throws Exception {
+    // Reported defect: a configuration file somebody typed by hand — an endpoint and a key, no
+    // `settingsFor` mark, which is what a hand-written file is — could not be saved from the settings
+    // form at all. The form always posts its key-variable field, pre-filled with the provider's
+    // default, and that was read as "this change names its own credential": the unmarked pair in the
+    // file was dropped and the provider build then failed with `no API key for provider 'openai'`.
+    Files.writeString(
+        configFile,
+        "{\"provider\":\"openai\",\"model\":\"hand-written\",\"apiKey\":\"sk-hand-written\"}");
+    restartFromConfigFile();
+
+    JsonNode saved = postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"typed-model\","
+        + "\"apiKeyEnv\":\"OPENAI_API_KEY\",\"language\":\"auto\"}");
+
+    assertEquals("typed-model", saved.path("model").asText(), saved.toString());
+    assertEquals(
+        "sk-hand-written",
+        Config.fromFile(configFile).apiKey(),
+        "the key that was already there must survive a save that did not replace it");
+  }
+
+  @Test
+  void namingANonDefaultKeyVariableStillCountsAsNamingACredential() throws Exception {
+    // The other half of the same rule: a form save that does say where the key comes from is still a
+    // deliberate act, and the pair it replaces is dropped rather than inherited.
+    Files.writeString(
+        configFile,
+        "{\"provider\":\"openai\",\"model\":\"hand-written\",\"apiKey\":\"sk-hand-written\"}");
+    restartFromConfigFile();
+
+    postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"m\","
+        + "\"apiKeyEnv\":\"MY_OWN_KEY_VARIABLE\"}");
+
+    assertEquals("MY_OWN_KEY_VARIABLE", Config.fromFile(configFile).apiKeyEnv());
+    assertNull(
+        Config.fromFile(configFile).apiKey(),
+        "a save that names its own credential does not inherit the one that was there");
+  }
+
+  @Test
   void aRejectedSettingChangesNothingOnDiskOrInMemory() throws Exception {
     JsonNode before = json("/api/config");
 

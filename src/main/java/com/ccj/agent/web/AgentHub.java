@@ -1052,7 +1052,7 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /** Only the fields the form actually sent; blank text means "leave as it is". */
-  private static Config changesFrom(JsonNode posted) {
+  private Config changesFrom(JsonNode posted) {
     if (posted == null || !posted.isObject()) {
       throw new IllegalArgumentException("a JSON object is required");
     }
@@ -1086,14 +1086,27 @@ public final class AgentHub implements AutoCloseable {
             text(posted, "visionApiKeyEnv"),
             text(posted, "visionModel"),
             visionMaxTokens);
+    String provider = text(posted, "provider");
+    // The form always posts its key-variable field, pre-filled with the provider's default, and that
+    // is not the user naming a credential. Reported as a bug from a hand-written config file: posting
+    // the default counted as "this change writes its own endpoint and key", `changedBy` then dropped
+    // the unmarked pair in the file, and building the provider failed with "no API key" — so a
+    // configuration file somebody typed by hand could not be saved from the form at all. A value that
+    // is only the default is not a value here, which is the same rule `writeInto` already follows
+    // when it decides what to write down.
+    String apiKeyEnv = text(posted, "apiKeyEnv");
+    if (apiKeyEnv != null
+        && apiKeyEnv.equals(Config.defaultKeyEnv(provider == null ? config.provider() : provider))) {
+      apiKeyEnv = null;
+    }
     // The full shape, named by position: every field this form does not manage is an explicit null,
     // because the shorter constructors put a String in the wrong slot without saying so.
     return new Config(
-        text(posted, "provider"),
+        provider,
         text(posted, "model"),
         text(posted, "baseUrl"),
         apiKey,
-        text(posted, "apiKeyEnv"),
+        apiKeyEnv,
         temperature,
         integer(posted, "maxTokens"),
         null, // autoApprove

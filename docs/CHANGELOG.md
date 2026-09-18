@@ -7,6 +7,16 @@ file is the index.
 There are no version numbers yet: [ROADMAP](ROADMAP.md) 3.1 is where tags, notes and a JDK statement
 land. Until then an entry is a date and what it did, and `0.1.0` is what the launcher prints.
 
+## 2026-09-19 — a configuration file somebody typed by hand could not be saved from the form
+
+Reported from use. The settings form always posts its key-variable field, pre-filled with the
+provider's default (`OPENAI_API_KEY`), and posting the default counted as *this change names its own
+endpoint and key* — so `changedBy` dropped the unmarked pair in the file and the provider build then
+failed with `no API key for provider 'openai'`. A `config.json` written by hand has no `settingsFor`
+mark, so **every** save from the form failed with a 400 and no setting could be changed from the panel
+at all. A value that is only the provider's default is not a value now, which is the rule the merge
+already followed when it decided what to write down.
+
 ## 2026-09-18 — pictures
 
 **A picture arrives as a description.** Photograph a screenshot, send it from the phone, and the
