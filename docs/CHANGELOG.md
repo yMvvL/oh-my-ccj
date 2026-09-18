@@ -37,6 +37,13 @@ Also: `edit` and `write` re-read before they write and refuse a file that change
 waited, both write through a temp file and an atomic rename, the SSE keep-alive is a real event the
 page can hear, and an error body is read bounded rather than truncated after the fact.
 
+**A message sent while a turn is running waits instead of being refused.** The old answer was `409`,
+which disabled the composer until the turn ended — so a thinking pause was a dead stop and whatever
+you thought of while waiting was gone by the time it finished. Now the message queues, the composer
+says how many are waiting, and each one runs as a turn of its own. The queue is per conversation and
+bounded at sixteen; abort stops the turn **and drops what was behind it**, because stopping is what
+that button is for, and the count is published so a dropped message is visible rather than silent.
+
 **Approval has four answers, and one of them can be written down.** Deny, allow once, allow for this
 session, allow from now on. The last writes a rule into `<home>/approvals.json` keyed by project, and
 that rule answers the next identical request without a prompt. This removes the friction that made

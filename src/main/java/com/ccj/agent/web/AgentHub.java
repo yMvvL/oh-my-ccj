@@ -50,6 +50,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -109,6 +110,9 @@ public final class AgentHub implements AutoCloseable {
    * hang: the tests set it, and so can an unattended run.
    */
   private static final long APPROVAL_TIMEOUT_SECONDS = 0;
+
+  /** How many messages one conversation may hold while a turn is running. See Conversation.queued. */
+  private static final int MAX_QUEUED_MESSAGES = 16;
 
   /** Builds a provider from settings; injected so this class stays free of transport details. */
   @FunctionalInterface
@@ -308,6 +312,12 @@ public final class AgentHub implements AutoCloseable {
     // shows, and a turn running somewhere else must not disable it.
     Conversation shown = conversation(current == null ? "" : current.id());
     node.put("busy", shown != null && shown.running());
+    // What is waiting behind the turn on screen. The page draws a count, so a message typed while
+    // the agent is thinking is visibly held rather than silently swallowed.
+    ArrayNode queued = node.putArray("queued");
+    if (shown != null) {
+      shown.queued().forEach(queued::add);
+    }
     // Which other conversations are working, so the tree can mark their rows. Named rather than
     // counted: "something is running" cannot tell you which session to go back to watch.
     ArrayNode runningNow = node.putArray("running");
@@ -1155,7 +1165,7 @@ public final class AgentHub implements AutoCloseable {
    * the <em>same</em> conversation — two writers appending to one transcript is the thing that
    * corrupts it.
    */
-  public boolean submit(String text) {
+  public Submit submit(String text) {
     if (closed) {
       throw new IllegalStateException("the web session is shutting down");
     }
@@ -1171,11 +1181,27 @@ public final class AgentHub implements AutoCloseable {
     }
     Conversation conversation =
         conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current));
-    if (!conversation.begin()) {
-      return false;
+    if (conversation.begin()) {
+      startTurn(conversation, text);
+      return Submit.STARTED;
     }
-    startTurn(conversation, text);
-    return true;
+    // Busy, and that is no longer an error: the message waits its turn. Refusing it with 409 was the
+    // old behaviour, and a refusal turns a thinking pause into a dead stop — the thought you had
+    // while watching the turn is gone by the time it ends.
+    if (!conversation.enqueue(text)) {
+      throw new IllegalStateException(
+          "this conversation already has "
+              + MAX_QUEUED_MESSAGES
+              + " messages waiting; wait for the turn to finish, or abort it");
+    }
+    publishStatus();
+    return Submit.QUEUED;
+  }
+
+  /** What became of a posted message: it started, or it is waiting behind the turn that is running. */
+  public enum Submit {
+    STARTED,
+    QUEUED
   }
 
   /**
@@ -1414,6 +1440,32 @@ public final class AgentHub implements AutoCloseable {
     return conversation != null && conversation.abort();
   }
 
+  /**
+   * Stops the turn on screen and drops what was queued behind it.
+   *
+   * <p>Both, because abort is the button pressed when something is going wrong: leaving four messages
+   * waiting to start as soon as the aborted turn lets go is the opposite of stopping. The count is
+   * published, so a dropped message is a visible event rather than a silence.
+   */
+  public boolean abortAll() {
+    FileSession current = session();
+    Conversation conversation = current == null ? null : conversations.get(current.id());
+    if (conversation == null) {
+      return false;
+    }
+    int dropped = conversation.clearQueue();
+    boolean stopped = conversation.abort();
+    if (dropped > 0) {
+      publish(
+          conversation.id(),
+          "notice",
+          Json.object()
+              .put("text", "aborted; " + dropped + " queued message" + (dropped == 1 ? "" : "s")
+                  + " dropped"));
+    }
+    return stopped || dropped > 0;
+  }
+
   /** Requests that one named session's turn stops, whether or not it is the one on screen. */
   public boolean abort(String sessionId) {
     Conversation conversation = sessionId == null ? null : conversations.get(sessionId);
@@ -1459,6 +1511,33 @@ public final class AgentHub implements AutoCloseable {
           "done",
           Json.object().put("finalText", result.finalText()).put("aborted", result.aborted()));
     }
+    // The queue moves last, after `done` has been published: a client that reacts to the end of a turn
+    // sends its next message into a session that is already free, and a message that was waiting
+    // starts as a turn of its own.
+    drain(conversation);
+  }
+
+  /**
+   * Starts the next message that was typed while this conversation was busy.
+   *
+   * <p>One step, not a loop: the turn this starts calls back here when it ends, so five queued
+   * messages run as five turns with their own books, their own status and their own `done`.
+   */
+  private void drain(Conversation conversation) {
+    if (closed) {
+      return;
+    }
+    String next = conversation.dequeue();
+    if (next == null) {
+      return;
+    }
+    if (!conversation.begin()) {
+      // Something claimed the slot in between, which means a turn is running: the message goes back
+      // to the front rather than being dropped, and that turn's end will come through here again.
+      conversation.enqueueFirst(next);
+      return;
+    }
+    startTurn(conversation, next);
   }
 
   private AgentLoop newLoop(Conversation conversation) {
@@ -1998,6 +2077,14 @@ public final class AgentHub implements AutoCloseable {
     /** The thread running this conversation's turn, so a callback can be attributed to it. */
     private final AtomicReference<Thread> owner = new AtomicReference<>();
     /**
+     * Messages typed while this conversation was busy, oldest first.
+     *
+     * <p>Bounded, and the bound is the point: a queue that grows without limit is a way to lose
+     * control of a session that is already running something, and sixteen is more than anybody types
+     * while watching one turn.
+     */
+    private final Deque<String> queued = new ConcurrentLinkedDeque<>();
+    /**
      * Where this conversation's tools run, fixed when the turn starts.
      *
      * <p>Read once rather than on every tool call, because the active workspace can change while a
@@ -2043,6 +2130,37 @@ public final class AgentHub implements AutoCloseable {
 
     boolean running() {
       return busy.get();
+    }
+
+    /** Adds a message to this conversation's queue, or returns false when it is full. */
+    boolean enqueue(String text) {
+      if (queued.size() >= MAX_QUEUED_MESSAGES) {
+        return false;
+      }
+      queued.addLast(text);
+      return true;
+    }
+
+    /** Puts a message back at the front, for the race where the turn slot was taken in between. */
+    void enqueueFirst(String text) {
+      queued.addFirst(text);
+    }
+
+    /** The next message waiting, or null. */
+    String dequeue() {
+      return queued.pollFirst();
+    }
+
+    /** What is waiting, oldest first, for the status the page draws. */
+    List<String> queued() {
+      return List.copyOf(queued);
+    }
+
+    /** Drops what is waiting; an abort that means "stop, all of it" answers the count. */
+    int clearQueue() {
+      int dropped = queued.size();
+      queued.clear();
+      return dropped;
     }
 
     /** Claims the turn slot, or returns false when this conversation already has one running. */

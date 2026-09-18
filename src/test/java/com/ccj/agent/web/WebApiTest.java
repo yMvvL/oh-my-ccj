@@ -531,19 +531,83 @@ class WebApiTest {
   }
 
   @Test
-  void aSecondMessageWhileBusyIsRefused() throws Exception {
+  void aMessageSentWhileBusyWaitsAndThenRuns() throws Exception {
+    // It used to be refused with 409, which is what made a thinking pause a dead stop: the composer
+    // was disabled until the turn ended and whatever you thought of while waiting was lost. Now it is
+    // queued, and it runs as a turn of its own — with its own user event and its own done.
     provider.reply(Message.Assistant.text("slow answer"));
+    provider.reply(Message.Assistant.text("the queued answer"));
     provider.gate(new CountDownLatch(1));
     try (Sse sse = watch()) {
       assertEquals(202, post("/api/message", "{\"text\":\"first\"}").statusCode());
+
       HttpResponse<String> second = post("/api/message", "{\"text\":\"second\"}");
-      assertEquals(409, second.statusCode());
-      assertTrue(second.body().contains("already running"), second.body());
+      assertEquals(202, second.statusCode(), second.body());
+      assertTrue(Json.parse(second.body()).path("queued").asBoolean(), second.body());
+      assertEquals(
+          List.of("second"),
+          queuedTexts(),
+          "the status says what is waiting, so the composer can show it");
 
       provider.release();
       sse.await("done", 5000);
-      assertEquals(202, post("/api/message", "{\"text\":\"third\"}").statusCode());
+      // The queued message starts on its own, and the queue is empty once it has.
+      assertEquals("second", sse.await("user", 5000).path("text").asText());
+      assertEquals("the queued answer", sse.awaitAtLeast("done", 2, 5000).path("finalText").asText());
+      assertEquals(List.of(), queuedTexts());
     }
+  }
+
+  @Test
+  void abortDropsWhatWasQueuedBehindTheTurn() throws Exception {
+    // Abort is the button pressed when something is going wrong. Leaving four messages waiting to
+    // start the moment the aborted turn lets go is the opposite of stopping, and the count is
+    // published so a dropped message is visible rather than silent.
+    provider.reply(Message.Assistant.text("slow answer"));
+    provider.gate(new CountDownLatch(1));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"first\"}");
+      post("/api/message", "{\"text\":\"second\"}");
+      post("/api/message", "{\"text\":\"third\"}");
+      assertEquals(List.of("second", "third"), queuedTexts());
+
+      post("/api/abort", "{}");
+
+      provider.release();
+      JsonNode notice = sse.await("notice", 5000);
+      assertTrue(notice.path("text").asText().contains("2 queued messages dropped"), notice.toString());
+      assertEquals(List.of(), queuedTexts());
+      assertFalse(
+          sse.ofType("user").stream().anyMatch(event -> event.path("text").asText().equals("second")),
+          "a dropped message must not start later");
+    }
+  }
+
+  @Test
+  void aQueueHasABoundAndSaysSo() throws Exception {
+    // A queue with no limit is a way to lose control of a session that is already running something.
+    provider.reply(Message.Assistant.text("slow answer"));
+    provider.gate(new CountDownLatch(1));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"first\"}");
+      HttpResponse<String> last = null;
+      for (int i = 0; i < 16; i++) {
+        last = post("/api/message", "{\"text\":\"waiting " + i + "\"}");
+        assertEquals(202, last.statusCode(), last.body());
+      }
+      HttpResponse<String> over = post("/api/message", "{\"text\":\"one too many\"}");
+
+      assertEquals(409, over.statusCode(), over.body());
+      assertTrue(over.body().contains("waiting"), over.body());
+      assertEquals(16, queuedTexts().size());
+      provider.release();
+    }
+  }
+
+  private List<String> queuedTexts() throws Exception {
+    List<String> texts = new java.util.ArrayList<>();
+    json("/api/status").path("queued").forEach(node -> texts.add(node.asText()));
+    return texts;
   }
 
   @Test
@@ -557,6 +621,7 @@ class WebApiTest {
             "", List.of(new Message.ToolCall("call_b", "bash", "{\"command\":\"echo b\"}"))));
     provider.reply(Message.Assistant.text("a finished"));
     provider.reply(Message.Assistant.text("b finished"));
+    provider.reply(Message.Assistant.text("b's queued answer"));
     try (Sse sse = watch()) {
       assertEquals(202, post("/api/message", "{\"text\":\"b: first\"}").statusCode());
       String b = json("/api/status").path("sessionId").asText();
@@ -564,10 +629,11 @@ class WebApiTest {
       JsonNode approval = sse.awaitInSession(b, "approval", 1, 5000);
 
       assertTrue(json("/api/status").path("busy").asBoolean(), "b is running");
-      assertEquals(
-          409,
-          post("/api/message", "{\"text\":\"b: second\"}").statusCode(),
-          "the same session still takes one turn at a time");
+      // One turn at a time per conversation is unchanged — what changed is that the second message
+      // waits for it instead of being refused.
+      HttpResponse<String> queuedBehindB = post("/api/message", "{\"text\":\"b: second\"}");
+      assertEquals(202, queuedBehindB.statusCode(), queuedBehindB.body());
+      assertTrue(Json.parse(queuedBehindB.body()).path("queued").asBoolean(), queuedBehindB.body());
 
       // Open another conversation and deploy a task in it, while b is still waiting for a human.
       String a = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
@@ -587,7 +653,16 @@ class WebApiTest {
 
       // b was never disturbed: its approval is still pending, and answering it finishes b.
       post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
-      assertEquals("b finished", sse.awaitInSession(b, "done", 1, 5000).path("finalText").asText());
+      // Both of b's turns, in order: the one that was waiting for a human, then the message that was
+      // queued behind it. Read as a list rather than twice through `awaitInSession`, which answers
+      // with the newest event that matches and would race the queued turn's own `done`.
+      sse.awaitInSession(b, "done", 2, 5000);
+      assertEquals(
+          List.of("b finished", "b's queued answer"),
+          sse.forSession(b).stream()
+              .filter(event -> "done".equals(event.path("type").asText()))
+              .map(event -> event.path("finalText").asText())
+              .toList());
     }
   }
 
@@ -2537,7 +2612,7 @@ class WebApiTest {
     hub.subscribe(seen::add);
     provider.reply(new Message.Assistant("all done", List.of()));
 
-    hub.submit("hello");
+    assertEquals(AgentHub.Submit.STARTED, hub.submit("hello"));
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
     while (System.nanoTime() < deadline
         && seen.stream().noneMatch(event -> event.type().equals("done"))) {

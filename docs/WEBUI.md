@@ -18,8 +18,8 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `GET` | `/app.js`, `/style.css` | assets, served from the jar |
 | `GET` | `/api/status` | provider, model, base URL, cwd (and whether `-C` overrode it), session, tools, `busy` for the session on screen, and `running` — the ids of the other sessions working right now |
 | `GET` | `/api/events` | SSE stream of everything the loop reports |
-| `POST` | `/api/message` | `{"text": "..."}` — start a turn in the session on screen; `409` when *that* session is already running (other conversations are unaffected) |
-| `POST` | `/api/abort` | stop the running turn at the next safe point; add `?id=<session>` to stop a turn in a conversation you are not looking at |
+| `POST` | `/api/message` | `{"text": "..."}` — start a turn, or **queue it behind the one running**: `202 {"accepted": true, "queued": true|false}` either way. `409` only when the queue is full (16) or no model is configured. The queue is per conversation, so another conversation still starts immediately |
+| `POST` | `/api/abort` | stop the running turn at the next safe point **and drop what was queued behind it**, publishing how many were dropped; add `?id=<session>` to stop a turn in a conversation you are not looking at (which leaves its queue alone) |
 | `POST` | `/api/compact` | compact the session on screen: the older turns become a summary, written to the next generation file. `409` while a turn is running or when the summary would not be smaller than what it replaces |
 | `POST` | `/api/attachment` | one picture as the raw body, `?name=<file name>` — the vision model describes it and the description starts a turn; `400` when the bytes are not a PNG/JPEG/WebP/GIF, `413` over 8 MB, `409` while that conversation is running or when no vision model is configured |
 | `POST` | `/api/approval` | `{"id": "...", "allow": true, "remember": false}` — answer a pending approval |
@@ -527,7 +527,7 @@ resume with `Last-Event-ID` (the server keeps a small replay buffer).
 
 | `type` | Fields | Meaning |
 |---|---|---|
-| `status` | as `/api/status`, plus `busy`, `running` and `approvals` | sent on connect, after session switches, when a turn ends, and when a tool asks for approval |
+| `status` | as `/api/status`, plus `busy`, `running`, `approvals` and `queued` | sent on connect, after session switches, when a turn ends, when a tool asks for approval, and when a message is queued |
 
 Every event also carries **`sessionId`** — the conversation it belongs to. One stream carries every
 conversation on the server, so this is what lets a page render exactly the transcript it is showing

@@ -229,6 +229,8 @@
     everOpen: false,
     retryTimer: 0,
     busy: false,
+    /* Messages the server is holding for this conversation while a turn runs. */
+    queued: [],
     /* When the stream last delivered anything. A page cannot tell a quiet server
      * from a dead connection by looking at the socket, and a `busy` flag that
      * outlives its turn is a composer that never comes back. */
@@ -467,7 +469,12 @@
   /* The composer stays usable while nothing is configured — the server answers
    * 409 with a readable message — but the reason has to be on screen. */
   function composerHint() {
-    if (state.busy) { return 'A turn is running — Send is disabled while the agent works.'; }
+    const queued = state.queued.length;
+    if (queued > 0 && state.busy) {
+      return queued + ' queued — the next message starts when this turn ends.';
+    }
+    if (queued > 0) { return queued + ' queued.'; }
+    if (state.busy) { return 'A turn is running — what you send now waits its turn.'; }
     if (state.configured === false) { return 'No model configured — open Settings to choose a provider and model.'; }
     return '';
   }
@@ -478,7 +485,9 @@
     /* Abort belongs to the turn it stops: it appears next to Send while the
      * agent works, instead of sitting in the header greyed out all day. */
     dom.btnAbort.hidden = !state.busy;
-    dom.send.disabled = state.busy;
+    /* Send stays enabled while a turn runs: the server queues the message instead of refusing it,
+     * and disabling the field was the page's half of the old 409. */
+    dom.send.disabled = false;
     dom.hint.textContent = composerHint();
     refreshLive();
   }
@@ -752,6 +761,14 @@
     dom.btnCompact.disabled = false;
   }
 
+  /* What the server is holding for this conversation, oldest first. Drawn as a count in the
+   * composer: the messages themselves appear in the transcript when their turn starts, so a queued
+   * message is not shown twice. */
+  function applyQueued(queued) {
+    state.queued = Array.isArray(queued) ? queued.map(str).filter(Boolean) : [];
+    dom.hint.textContent = composerHint();
+  }
+
   function applyStatus(status) {
     if (!status || typeof status !== 'object') { return; }
     state.status = status;
@@ -788,6 +805,8 @@
     } else {
       state.pendingApprovalsSync = Array.isArray(status.approvals) ? status.approvals : null;
     }
+    // What is waiting behind the turn on screen, so the composer can say so.
+    applyQueued(status.queued);
     setBusy(!!status.busy || pendingApprovals() > 0);
     paintRunningRows();
   }
@@ -4632,19 +4651,9 @@
   // ------------------------------------------------------------ composer
 
   async function sendMessage() {
-    if (state.busy) {
-      // The page's idea of "busy" can outlive the turn it came from: a stream
-      // that died, a throttled timer, a server that restarted. Swallowing the
-      // message silently would be the worst answer, so the server is asked
-      // before anything is dropped.
-      if (!streamLooksStale()) { return; }
-      const status = await request('/api/status').catch(function () { return null; });
-      if (!status || status.busy) {
-        if (status) { applyStatus(status); }
-        return;
-      }
-      applyStatus(status);
-    }
+    // No busy check any more: the server queues a message sent while a turn is running, so the page
+    // sends it and says what happened. Refusing here was this side of the 409 the server used to
+    // answer with, and a thought typed during a long turn is worth keeping.
     const text = dom.input.value.trim();
     if (!text) { return; }
     dom.input.value = '';
@@ -4654,21 +4663,21 @@
     // `done` rendered from the event stream — before this response arrives, and
     // setting the flag afterwards leaves the composer stuck on a turn that is
     // already over. The stream is the authority and corrects this either way.
-    setBusy(true);
     try {
-      await postJSON('/api/message', { text: text });
-    } catch (err) {
-      if (err.status === 409) {
-        // 409 means "a turn is already running" or, on a fresh install, "no
-        // model configured". Whether a turn is running is the server's fact,
-        // not this page's guess: a refusal that collided with the end of the
-        // previous turn must not leave the composer disabled.
-        appendError(err.message);
-        refreshStatus();
-      } else {
-        appendError('send failed: ' + err.message);
-        setBusy(false);
+      const res = await postJSON('/api/message', { text: text });
+      // "Queued" means the turn is still running and this message is next. The count is *not* added
+      // here: the server publishes a status when it queues, that event often arrives before this
+      // response does, and adding locally as well is how the hint came to say "2 queued" for one
+      // message — measured in the browser, which is where a race between two sources of the same
+      // fact shows up. The status is the authority; this only says the composer should look busy.
+      if (res && res.queued) {
+        setBusy(true);
       }
+    } catch (err) {
+      // 409 is left for what it still means: a full queue, or no model configured. Both are things
+      // the user has to act on, and neither is "a turn is running".
+      appendError(err.message);
+      refreshStatus();
       dom.input.value = text;
     }
     dom.input.focus();
@@ -4740,7 +4749,7 @@
   dom.input.addEventListener('keydown', function (event) {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
-      if (!state.busy) { sendMessage(); }
+      sendMessage();
     }
   });
 

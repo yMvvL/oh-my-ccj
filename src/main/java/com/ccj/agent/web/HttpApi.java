@@ -269,11 +269,13 @@ public final class HttpApi implements AutoCloseable {
       error(exchange, 400, "field 'text' is required");
       return;
     }
-    if (!hub.submit(text)) {
-      error(exchange, 409, "a turn is already running");
-      return;
-    }
-    respond(exchange, 202, Json.object().put("accepted", true));
+    // 202 either way: the message was accepted, whether it started a turn or is waiting behind the
+    // one that is running. The page says which, and the composer stays usable in both cases.
+    AgentHub.Submit submit = hub.submit(text);
+    respond(
+        exchange,
+        202,
+        Json.object().put("accepted", true).put("queued", submit == AgentHub.Submit.QUEUED));
   }
 
   /**
@@ -324,7 +326,7 @@ public final class HttpApi implements AutoCloseable {
     // composer's stop button means. An id stops a turn running in a conversation the user is not
     // looking at, which is the case the tree's running marker leads them to.
     String id = queryParam(exchange, "id");
-    boolean aborted = id == null || id.isBlank() ? hub.abort() : hub.abort(id);
+    boolean aborted = id == null || id.isBlank() ? hub.abortAll() : hub.abort(id);
     respond(exchange, 200, Json.object().put("aborted", aborted));
   }
 
