@@ -231,6 +231,8 @@ public final class AgentHub implements AutoCloseable {
    * hub with none asks about everything, which is what the tests and the embedded uses expect.
    */
   private volatile ApprovalRules approvalRules;
+  /** Where a turn's previous file contents go, so the turn can be taken back. */
+  private final com.ccj.agent.session.CheckpointStore checkpoints;
   private volatile Config config;
   private volatile FileSession session;
   private volatile boolean closed;
@@ -245,6 +247,7 @@ public final class AgentHub implements AutoCloseable {
     this.provider.set(initialProvider);
     this.config = config;
     this.tools = tools;
+    this.checkpoints = com.ccj.agent.session.CheckpointStore.recording();
     this.settings = settings;
     this.session = session;
     this.autoApprove.set(settings.autoApprove());
@@ -1480,6 +1483,9 @@ public final class AgentHub implements AutoCloseable {
    * conversation's file, so two turns running side by side cannot add their tokens to each other.
    */
   private void runTurn(Conversation conversation, String text) {
+    // The checkpoint belongs to this thread, and this is the thread the turn's tools run on: a store
+    // that took "the turn in progress" from a field would mix up conversations running side by side.
+    checkpoints.beginTurn(conversation.session().file(), conversation.cwd());
     AgentLoop loop = newLoop(conversation);
     conversation.attach(loop);
     long started = System.nanoTime();
@@ -1497,6 +1503,9 @@ public final class AgentHub implements AutoCloseable {
     // message must not find the session still claiming to be busy — that race is a message answered
     // with 409 and a composer that stays disabled until something else publishes a status.
     conversation.end();
+    // Closed before anything else in the tail: what the turn changed is written down while the turn
+    // is still the one this thread ran, and everything below publishes events about it.
+    checkpoints.endTurn();
     conversation.addElapsed((System.nanoTime() - started) / 1_000_000);
     // Persisting at turn boundaries keeps the file from growing per token and still survives a
     // kill: after the worst case the last turn is missing, never the whole session.
@@ -2408,6 +2417,50 @@ public final class AgentHub implements AutoCloseable {
    */
   public void setApprovalRules(ApprovalRules rules) {
     this.approvalRules = rules;
+  }
+
+  /**
+   * Puts back what the last turn changed.
+   *
+   * <p>The answer to the question people ask before letting an agent near their files — "may it be
+   * undone" — and the reason approval can be left where it belongs instead of being switched off to
+   * compensate. Refused while a turn is running: undoing underneath one would restore files the model
+   * is in the middle of reasoning about, which is a worse state than either.
+   */
+  public ObjectNode undoTurn() {
+    FileSession current = session();
+    if (current == null) {
+      throw new IllegalStateException("no session is open");
+    }
+    Conversation conversation = conversations.get(current.id());
+    if (conversation != null && conversation.running()) {
+      throw new IllegalStateException("a turn is running; abort it before undoing a previous one");
+    }
+    List<String> restored = checkpoints.undoLastTurn(current.file(), cwd());
+    if (restored.isEmpty()) {
+      publish(
+          current.id(),
+          "notice",
+          Json.object().put("text", "nothing to undo: no turn has changed a file yet"));
+    } else {
+      publish(
+          current.id(),
+          "notice",
+          Json.object()
+              .put(
+                  "text",
+                  "undone: "
+                      + restored.size()
+                      + (restored.size() == 1 ? " file" : " files")
+                      + " put back as they were before the last turn — "
+                      + String.join(", ", restored)));
+    }
+    ObjectNode response = Json.object();
+    response.put("restored", restored.size());
+    ArrayNode files = response.putArray("files");
+    restored.forEach(files::add);
+    response.put("remaining", checkpoints.undoableTurns(current.file()));
+    return response;
   }
 
   /**

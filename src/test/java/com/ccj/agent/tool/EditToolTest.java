@@ -151,6 +151,27 @@ class EditToolTest {
   }
 
   @Test
+  void hunksAreAppliedByPositionRatherThanByTheOrderTheyWereWritten() throws Exception {
+    // Measured: a model that writes the bottom change first produced `class Notes implint a = 2;`
+    // `neable {` — both hunks matched, and applying them in the order they arrived moved the
+    // offsets the later one was computed against. Position order is the only correct order.
+    Files.writeString(dir.resolve("f.java"), "class Notes {\n  int a = 1;\n}\n");
+
+    ToolResult result =
+        new EditTool()
+            .execute(
+                "{\"path\":\"f.java\",\"edits\":["
+                    + "{\"old_string\":\"int a = 1;\",\"new_string\":\"int a = 2;\"},"
+                    + "{\"old_string\":\"class Notes {\",\"new_string\":\"class Notes implements Cloneable {\"}]}",
+                new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertFalse(result.error(), result.content());
+    assertEquals(
+        "class Notes implements Cloneable {\n  int a = 2;\n}\n",
+        Files.readString(dir.resolve("f.java")));
+  }
+
+  @Test
   void overlappingHunksAreRefusedRatherThanGuessedAt() throws Exception {
     Files.writeString(dir.resolve("f.txt"), "alpha\nbeta\ngamma\n");
 

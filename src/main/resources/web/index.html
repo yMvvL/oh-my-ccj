@@ -202,6 +202,9 @@
                   title="Send a picture: a vision model describes it and the description becomes your message">
             <span class="btn-glyph" aria-hidden="true">▣</span><span class="btn-label">Photo</span></button>
           <input type="file" id="photo-input" accept="image/*" hidden>
+          <button type="button" class="btn ghost sm" id="btn-undo" aria-label="Undo the last turn's file changes"
+                  title="Put back the files the last turn changed. Each turn is undoable once; the twenty most recent are kept.">
+            <span class="btn-glyph" aria-hidden="true">↺</span><span class="btn-label">Undo</span></button>
           <button type="button" class="btn ghost sm" id="btn-compact" aria-label="Compact the conversation"
                   title="Replace earlier turns with a summary, freeing context. The full conversation stays on disk.">
             <span class="btn-glyph" aria-hidden="true">⤓</span><span class="btn-label">Compact</span></button>

@@ -22,6 +22,7 @@ untrusted client**: it gets no shell, no filesystem, and every side effect still
 | `POST` | `/api/abort` | stop the running turn at the next safe point **and drop what was queued behind it**, publishing how many were dropped; add `?id=<session>` to stop a turn in a conversation you are not looking at (which leaves its queue alone) |
 | `POST` | `/api/compact` | compact the session on screen: the older turns become a summary, written to the next generation file. `409` while a turn is running or when the summary would not be smaller than what it replaces |
 | `POST` | `/api/attachment` | one picture as the raw body, `?name=<file name>` — the vision model describes it and the description starts a turn; `400` when the bytes are not a PNG/JPEG/WebP/GIF, `413` over 8 MB, `409` while that conversation is running or when no vision model is configured |
+| `POST` | `/api/undo` | put back the files the last turn changed: `200 {"restored": n, "files": [...], "remaining": m}`, and a notice in the transcript. `409` while a turn is running — undoing underneath one would restore files the model is mid-thought about |
 | `POST` | `/api/approval` | `{"id": "...", "allow": true, "remember": false}` — answer a pending approval |
 | `POST` | `/api/auto-approve` | `{"enabled": true}` — flip the whole session to auto-approve |
 | `POST` | `/api/session` | `{"action": "new"}` or `{"action": "resume", "id": "..."}` |

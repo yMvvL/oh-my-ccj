@@ -4,6 +4,7 @@ import com.ccj.agent.core.ApprovalRequest;
 import com.ccj.agent.core.Tool;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
+import com.ccj.agent.session.CheckpointStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -24,15 +25,23 @@ import java.util.List;
 public final class EditTool implements Tool {
 
   private static final long MAX_EDIT_BYTES = 32L * 1024 * 1024;
+  /** Where a file's previous content goes, so the turn can be undone. */
+  private final CheckpointStore checkpoints;
+
   /** The check that runs after a successful "edit": nothing unless the user declared one. */
   private final PostEditCheck check;
 
   public EditTool() {
-    this(com.ccj.agent.core.Checks.none());
+    this(com.ccj.agent.core.Checks.none(), CheckpointStore.none());
   }
 
   public EditTool(com.ccj.agent.core.Checks checks) {
+    this(checks, CheckpointStore.none());
+  }
+
+  public EditTool(com.ccj.agent.core.Checks checks, CheckpointStore checkpoints) {
     this.check = new PostEditCheck(checks);
+    this.checkpoints = checkpoints == null ? CheckpointStore.none() : checkpoints;
   }
 
   private static final int PREVIEW_CONTEXT = 3;
@@ -216,6 +225,9 @@ public final class EditTool implements Tool {
               + " and redo the edit against what is there now.");
     }
 
+    // Recorded before the write, and after the approval: the state worth being able to return to is
+    // the one this turn started with, and a file whose write was refused has nothing to undo.
+    checkpoints.record(file, text);
     // Written to a sibling and moved into place, so a crash or a full disk cannot leave the file
     // half-written: the failure mode of a partial write to a source file is worse than not editing it.
     writeAtomically(file, updated);
@@ -325,12 +337,25 @@ public final class EditTool implements Tool {
     return null;
   }
 
-  /** Every replacement, back to front, so the offsets of the ones not yet applied stay valid. */
+  /**
+   * Every replacement, applied from the end of the file backwards.
+   *
+   * <p>Backwards is what keeps the offsets valid: a replacement changes the length of the text after
+   * it, so the ones nearer the start must be applied last. Sorting by position rather than trusting
+   * the order the hunks arrived in is the part that matters — a model writing the bottom change first
+   * is normal, and measured, doing it by arrival order produced `class Notes implint a = 2;neable {`
+   * from a two-hunk edit that both hunks had matched.
+   */
   private static String applyAll(String text, List<int[]> ranges, List<String> replacements) {
+    List<Integer> order = new ArrayList<>();
+    for (int i = 0; i < ranges.size(); i++) {
+      order.add(i);
+    }
+    order.sort((left, right) -> Integer.compare(ranges.get(right)[0], ranges.get(left)[0]));
     StringBuilder builder = new StringBuilder(text);
-    for (int i = ranges.size() - 1; i >= 0; i--) {
-      int[] range = ranges.get(i);
-      builder.replace(range[0], range[1], replacements.get(i));
+    for (int index : order) {
+      int[] range = ranges.get(index);
+      builder.replace(range[0], range[1], replacements.get(index));
     }
     return builder.toString();
   }

@@ -37,6 +37,14 @@ Also: `edit` and `write` re-read before they write and refuse a file that change
 waited, both write through a temp file and an atomic rename, the SSE keep-alive is a real event the
 page can hear, and an error body is read bounded rather than truncated after the fact.
 
+**Undo.** Every turn that changes a file can be taken back — `POST /api/undo`, the composer's Undo
+button, or `/undo` in the REPL — and each press goes one turn further back. A file the turn created is
+deleted rather than emptied; a file it changed is written back as the turn found it. Snapshots live
+beside the session, twenty turns are kept, a file over 4 MB is skipped rather than copied, and a file
+outside the session's directory is not recorded at all. This is the other half of approval: approval
+answers "may this run", undo answers "may it be taken back", and it is the second question that decides
+whether the first one can be left switched on.
+
 **Prompt caching, and a conversation that compacts itself.** Anthropic requests now carry three
 `cache_control` breakpoints — the system prompt, the tool set, and the end of the conversation — which
 is what makes turn *n+1* a cache read of the prefix turn *n* already paid to write. (Live, on the

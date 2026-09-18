@@ -4,6 +4,7 @@ import com.ccj.agent.core.ApprovalRequest;
 import com.ccj.agent.core.Tool;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
+import com.ccj.agent.session.CheckpointStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -20,15 +21,23 @@ import java.nio.file.StandardCopyOption;
  */
 public final class WriteTool implements Tool {
 
+  /** Where a file's previous content goes, so the turn can be undone. */
+  private final CheckpointStore checkpoints;
+
   /** The check that runs after a successful "write": nothing unless the user declared one. */
   private final PostEditCheck check;
 
   public WriteTool() {
-    this(com.ccj.agent.core.Checks.none());
+    this(com.ccj.agent.core.Checks.none(), CheckpointStore.none());
   }
 
   public WriteTool(com.ccj.agent.core.Checks checks) {
+    this(checks, CheckpointStore.none());
+  }
+
+  public WriteTool(com.ccj.agent.core.Checks checks, CheckpointStore checkpoints) {
     this.check = new PostEditCheck(checks);
+    this.checkpoints = checkpoints == null ? CheckpointStore.none() : checkpoints;
   }
 
   private static final int PREVIEW_CONTEXT = 3;
@@ -91,13 +100,11 @@ public final class WriteTool implements Tool {
       detail.append("; OUTSIDE session cwd ").append(ctx.cwd());
     }
     detail.append(')');
-    if (replacing) {
-      String existing = readForPreview(file);
-      if (existing != null && !existing.equals(content)) {
-        detail
-            .append('\n')
-            .append(DiffPreview.unified(existing, content, PREVIEW_CONTEXT, PREVIEW_MAX_LINES));
-      }
+    String existing = replacing ? readForPreview(file) : null;
+    if (existing != null && !existing.equals(content)) {
+      detail
+          .append('\n')
+          .append(DiffPreview.unified(existing, content, PREVIEW_CONTEXT, PREVIEW_MAX_LINES));
     }
     String refusal = ctx.refusal(ApprovalRequest.file("write", file, detail.toString()));
     if (refusal != null) {
@@ -118,6 +125,17 @@ public final class WriteTool implements Tool {
               + label
               + " did not exist when this write was approved, and does now. Writing would discard"
               + " whatever appeared in between. Read it first, then decide.");
+    }
+    // Staged and renamed rather than written in place, so a crash cannot leave a truncated file: a
+    // half-written source file is worse than none, because nothing about it says it is incomplete.
+    // Recorded before the write and after the approval. Three cases, and the middle one matters: a
+    // file that existed but could not be read — binary, or over the preview limit — is *not*
+    // recorded as "did not exist", because undo would then delete it. Nothing is claimed about a
+    // state this call does not hold.
+    if (!replacing) {
+      checkpoints.record(file, null);
+    } else if (existing != null) {
+      checkpoints.record(file, existing);
     }
     // Staged and renamed rather than written in place, so a crash cannot leave a truncated file: a
     // half-written source file is worse than none, because nothing about it says it is incomplete.

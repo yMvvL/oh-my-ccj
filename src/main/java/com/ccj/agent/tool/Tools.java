@@ -24,10 +24,16 @@ public final class Tools {
    * that was written, and a read has no path it changed.
    */
   public static ToolRegistry standard(Checks checks) {
+    return standard(checks, com.ccj.agent.session.CheckpointStore.none());
+  }
+
+  /** The same set, with somewhere to put a file's previous content so a turn can be undone. */
+  public static ToolRegistry standard(
+      Checks checks, com.ccj.agent.session.CheckpointStore checkpoints) {
     return ToolRegistry.of(
         new ReadTool(),
-        new WriteTool(checks),
-        new EditTool(checks),
+        new WriteTool(checks, checkpoints),
+        new EditTool(checks, checkpoints),
         new BashTool(),
         new GlobTool(),
         new GrepTool(),

@@ -69,6 +69,13 @@ thing it was granted for.
   would also cover `https://docs.example.com.evil/`. What it does not do: no JavaScript, no cookies,
   no credentials, no POST — a page behind a login is fetched as a stranger sees it, and the model is
   told so in the tool description rather than discovering it from an empty answer.
+- **A checkpoint is a copy of your files, and it lives where sessions live.** Before an `edit` or a
+  `write` changes a file inside the session's directory, the previous content is copied to
+  `<sessions>/<id>.checkpoints/<turn>/`. That is a second copy of source code on disk, with the
+  permissions of the sessions directory and the twenty-turn retention described in the README — not
+  encrypted, not redacted, and not somewhere a `git status` or a backup exclusion is looking. It is
+  what makes a turn undoable, and it is worth knowing about before it holds something you would not
+  have copied there yourself.
 - **A picture is never an image in the conversation.** The model receives a description, so the
   existing guards are untouched: no wire format grew an image branch, no session file holds a
   base64 blob, and the picture itself is a file on disk whose path the model may `read` — which is

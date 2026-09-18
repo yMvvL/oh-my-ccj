@@ -234,6 +234,7 @@ public final class HttpApi implements AutoCloseable {
         case "/api/attachment" -> attachment(exchange);
         case "/api/abort" -> abort(exchange);
         case "/api/compact" -> compact(exchange);
+        case "/api/undo" -> undo(exchange);
         case "/api/approval" -> approval(exchange);
         case "/api/auto-approve" -> autoApprove(exchange);
         case "/api/session" -> session(exchange);
@@ -335,6 +336,20 @@ public final class HttpApi implements AutoCloseable {
    * conversation itself arrives as a {@code compacted} event — the page learns its transcript changed
    * the same way it learns about everything else.
    */
+  /**
+   * Puts back what the last turn changed.
+   *
+   * <p>Answers with what was restored and how many turns are still undoable, so the page can say
+   * both; the conversation itself says so through a notice, like everything else the server does.
+   */
+  private void undo(HttpExchange exchange) throws IOException {
+    if (!"POST".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "POST required");
+      return;
+    }
+    respond(exchange, 200, hub.undoTurn());
+  }
+
   private void compact(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
       error(exchange, 405, "POST required");

@@ -2603,6 +2603,95 @@ class WebApiTest {
   }
 
   @Test
+  void undoTakesBackWhatTheLastTurnChanged() throws Exception {
+    // The question people ask before letting an agent near their files is "may it be undone", and it
+    // is answered by a turn's writes being recoverable — not by the approval prompt, which only ever
+    // answered "may it run".
+    hub.setAutoApprove(true);
+    Path file = cwd.resolve("Notes.java");
+    Files.writeString(file, "class Notes {\n  int a = 1;\n}\n");
+    provider.reply(
+        new Message.Assistant(
+            "",
+            List.of(
+                new Message.ToolCall(
+                    "call_1",
+                    "edit",
+                    "{\"path\":\"Notes.java\",\"edits\":["
+                        + "{\"old_string\":\"int a = 1;\",\"new_string\":\"int a = 2;\"},"
+                        + "{\"old_string\":\"class Notes {\",\"new_string\":\"class Notes implements Cloneable {\"}]}"))));
+    provider.reply(Message.Assistant.text("changed two things"));
+
+    JsonNode undone;
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"edit the notes\"}");
+      sse.await("done", 5000);
+      assertTrue(Files.readString(file).contains("int a = 2;"), "the edit happened");
+      assertEquals(
+          "class Notes implements Cloneable {\n  int a = 2;\n}\n",
+          Files.readString(file),
+          "both hunks, each where it belongs");
+
+      undone = postJson("/api/undo", "{}");
+
+      // A notice rather than history: undo is about the files, not about the conversation, and the
+      // transcript says what was put back where a reader is already looking.
+      JsonNode notice = sse.await("notice", 5000);
+      assertTrue(notice.path("text").asText().startsWith("undone: 1 file"), notice.toString());
+      assertTrue(notice.path("text").asText().contains("Notes.java"), notice.toString());
+    }
+
+    assertEquals(1, undone.path("restored").asInt(), undone.toString());
+    assertEquals(
+        "class Notes {\n  int a = 1;\n}\n",
+        Files.readString(file),
+        "the file is what the turn found");
+    assertEquals(0, undone.path("remaining").asInt(), "that turn is spent");
+  }
+
+  @Test
+  void aFileTheTurnCreatedIsRemovedByUndo() throws Exception {
+    hub.setAutoApprove(true);
+    provider.reply(
+        new Message.Assistant(
+            "",
+            List.of(
+                new Message.ToolCall(
+                    "call_1",
+                    "write",
+                    "{\"path\":\"Brand.java\",\"content\":\"class Brand {}\\n\"}"))));
+    provider.reply(Message.Assistant.text("created"));
+
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"create it\"}");
+      sse.await("done", 5000);
+    }
+    assertTrue(Files.exists(cwd.resolve("Brand.java")));
+
+    postJson("/api/undo", "{}");
+
+    assertFalse(Files.exists(cwd.resolve("Brand.java")), "a created file is deleted, not emptied");
+  }
+
+  @Test
+  void undoIsRefusedWhileATurnIsRunning() throws Exception {
+    // Undoing underneath a running turn would restore files the model is in the middle of reasoning
+    // about, which is a worse state than either.
+    provider.reply(Message.Assistant.text("slow"));
+    provider.gate(new CountDownLatch(1));
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"think\"}");
+
+      HttpResponse<String> refused = post("/api/undo", "{}");
+
+      assertEquals(409, refused.statusCode(), refused.body());
+      assertTrue(refused.body().contains("abort it before undoing"), refused.body());
+      provider.release();
+      sse.await("done", 5000);
+    }
+  }
+
+  @Test
   void aConversationOverItsBudgetIsCompactedBetweenTurns() throws Exception {
     // Past `maxContextTokens` the projection starts eliding tool output and dropping whole exchanges,
     // and its notices say so ("context: 213 → 26 tokens, 5 earlier exchange(s) dropped") without ever

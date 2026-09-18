@@ -8,6 +8,7 @@ import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.RuleApprover;
 import com.ccj.agent.core.Checks;
+import com.ccj.agent.session.CheckpointStore;
 import com.ccj.agent.mcp.McpTools;
 import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
@@ -163,6 +164,9 @@ public final class Cli {
       return 0;
     }
 
+    // One store for the run; which session and project it is recording is decided per turn, on the
+    // thread that runs it.
+    CheckpointStore checkpoints = CheckpointStore.recording();
     Config config;
     Path configFile;
     try {
@@ -183,7 +187,7 @@ public final class Cli {
       // post-edit checks this file declares. Checks.from() holds the path, not the parsed list: a
       // check added while the session runs takes effect on the next edit rather than on the next
       // restart.
-      tools = Tools.standard(Checks.from(configFile));
+      tools = Tools.standard(Checks.from(configFile), checkpoints);
       // The user's own servers, if any. A server that will not start is a warning rather than a
       // refusal: one broken entry must not stop the agent, and it must not be silent either — a
       // capability that is missing and one nobody mentioned look the same from in here.
@@ -302,6 +306,7 @@ public final class Cli {
               sessionsDir,
               cwd,
               paths.home(),
+              checkpoints,
               config,
               env,
               session,
@@ -804,6 +809,7 @@ public final class Cli {
     private final Path sessionsDir;
     private final Path cwd;
     private final Path home;
+    private final CheckpointStore checkpoints;
     private final Config config;
     private final Map<String, String> env;
     private final ConsoleRenderer renderer;
@@ -823,6 +829,7 @@ public final class Cli {
         Path sessionsDir,
         Path cwd,
         Path home,
+        CheckpointStore checkpoints,
         Config config,
         Map<String, String> env,
         FileSession session,
@@ -837,6 +844,7 @@ public final class Cli {
       this.sessionsDir = sessionsDir;
       this.cwd = cwd;
       this.home = home;
+      this.checkpoints = checkpoints;
       this.config = config;
       this.env = env;
       this.session = session;
@@ -1000,15 +1008,36 @@ public final class Cli {
     }
 
     private void turn(String input) {
+      checkpoints.beginTurn(session.file(), cwd);
       try {
         loop.run(input);
       } catch (RuntimeException e) {
         err.println("error: " + message(e));
         err.flush();
       } finally {
+        checkpoints.endTurn();
         renderer.reset();
         autoCompact();
       }
+    }
+
+    /** Puts back what the last turn changed, the way {@code POST /api/undo} does for the page. */
+    private void undo() {
+      java.util.List<String> restored = checkpoints.undoLastTurn(session.file(), cwd);
+      if (restored.isEmpty()) {
+        out.println("nothing to undo: no turn has changed a file yet");
+      } else {
+        out.println(
+            "undone: "
+                + restored.size()
+                + (restored.size() == 1 ? " file" : " files")
+                + " put back as they were before the last turn — "
+                + String.join(", ", restored)
+                + " ("
+                + checkpoints.undoableTurns(session.file())
+                + " more turn(s) can be undone)");
+      }
+      out.flush();
     }
 
     /**
@@ -1088,6 +1117,7 @@ public final class Cli {
           }
         }
         case "/compact" -> compact();
+        case "/undo" -> undo();
         case "/tools" -> printTools(tools, out);
         case "/config" -> printConfig(config, env, out);
         case "/yolo" -> {
@@ -1136,6 +1166,7 @@ public final class Cli {
             /sessions        list sessions
             /model <name>    switch model for this session
             /compact         replace earlier turns with a summary, freeing context
+            /undo            put back the files the last turn changed
             /tools           list available tools
             /config          show the effective configuration
             /yolo            toggle auto-approval of tool calls

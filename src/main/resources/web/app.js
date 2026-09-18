@@ -131,6 +131,7 @@
     hint: $('composer-hint'),
     photoHint: $('photo-hint'),
     btnPhoto: $('btn-photo'),
+    btnUndo: $('btn-undo'),
     photoInput: $('photo-input'),
     side: $('side'),
     toolList: $('tool-list'),
@@ -4720,6 +4721,20 @@
   }
 
   dom.btnPhoto.addEventListener('click', function () { dom.photoInput.click(); });
+
+  /* Put back what the last turn changed. The server answers with what it restored and publishes a
+   * notice, which is where the transcript says so — this side only reports a refusal, because a
+   * refusal is the case where nothing else will. */
+  async function undoLastTurn() {
+    try {
+      const res = await postJSON('/api/undo', {});
+      if (res && res.restored === 0) { appendNotice('nothing to undo'); }
+    } catch (err) {
+      appendError('undo: ' + err.message);
+    }
+  }
+
+  dom.btnUndo.addEventListener('click', undoLastTurn);
 
   dom.photoInput.addEventListener('change', function () {
     const file = dom.photoInput.files && dom.photoInput.files[0];
