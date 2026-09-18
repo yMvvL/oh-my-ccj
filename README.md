@@ -379,6 +379,7 @@ error output show at most `***1234`.
 | `bash` | `command`, `cwd?`, `timeout_seconds?` | `/bin/bash -lc`, stderr merged, exit code reported, output capped with head+tail |
 | `glob` | `pattern`, `path?` | relative-path globbing incl. `**`, newest first, skips `target/`, `.git/`, `node_modules/`, `.idea/` |
 | `grep` | `pattern`, `path?`, `glob?`, `ignore_case?`, `max_results?` | Java regex, skips binaries and files over 2 MiB |
+| `fetch` | `url`, `max_bytes?` | the first tool that leaves the machine: `http`/`https` only (anything else is refused by name, before anything is dialled), text content types only, the body read bounded at 200 KB by default and 1 MiB at most, redirects followed by hand so every hop is scheme-checked. It asks for approval like any other tool, and the URL is what a rule matches — `{"tool": "fetch", "command": "https://docs.example.com/*"}`. Not a browser: no JavaScript, no cookies, no authentication, no POST |
 | `restart` | `built` | installs a scratch build over the jar in use and restarts on it; ends the run. See [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) |
 
 Tool failures never kill the session: bad arguments, unknown tool names, missing files and thrown

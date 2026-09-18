@@ -89,6 +89,36 @@ class ApprovalRulesTest {
   }
 
   @Test
+  void aUrlRuleMayUseAWildcardEvenThoughTheUrlContainsQuerySyntax() throws IOException {
+    // `?a=1&b=2` is one address, not two commands: the metacharacter rule is about what a shell runs,
+    // and applying it here would leave "allow this documentation site" unwritable.
+    ApprovalRules rules =
+        rules("{\"projects\": {\"%s\": {\"allow\": [{\"tool\": \"fetch\", \"command\": \"https://docs.example.com/*\"}]}}}");
+
+    assertEquals(
+        Optional.of(true),
+        rules.verdict(
+            new ApprovalRequest(
+                "fetch", "https://docs.example.com/api?v=2&lang=en", null, "fetch", "d")));
+    assertEquals(
+        Optional.of(true),
+        rules.verdict(new ApprovalRequest("fetch", "https://docs.example.com/", null, "fetch", "d")),
+        "the site root is part of the site");
+    assertEquals(
+        Optional.empty(),
+        rules.verdict(new ApprovalRequest("fetch", "https://evil.example/x", null, "fetch", "d")),
+        "a different host is a different rule");
+    assertEquals(
+        Optional.empty(),
+        rules.verdict(new ApprovalRequest("fetch", "https://docs.example.com.evil/x", null, "fetch", "d")),
+        "and a host whose name merely starts with it is a different host");
+    assertEquals(
+        Optional.empty(),
+        rules.verdict(cmd("https://docs.example.com/api")),
+        "and a fetch rule says nothing about bash");
+  }
+
+  @Test
   void denyWinsOverAllowIncludingOverASessionAllow() throws IOException {
     ApprovalRules rules =
         rules(
@@ -215,6 +245,14 @@ class ApprovalRulesTest {
     IllegalArgumentException refusal =
         assertThrows(IllegalArgumentException.class, () -> starInside.verdict(cmd("git status")));
     assertTrue(refusal.getMessage().contains("wildcard"), refusal.getMessage());
+
+    // A star straight after a name would allow a different name that starts with it — the URL case,
+    // where `docs.example.com*` would also cover `docs.example.com.evil`.
+    ApprovalRules swallowing =
+        rules("{\"projects\": {\"%s\": {\"allow\": [{\"tool\": \"fetch\", \"command\": \"https://docs.example.com*\"}]}}}");
+    IllegalArgumentException why =
+        assertThrows(IllegalArgumentException.class, () -> swallowing.verdict(cmd("https://x/")));
+    assertTrue(why.getMessage().contains("every name that begins with"), why.getMessage());
   }
 
   @Test

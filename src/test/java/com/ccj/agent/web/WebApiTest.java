@@ -249,7 +249,7 @@ class WebApiTest {
     assertEquals(cwd.toString(), status.path("cwd").asText());
     assertFalse(status.path("sessionId").asText().isBlank());
     assertFalse(status.path("busy").asBoolean(), "nothing should be running yet");
-    assertEquals(7, status.path("tools").size(), "every standard tool must be advertised");
+    assertEquals(8, status.path("tools").size(), "every standard tool must be advertised");
     assertEquals("read", status.path("tools").get(0).path("name").asText());
   }
 
@@ -259,7 +259,7 @@ class WebApiTest {
       JsonNode status = sse.await("status", 3000);
 
       assertEquals("openai", status.path("provider").asText());
-      assertEquals(7, status.path("tools").size());
+      assertEquals(8, status.path("tools").size());
       assertFalse(status.path("busy").asBoolean());
     }
   }

@@ -160,7 +160,8 @@ public final class ApprovalRules {
       return false;
     }
     if (rule.command() != null) {
-      return request.command() != null && commandMatches(rule.command(), request.command());
+      return request.command() != null
+          && commandMatches(rule.command(), request.command(), "bash".equals(request.tool()));
     }
     if (rule.path() != null) {
       if (request.path() == null) {
@@ -194,7 +195,24 @@ public final class ApprovalRules {
    * a pattern nobody can audit.
    */
   static boolean commandMatches(String pattern, String command) {
+    return commandMatches(pattern, command, true);
+  }
+
+  /**
+   * The same, for a request whose "command" is not a shell command.
+   *
+   * @param compoundable whether the string is run by a shell, which is the only reason the
+   *     metacharacters matter. A URL is not: `?a=1&amp;b=2` is one address with a query string, and
+   *     refusing to match it would make "allow this documentation site" impossible to write while
+   *     leaving the exact-URL rule as the only workable form.
+   */
+  static boolean commandMatches(String pattern, String command, boolean compoundable) {
     if (pattern.endsWith(" *")) {
+      if (!compoundable) {
+        // A pattern written for a shell command is not one for a URL and the other way round: the
+        // two spellings mean different things, so the wrong one does not match by accident.
+        return false;
+      }
       // The pattern's own star is the wildcard, so it is not a metacharacter to refuse here — the
       // words before it are what have to be plain.
       String head = pattern.substring(0, pattern.length() - 2);
@@ -204,7 +222,56 @@ public final class ApprovalRules {
       String prefix = head + " ";
       return command.startsWith(prefix) && command.length() > prefix.length();
     }
+    if (pattern.endsWith("*")) {
+      // Zero characters are allowed after a path prefix, unlike after a word prefix: the separator
+      // before the star is required at load time, so `https://example.com/*` means "this host, any
+      // path — including the root", which is what a user writing it means. Measured: it did not
+      // match `https://example.com/` at first, and the rule silently allowed nothing.
+      String head = pattern.substring(0, pattern.length() - 1);
+      return command.startsWith(head);
+    }
     return pattern.equals(command);
+  }
+
+  /**
+   * Refuses a pattern whose wildcard is anywhere but the end, or whose star would swallow a
+   * neighbouring name.
+   *
+   * <p>Two spellings, because the two things a user wants to allow are different shapes. `git diff *`
+   * means "those words and further arguments", and only matches a command with no shell
+   * metacharacters in it. `https://docs.example.com/*` means "this path prefix on this host" — and
+   * there the separator before the star is load-bearing: with the star written straight after a
+   * name, `https://docs.example.com*` would also match `https://docs.example.com.evil/`, which is a
+   * different host entirely. Requiring a `/`, `?`, `=` or `:` before the star is what keeps "allow
+   * this site" from meaning "allow any host whose name begins with this one".
+   */
+  private static void trailingWildcard(String command, Path file) {
+    int star = command.indexOf('*');
+    if (star < 0) {
+      return;
+    }
+    if (star != command.length() - 1) {
+      throw new IllegalArgumentException(
+          "the only wildcard an approval rule may use is a trailing '*' (or ' *' for further"
+              + " arguments): "
+              + command
+              + " in "
+              + file);
+    }
+    if (command.endsWith(" *")) {
+      return;
+    }
+    String head = command.substring(0, command.length() - 1);
+    if (head.isEmpty() || "/?=:".indexOf(head.charAt(head.length() - 1)) < 0) {
+      throw new IllegalArgumentException(
+          "a rule written '"
+              + command
+              + "' would also allow every name that begins with '"
+              + head
+              + "'. Put a separator before the star — '/', '?', '=' or ':' — so it means 'this prefix"
+              + " and what follows it': "
+              + file);
+    }
   }
 
   /**
@@ -307,13 +374,8 @@ public final class ApprovalRules {
         throw new IllegalArgumentException(
             "an approval rule for '" + tool + "' needs a 'command' or a 'path' in " + file + ": " + entry);
       }
-      if (command != null && command.contains("*") && !command.endsWith(" *")) {
-        throw new IllegalArgumentException(
-            "the only wildcard an approval rule may use is a trailing ' *' (allowing further"
-                + " arguments): "
-                + command
-                + " in "
-                + file);
+      if (command != null) {
+        trailingWildcard(command, file);
       }
       rules.add(new Rule(tool, command, path));
     }

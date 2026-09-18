@@ -37,6 +37,16 @@ Also: `edit` and `write` re-read before they write and refuse a file that change
 waited, both write through a temp file and an atomic rename, the SSE keep-alive is a real event the
 page can hear, and an error body is read bounded rather than truncated after the fact.
 
+**`edit` changes several places in one file together, and `fetch` reaches the network.** The `edits`
+form is one approval, one write and a diff of the whole file: nothing is written unless every hunk
+matches, overlapping hunks are refused, and a hunk that misses comes back with the file's numbered
+lines around where it was expected instead of a bare "no exact match". `fetch` is the first tool that
+leaves the machine — `http`/`https` only and checked before anything is dialled, text content types
+only, the body bounded while reading, redirects followed by hand so every hop is scheme-checked, and
+the URL is what an approval rule matches (`https://docs.example.com/*`, where the star must follow a
+separator so a rule cannot swallow a neighbouring hostname). What it is not: a browser — no
+JavaScript, cookies, credentials or POST.
+
 **A message sent while a turn is running waits instead of being refused.** The old answer was `409`,
 which disabled the composer until the turn ended — so a thinking pause was a dead stop and whatever
 you thought of while waiting was gone by the time it finished. Now the message queues, the composer

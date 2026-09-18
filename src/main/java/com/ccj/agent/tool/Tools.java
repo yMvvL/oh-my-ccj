@@ -7,7 +7,7 @@ import com.ccj.agent.core.ToolRegistry;
  * The standard tool set.
  *
  * <p>Registration order is the order the model sees the tools in, so it is fixed here rather than
- * left to whoever wires the session: read, write, edit, bash, glob, grep, restart.
+ * left to whoever wires the session: read, write, edit, bash, glob, grep, fetch, restart.
  */
 public final class Tools {
 
@@ -31,6 +31,7 @@ public final class Tools {
         new BashTool(),
         new GlobTool(),
         new GrepTool(),
+        new FetchTool(),
         new RestartTool());
   }
 }
