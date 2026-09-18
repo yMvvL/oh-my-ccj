@@ -559,6 +559,8 @@ written here is in [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 - Several conversations can be running in the same workspace, which means their tools can write the
   same files with no ordering between them. That is the same exposure as two terminals in one
   directory, and it is deliberately not serialised — the point is to start a task and keep working.
+  What is not left to chance is a *single* tool: `edit` refuses text that moved, and `write` refuses a
+  file that appeared or changed while its prompt was up, so a diff you approved is what gets written.
 - `abort` stops a turn between steps and before each tool call, so a turn blocked on the model's own
   network call finishes that call before it stops. A turn waiting for an approval stops immediately,
   in the conversation it belongs to.

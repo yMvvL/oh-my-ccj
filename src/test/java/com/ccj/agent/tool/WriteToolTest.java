@@ -22,6 +22,69 @@ class WriteToolTest {
   @TempDir Path dir;
 
   @Test
+  void aFileChangedWhileTheApprovalWaitedIsRefusedRatherThanOverwritten() throws Exception {
+    // The gap this closes: `write` refused a file that *appeared* while the prompt was up, and wrote
+    // over one that *changed*. Two conversations can write the same path, and so can the user's
+    // editor — the diff in the prompt was computed against the file as it was, so writing over what
+    // is there now discards a change nobody was shown.
+    Path file = dir.resolve("shared.txt");
+    Files.writeString(file, "mine\n");
+
+    ToolResult result =
+        new WriteTool()
+            .execute(
+                "{\"path\":\"shared.txt\",\"content\":\"from the agent\\n\"}",
+                new ToolContext(
+                    dir,
+                    request -> {
+                      // Somebody else — another conversation, the editor, a formatter — writes while
+                      // this one waits for its answer.
+                      try {
+                        Files.writeString(file, "somebody else's work\n");
+                      } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                      }
+                      return ApprovalAnswer.ALLOW_ONCE;
+                    },
+                    4096));
+
+    assertTrue(result.error(), result.content());
+    assertTrue(result.content().startsWith("refused:"), result.content());
+    assertTrue(result.content().contains("changed while this write was waiting"), result.content());
+    assertEquals(
+        "somebody else's work\n",
+        Files.readString(file),
+        "the other change is what survives, not this one");
+  }
+
+  @Test
+  void aFileThatChangedOnlyInLengthIsStillRefused() throws Exception {
+    // A size and a timestamp would miss this one; the hash is what makes the check trustworthy.
+    Path file = dir.resolve("same-length.txt");
+    Files.writeString(file, "AAAA\n");
+
+    ToolResult result =
+        new WriteTool()
+            .execute(
+                "{\"path\":\"same-length.txt\",\"content\":\"from the agent\\n\"}",
+                new ToolContext(
+                    dir,
+                    request -> {
+                      try {
+                        Files.writeString(file, "BBBB\n");
+                        Files.setLastModifiedTime(file, Files.getLastModifiedTime(file));
+                      } catch (IOException e) {
+                        throw new UncheckedIOException(e);
+                      }
+                      return ApprovalAnswer.ALLOW_ONCE;
+                    },
+                    4096));
+
+    assertTrue(result.error(), result.content());
+    assertEquals("BBBB\n", Files.readString(file));
+  }
+
+  @Test
   void denialLeavesTheDiskUntouched() throws Exception {
     ToolContext ctx = new ToolContext(dir, Approver.NEVER, 4096);
 

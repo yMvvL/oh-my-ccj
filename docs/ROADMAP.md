@@ -56,12 +56,14 @@ changes, an error body read to the end before being truncated, and a Node case f
 missing runtime as a pass. All of it verified by reading the source — none of it by a run on the
 machine this list was written on.
 
-- **1.1 Two conversations, one file** — `todo`. The README calls this deliberate ("the same exposure
-  as two terminals in one directory"). That is defensible for `bash`, less so for a tool that shows you
-  a diff and then writes something else: `write` now refuses a file that *appeared* during the
-  approval, but nothing refuses a file that *changed* during it.
-  *Acceptance:* either the overwrite case is detected and refused the way the appearance case is, or
-  the approval prompt says plainly that another turn may be writing the same path.
+- **1.1 Two conversations, one file** — `done`. `write` takes a fingerprint of the file — size,
+  modification time, and a streamed hash of every byte — before the prompt is shown and refuses if it
+  no longer matches when the answer comes back, the same way it already refused a file that *appeared*
+  during the approval. A size and a timestamp would not have been enough: an editor saving in the same
+  granularity, or a formatter writing back the same number of bytes, would have slipped through. The
+  README's exposure stands where it always did and was defensible — `bash` with no ordering between
+  conversations — and no longer covers a tool that shows a diff and then writes something else.
+  *Acceptance met:* the overwrite case is detected and refused, and the refusal says what to redo.
 - **1.2 The deadline that fires mid-run** — `todo`. Cancellation is well covered (a streaming turn, a
   running tool, an abort between a turn and its tools, an approval answered by an abort). What is not
   covered is the case the sub-agent deadline exists for: a run that keeps working past its ten minutes.

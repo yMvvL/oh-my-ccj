@@ -17,6 +17,14 @@ mark, so **every** save from the form failed with a 400 and no setting could be 
 at all. A value that is only the provider's default is not a value now, which is the rule the merge
 already followed when it decided what to write down.
 
+**`write` writes the file the diff was made against, or nothing.** It refused a path that *appeared*
+while the approval was up and wrote over one that *changed* — the same shape of bug `edit` had, in the
+one tool that shows you a diff. It now fingerprints the target before prompting — size, modification
+time, and a streamed hash of every byte, never held in the heap — and refuses if the answer comes back
+to a different file. A size and a timestamp alone would have missed an editor saving within the same
+granularity or a formatter writing back the same number of bytes; that case is pinned by a test.
+Reported as ROADMAP 1.1.
+
 ## 2026-09-18 — pictures
 
 **A picture arrives as a description.** Photograph a screenshot, send it from the phone, and the

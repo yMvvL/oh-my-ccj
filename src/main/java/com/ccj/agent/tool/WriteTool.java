@@ -101,6 +101,11 @@ public final class WriteTool implements Tool {
     }
     detail.append(')');
     String existing = replacing ? readForPreview(file) : null;
+    // What the file was when the prompt was shown. A size and a modification time are not enough —
+    // an editor that saves within the same timestamp granularity, or a formatter that writes the same
+    // length, would slip through — so the content is hashed. Streamed, never held: a write to a large
+    // file must not read it into the heap twice.
+    String before = replacing ? fingerprint(file) : null;
     if (existing != null && !existing.equals(content)) {
       detail
           .append('\n')
@@ -125,6 +130,29 @@ public final class WriteTool implements Tool {
               + label
               + " did not exist when this write was approved, and does now. Writing would discard"
               + " whatever appeared in between. Read it first, then decide.");
+    }
+    // The same refusal for the other direction, which was missing: a file that *changed* while the
+    // approval waited. Two conversations can write the same path, and so can the user's editor — the
+    // diff in the prompt was computed against the file as it was, and writing over what is there now
+    // discards a change nobody was shown. Reported from the shape of the bug the `edit` tool had:
+    // `write` agreed and then wrote whatever it found.
+    if (replacing) {
+      String now;
+      try {
+        now = fingerprint(file);
+      } catch (IOException e) {
+        return ToolResult.error(
+            "refused: " + label + " could not be re-read before writing: " + e.getMessage());
+      }
+      if (!now.equals(before)) {
+        return ToolResult.error(
+            "refused: "
+                + label
+                + " changed while this write was waiting for approval. What is on disk now is not"
+                + " what the diff showed, so writing it would discard the other change — another"
+                + " conversation, your editor, or a formatter on save. Read the file again and redo"
+                + " the write against what is there.");
+      }
     }
     // Staged and renamed rather than written in place, so a crash cannot leave a truncated file: a
     // half-written source file is worse than none, because nothing about it says it is incomplete.
@@ -177,6 +205,31 @@ public final class WriteTool implements Tool {
   }
 
   /** Current contents for the overwrite preview, or {@code null} when too large or not text. */
+  /**
+   * A fingerprint of the file's content: size, modification time and a hash of every byte.
+   *
+   * <p>Compared before and after the approval to answer one question — is this still the file the
+   * diff showed? The hash is what makes the answer trustworthy; the size and the timestamp are kept
+   * because they make a mismatch readable in the refusal.
+   */
+  private static String fingerprint(Path file) throws IOException {
+    java.security.MessageDigest digest;
+    try {
+      digest = java.security.MessageDigest.getInstance("SHA-256");
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 is required by the Java platform", impossible);
+    }
+    try (var in = Files.newInputStream(file)) {
+      byte[] buffer = new byte[8192];
+      int read;
+      while ((read = in.read(buffer)) != -1) {
+        digest.update(buffer, 0, read);
+      }
+    }
+    return Files.size(file) + ":" + Files.getLastModifiedTime(file).toMillis() + ":"
+        + java.util.HexFormat.of().formatHex(digest.digest());
+  }
+
   private static String readForPreview(Path file) throws IOException {
     if (Files.size(file) > PREVIEW_MAX_BYTES) {
       return null;
