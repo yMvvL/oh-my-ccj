@@ -95,7 +95,8 @@ weakening the approval story. Anything that would need a sandbox to be safe does
   description, the picture is on disk under `<id>.attachments/`, and every refusal (not a picture,
   over 8 MB, busy conversation, no vision model configured) leaves the vision endpoint uncalled. The
   design, the measurements and what was not verified are in [VISION.md](VISION.md).
-- **2.1 An MCP client** — `todo`. The largest gap against the ecosystem: today the tool set is
+- **2.1 An MCP client** — `todo`, **ordered as 2.5.6** — one item, one place in the order. The
+  largest gap against the ecosystem: today the tool set is
   compiled in, so a user cannot bring their own. The shape matters more than the protocol — remote
   tools must enter through the same `ToolRegistry` and the same approver, and a server's tools must be
   visible in the approval prompt as coming from that server.
@@ -104,7 +105,8 @@ weakening the approval story. Anything that would need a sandbox to be safe does
 - **2.2 More protocols** — `todo`. The OpenAI Responses API and Gemini, behind the existing `Provider`
   contract. Deliberately after 2.1: a new wire format adds less than a new tool source.
   *Acceptance:* the same scripted-provider tests pass against each mapping.
-- **2.3 Better editing** — `todo`. A patch-style multi-edit (several hunks, one approval, one write),
+- **2.3 Better editing** — `todo`, **ordered as 2.5.4** — the same rule. A patch-style multi-edit
+  (several hunks, one approval, one write),
   because a model fixing five places currently produces five prompts.
   *Acceptance:* one approval shows all hunks, and a partially-applied patch is impossible.
 - **2.4 Sub-agent tuning** — `todo`. Per-role model and effort: a cheap model for `explore`, the main
@@ -128,9 +130,9 @@ what a person feels first, not by what is most interesting to build.
 | 2.5.1 | **A check runs itself after an edit.** `{"checks": [{"glob": "**/*.java", "command": "mvn -q -o -DskipTests compile"}]}` in the config file: the first check whose glob matches the edited path runs inside the `edit`/`write` call, and its verdict — one line when it passes, a bounded excerpt when it fails — is appended to the tool result | Same reason as above | `done` |
 | 2.5.2 | **Permission rules, not one boolean.** `approvals.json` with allow rules (tool name, command prefix, path glob), plus "allow this one for the session" on the prompt. The prompt's only current answers are "yes, this once" and "yes, everything, all session" | This is the root of the felt friction: the choice today is being interrupted or turning the guard off, and people turn the guard off | `todo` |
 | 2.5.3 | **Messages queue instead of 409.** Typing while a turn runs queues the next message, with the composer saying so | A 409 turns a thinking pause into a dead stop, and "it feels slow" is partly this rather than token speed | `todo` |
-| 2.5.4 | **`edit` takes several hunks, and retries once with the error.** One approval, one write, and a failed match comes back with the file's neighbourhood attached | The exact-match single hunk is the tool a model fails most often, and every failure is a whole round trip | `todo` |
+| 2.5.4 | **`edit` takes several hunks, and retries once with the error** — 2.3, pulled forward to here. One approval, one write, and a failed match comes back with the file's neighbourhood attached | The exact-match single hunk is the tool a model fails most often, and every failure is a whole round trip | `todo` |
 | 2.5.5 | **A networking tool.** `fetch` (URL → text, size- and scheme-checked) so "what changed in this library" is answerable | Without it the model guesses at APIs, which is when answers get confidently wrong | `todo` |
-| 2.5.6 | **An MCP client** — see 2.1, which this depends on being honest about: remote tools enter through `ToolRegistry` and the same approver | The ecosystem gap; it is 2.5.6 rather than 2.1 because the four items above change the daily experience more | `todo` |
+| 2.5.6 | **An MCP client** — 2.1, pulled back to here. Remote tools enter through `ToolRegistry` and the same approver, and a server's tools are named as that server's in the prompt | The ecosystem gap: the largest difference in what the agent can attempt at all. Behind the items above because those change every turn, and this changes some turns | `todo` |
 | 2.5.7 | **Prompt caching and automatic compaction.** Anthropic's `cache_control` breakpoint on the stable prefix; compact when the projection crosses a threshold rather than only when asked | Long sessions get slower and more expensive than they need to be, and the user is the one who has to notice | `todo` |
 | 2.5.8 | **Checkpoints.** A per-turn snapshot of the files a turn touched, and a way back to it | Trust is what lets somebody leave auto-approve off *and* let the agent work | `todo` |
 
@@ -146,6 +148,18 @@ SECURITY.md. Two things the tests pinned that would otherwise have been bugs: a 
 never runs for a file outside the session's working directory, and a pattern beginning `**/` matches
 at the project root as well as inside it — `PathMatcher` alone does not do that, and a check that
 silently never fires looks exactly like a check with nothing to report.
+
+**What is left, and what each one needs.** 2.5.2 is next (below). After it, in order: **2.5.3**
+message queueing — the composer holds the next message instead of the server answering 409
+(`HttpApi.message`), which needs the hub to keep a per-conversation queue and the page to say so;
+**2.5.4** multi-hunk `edit` (2.3) — the tool one model in five misses, and each miss is a round trip;
+**2.5.5** a `fetch` tool — the first tool that leaves the machine, so it needs its own rules about
+schemes, size and what the model is told to trust; **2.5.6** the MCP client (2.1) — the largest change
+to the tool registry since it was written, and the reason 2.5.2 has to land first, because a server's
+tools must arrive already knowing which rules apply to them; **2.5.7** prompt caching and automatic
+compaction — cheap to add, and it stops the user being the one who has to notice a session has grown;
+**2.5.8** checkpoints — the last of the trust items, and the one that makes leaving the guard on
+comfortable rather than merely possible.
 
 **The decision that came with it, recorded rather than discovered later.** A check command is a
 command, and [CONVENTIONS](CONVENTIONS.md) says approval is the only guard for anything that executes.
