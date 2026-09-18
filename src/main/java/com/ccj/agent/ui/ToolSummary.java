@@ -5,10 +5,10 @@ import com.ccj.agent.core.Message;
 import com.fasterxml.jackson.databind.JsonNode;
 
 /**
- * One-line digest of a tool call's arguments, shared by every front end.
+ * 工具调用参数的一行摘要，被每个前端共用。
  *
- * <p>Raw JSON in a tool card is unreadable and nothing at all is useless, so both the terminal and
- * the web UI show the same thing: the one argument a human actually cares about, clipped to one line.
+ * <p>工具卡片里的原始 JSON 读不了，而什么都不给又毫无用处，所以终端和 web UI 显示同样的东西：
+ * 人真正在意的那一个参数，裁到一行。
  */
 public final class ToolSummary {
 

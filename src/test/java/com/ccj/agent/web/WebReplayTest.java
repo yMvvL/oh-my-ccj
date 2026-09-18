@@ -8,18 +8,15 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * Replaying a long conversation is browser code — it lives in {@code web/app.js}, a classic script
- * with no exports — so the function that splits a history into what is shown now and what is filled
- * in later is a node script ({@code src/test/js/replay.test.mjs}) that lifts it out of the shipped
- * file and runs it against a small node stub, the same way {@link WebSessionRowTest} runs the
- * session-row cases.
+ * 回放一段长对话是浏览器代码——它住在 {@code web/app.js} 里，那是一个没有导出的经典脚本——所以
+ * 那个把一个历史拆成「现在显示什么」和「稍后补上什么」的函数，是一个 node 脚本
+ * （{@code src/test/js/replay.test.mjs}），把它从发布出去的文件里抠出来，对着一个小小的 node 桩
+ * 运行，就像 {@link WebSessionRowTest} 跑会话行的用例那样。
  *
- * <p>What it pins down is the reason the split exists: switching back to a long conversation used to
- * rebuild every tool card at once, blocking the thread for long enough that a turn running behind the
- * switch looked frozen. This class runs the script when a node is installed, and always checks the
- * properties of the shipped sources that make the two passes correct: the cut lands on a boundary the
- * renderer already treats as one, the earlier part is drawn off-screen and inserted above the reader,
- * and the reader's scroll position is held while it is.
+ * <p>它钉住的是这次拆分存在的理由：切回一段长对话过去会把每一张工具卡片一次性重建，把线程堵得
+ * 足够久，久到切换背后正在跑的一个回合看起来像冻住了。这个类在有 node 的时候运行那个脚本，并且
+ * 总是检查发布出去的源码里让那两趟都正确的性质：切口落在渲染器本来就当作一个边界的地方，更早的
+ * 那部分在屏幕外画好再插到读者上方，而且插入时读者的滚动位置被按住了。
  */
 class WebReplayTest {
 
@@ -28,54 +25,52 @@ class WebReplayTest {
 
   @Test
   void theReplayScriptPasses() throws IOException, InterruptedException {
-    WebSessionRowTest.runNodeCases(SCRIPT, "long-conversation replay");
+    WebSessionRowTest.runNodeCases(SCRIPT, "长对话回放");
   }
 
   @Test
   void theEarlierPartIsDrawnInIdleTimeAndInsertedAbove() throws IOException {
     String script = appSource();
-    assertTrue(script != null, "app.js must be readable");
+    assertTrue(script != null, "app.js 必须可读");
 
     assertTrue(script.contains("function splitReplay("),
-        "the history is split by one function, so its boundary rule can be tested");
+        "历史由一个函数拆分，所以它的边界规则可以被测试");
     assertTrue(script.contains("function loadOlderReplay("),
-        "and the earlier part has its own loader");
+        "而且更早的那部分有自己的加载器");
     assertTrue(script.contains("requestIdleCallback"),
-        "which runs when the browser is idle: a turn streaming behind the switch keeps painting");
+        "它在浏览器空闲时运行：切换背后正在流式输出的回合仍能继续画");
     assertTrue(script.contains("document.createDocumentFragment()"),
-        "and builds the exchange off-screen before attaching it, so nothing is half-drawn");
-    // The reader's place is held by the height that was added above them; without this the text
-    // being read slides down the screen every time a chunk lands.
+        "并且先把这组往来在屏幕外建好再挂上去，所以不会有画到一半的东西");
+    // 读者的位置由加在他上方的那段高度按住；没有这个，每落下一块，正在读的文字就在屏幕上往下
+    // 滑一段。
     assertTrue(script.contains("dom.transcript.scrollTop = before + grew"),
-        "and the scroll position is corrected by the height added above it");
+        "而且滚动位置会按加在它上方的高度被修正");
   }
 
   @Test
   void aSupersededReplayStops() throws IOException {
     String script = appSource();
-    assertTrue(script != null, "app.js must be readable");
+    assertTrue(script != null, "app.js 必须可读");
 
-    // Switching again while the earlier part is still loading must not append the old conversation
-    // into the new transcript.
+    // 在更早的那部分还在加载时又切一次，绝不能把旧对话追加进新的转录里。
     assertTrue(script.contains("if (seq !== replaySeq) { return; }"),
-        "a superseded replay stops rather than writing into a transcript that is gone");
+        "被取代的回放会停下，而不是往一份已经没了的转录里写");
   }
 
   @Test
   void theBudgetIsBoundedAndModest() throws IOException {
     String script = appSource();
-    assertTrue(script != null, "app.js must be readable");
+    assertTrue(script != null, "app.js 必须可读");
 
     int at = script.indexOf("REPLAY_TAIL_EVENTS = ");
-    assertTrue(at >= 0, "the first pass has a named budget");
+    assertTrue(at >= 0, "第一趟有一个具名的预算");
     String rest = script.substring(at + "REPLAY_TAIL_EVENTS = ".length());
     int limit = Integer.parseInt(rest.substring(0, rest.indexOf(';')).strip());
     assertTrue(limit > 0 && limit <= 1000,
-        "the first pass must be cheap: " + limit + " events is not a bounded draw");
-    // A conversation shorter than the budget is rendered in one pass, which is the common case and
-    // must not change at all.
+        "第一趟必须便宜：" + limit + " 个事件不是一次有界的绘制");
+    // 比预算短的对话一趟就渲染完，这是常见情况，绝不能有任何改变。
     assertTrue(script.contains("if (clean.length <= REPLAY_TAIL_EVENTS)"),
-        "and a history that fits the budget is left alone");
+        "而放得进预算的历史不会被动");
   }
 
   private static String appSource() {

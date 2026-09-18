@@ -15,9 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * {@code restart} is the one tool that ends the process it runs in, so what it refuses matters as
- * much as what it does: every path that is not exactly "a scratch build, ready to be installed"
- * has to come back as an error rather than a swap.
+ * {@code restart} 是唯一一个会结束自己所处进程的工具，所以它拒绝什么和它做什么同样要紧：每一条不是
+ * 恰好「一份临时构建、准备安装」的路径，都必须以错误而不是一次替换收场。
  */
 class RestartToolTest {
 
@@ -34,7 +33,7 @@ class RestartToolTest {
         () -> ended.set(true));
   }
 
-  /** A directory shaped like the project: an installed jar and a scratch build beside it. */
+  /** 一个长得像这个项目的目录：一个已安装的 jar，旁边放着一份临时构建。 */
   private Path project() throws Exception {
     Files.createDirectories(dir.resolve("target"));
     Files.writeString(dir.resolve("target/ccj.jar"), "installed");
@@ -52,9 +51,9 @@ class RestartToolTest {
 
     assertFalse(result.error(), result.content());
     assertEquals("next", Files.readString(project.resolve("target/ccj.jar")));
-    assertFalse(Files.exists(project.resolve("target/ccj-next.jar")), "the scratch build is moved");
-    assertTrue(ended.get(), "the run has to end: the process is being replaced");
-    assertTrue(RestartTool.restartRequested(), "the launcher is told to start the new jar");
+    assertFalse(Files.exists(project.resolve("target/ccj-next.jar")), "临时构建被移走了");
+    assertTrue(ended.get(), "这次运行必须结束：本进程正在被替换");
+    assertTrue(RestartTool.restartRequested(), "启动器被告知去启动新的 jar");
   }
 
   @Test
@@ -66,10 +65,10 @@ class RestartToolTest {
         tool.execute("{\"built\":\"target/ccj-next.jar\"}", context(project, false, ended));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().contains("rejected"), result.content());
+    assertTrue(result.content().contains("拒绝"), result.content());
     assertEquals("installed", Files.readString(project.resolve("target/ccj.jar")));
     assertEquals("next", Files.readString(project.resolve("target/ccj-next.jar")));
-    assertFalse(ended.get(), "nothing happened, so nothing ends");
+    assertFalse(ended.get(), "什么都没发生，所以什么都不结束");
   }
 
   @Test
@@ -80,7 +79,7 @@ class RestartToolTest {
     ToolResult result = tool.execute("{\"built\":\"target/ccj-gone.jar\"}", context(project, true, ended));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().contains("build this project first"), result.content());
+    assertTrue(result.content().contains("先构建这个项目"), result.content());
     assertFalse(ended.get());
   }
 
@@ -92,8 +91,8 @@ class RestartToolTest {
     ToolResult result = tool.execute("{\"built\":\"target/ccj.jar\"}", context(project, true, ended));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().contains("already the installed jar"), result.content());
-    assertFalse(ended.get(), "a no-op swap must not end the run");
+    assertTrue(result.content().contains("已经是当前安装的 jar"), result.content());
+    assertFalse(ended.get(), "一次没有效果的替换不能结束这次运行");
   }
 
   @Test
@@ -106,7 +105,7 @@ class RestartToolTest {
         tool.execute("{\"built\":\"target/unrelated.jar\"}", context(project, true, ended));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().contains("is not the jar a build stages"), result.content());
+    assertTrue(result.content().contains("不是构建所暂存的那个 jar"), result.content());
     assertFalse(ended.get());
   }
 
@@ -119,7 +118,7 @@ class RestartToolTest {
     ToolResult result = tool.execute("{\"built\":\"target/ccj-next.jar\"}", context(dir, true, ended));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().contains("no ccj.jar"), result.content());
+    assertTrue(result.content().contains("没有 ccj.jar"), result.content());
     assertFalse(ended.get());
   }
 
@@ -146,10 +145,9 @@ class RestartToolTest {
 
   @Test
   void theExitCodeIsOneTheRestOfTheCliNeverRaises() {
-    // 0 success, 1 runtime failure, 2 usage error — the restart signal must be distinguishable from
-    // all of them, because the launcher keys on it.
+    // 0 成功、1 运行时失败、2 用法错误——重启信号必须能与它们全部区分开，因为启动器就靠它来判定。
     assertFalse(
         RestartTool.RESTART_EXIT == 0 || RestartTool.RESTART_EXIT == 1 || RestartTool.RESTART_EXIT == 2,
-        "the restart code collides with an ordinary exit status: " + RestartTool.RESTART_EXIT);
+        "重启状态码与一个普通的退出状态撞车了: " + RestartTool.RESTART_EXIT);
   }
 }

@@ -3,23 +3,18 @@ package com.ccj.agent.core;
 import java.util.Map;
 
 /**
- * The endpoint, credential and model of the model that describes pictures, and the ceiling on the
- * reply it may write.
+ * 描述图片的那个模型的端点、凭据和模型名，以及它可写的回复上限。
  *
- * <p>Deliberately not the main provider's. Those are two different choices: a cheap fast model is
- * right for reading a screenshot while an expensive one writes the code, and a local model is right
- * for a photo of something private. Reusing the main provider would force them to be one decision.
+ * <p>刻意不用主提供方的。这是两个彼此独立的选择：读一张截图适合便宜快的模型，写代码才用贵的，而拍私人物品
+ * 的照片适合本地模型。复用主提供方会把它们硬拧成一个决定。
  *
- * <p>Every field is optional, and a block with nothing in it is not a configuration but the absence
- * of one: {@link Config} stores that as null, so "off" has exactly one representation and no two
- * code paths can disagree about whether it is on.
+ * <p>每个字段都是可选的，而一个什么都没填的配置块不是配置，而是没有配置：{@link Config} 把它存为 null，
+ * 于是「关闭」只有一种表示，不会出现两条代码路径对「它是否开着」意见不一。
  *
- * @param maxTokens the completion budget for one description, or null for {@link
- *     VisionClient#DEFAULT_MAX_TOKENS}. It is a ceiling and not a spend — a description costs what
- *     the model writes, whatever room it was given — which is why naming it is only ever about
- *     giving a reasoning model enough room to finish thinking before it starts answering. Measured
- *     on a busy phone screenshot: 1500 tokens went entirely on reasoning and the description never
- *     started, 4096 finished the job using 2882.
+ * @param maxTokens 一次描述的补全预算，null 表示使用 {@link VisionClient#DEFAULT_MAX_TOKENS}。这是上限
+ *     而不是开销——描述花多少取决于模型写了什么，与给了多大空间无关——所以给它命名，永远只是为了给推理
+ *     模型留够想完再开口的余地。在一张信息密集的手机截图上实测：1500 token 全花在了推理上，描述压根没开始
+ *     写；4096 完成了任务，用了 2882。
  */
 public record VisionConfig(
     String baseUrl, String apiKey, String apiKeyEnv, String model, Integer maxTokens) {
@@ -31,37 +26,36 @@ public record VisionConfig(
     model = blankToNull(model);
   }
 
-  /** The three fields of the original block, with the budget left at its default. */
+  /** 原配置块的三个字段，预算留默认值。 */
   public VisionConfig(String baseUrl, String apiKey, String apiKeyEnv, String model) {
     this(baseUrl, apiKey, apiKeyEnv, model, null);
   }
 
-  /** True when nothing was entered at all. */
+  /** 当什么都没填时为 true。 */
   public boolean isEmpty() {
     return baseUrl == null && apiKey == null && apiKeyEnv == null && model == null && maxTokens == null;
   }
 
   /**
-   * True when this names the two fields a description cannot be asked for without.
+   * 当这里点明了发起一次描述请求不可或缺的两个字段时为 true。
    *
-   * <p>A key is not one of them: it may come from the environment, which is not readable here.
+   * <p>密钥不在其列：它可以来自环境变量，而环境变量在这里读不到。
    */
   public boolean isConfigured() {
     return baseUrl != null && model != null;
   }
 
   /**
-   * The same block with the key literal forgotten, keeping the endpoint, model and budget.
+   * 同一个配置块，但忘掉密钥明文，保留端点、模型和预算。
    *
-   * <p>For a key that was entered by mistake, or one being replaced by an environment variable: the
-   * rest of the block is a working configuration and throwing it away would lose the endpoint the
-   * user looked up.
+   * <p>用于误填的密钥，或正被环境变量替换掉的密钥：配置块的其余部分是一份可用的配置，丢掉它就会丢失用户
+   * 查来的端点。
    */
   public VisionConfig withoutApiKey() {
     return new VisionConfig(baseUrl, null, apiKeyEnv, model, maxTokens);
   }
 
-  /** The key to send, or null when neither this record nor the environment provides one. */
+  /** 要发送的密钥；本记录和环境变量都没有提供时为 null。 */
   public String resolvedApiKey(Map<String, String> env) {
     if (apiKey != null) {
       return apiKey;

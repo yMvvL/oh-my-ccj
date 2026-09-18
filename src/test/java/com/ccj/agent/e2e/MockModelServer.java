@@ -14,11 +14,11 @@ import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * Scripted stand-in for a model backend.
+ * 模型后端的脚本化替身。
  *
- * <p>Speaks both wire formats so the same instance can serve an OpenAI-compatible test and an
- * Anthropic test. Responses are queued one per request, which is what lets a test pin an exact
- * multi-turn conversation (tool call, then final answer) without a real model in the loop.
+ * <p>同时会说两种线格式，因此同一个实例既能服务 OpenAI 兼容的测试，也能服务 Anthropic 的测试。
+ * 应答按请求逐条排队，这正是测试能在没有真实模型参与的情况下钉住一段精确的多回合对话（先工具调用、
+ * 后最终回答）的原因。
  */
 final class MockModelServer implements AutoCloseable {
 
@@ -32,7 +32,7 @@ final class MockModelServer implements AutoCloseable {
     this(0);
   }
 
-  /** @param port {@code 0} picks a free port */
+  /** @param port {@code 0} 表示挑一个空闲端口 */
   MockModelServer(int port) throws IOException {
     server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
     server.createContext("/v1/chat/completions", exchange -> respond(exchange));
@@ -49,12 +49,12 @@ final class MockModelServer implements AutoCloseable {
     return "http://127.0.0.1:" + server.getAddress().getPort();
   }
 
-  /** Queues one SSE body for the next incoming request. */
+  /** 为下一个到来的请求排队一个 SSE 响应体。 */
   void enqueue(String sseBody) {
     responses.add(sseBody);
   }
 
-  /** Queues a failure response for the next incoming request. */
+  /** 为下一个到来的请求排队一个失败响应。 */
   void enqueueError(int status, String body) {
     enqueue("\u0000" + status + "\u0000" + body);
   }
@@ -75,7 +75,7 @@ final class MockModelServer implements AutoCloseable {
     }
   }
 
-  /** Convenience view of every request body, parsed. */
+  /** 所有请求体解析后的便捷视图。 */
   List<com.fasterxml.jackson.databind.JsonNode> requestJson() {
     return recorded().stream().map(r -> Json.parse(r.body())).toList();
   }
@@ -93,7 +93,7 @@ final class MockModelServer implements AutoCloseable {
 
     String queued = responses.poll();
     if (queued == null) {
-      send(exchange, 599, "text/plain", "no scripted response left");
+      send(exchange, 599, "text/plain", "没有可用的脚本应答了");
       return;
     }
     if (queued.startsWith("\u0000")) {
@@ -114,7 +114,7 @@ final class MockModelServer implements AutoCloseable {
     }
   }
 
-  // ---------------------------------------------------------------- OpenAI wire format
+  // ---------------------------------------------------------------- OpenAI 线格式
 
   static String openAiText(String text) {
     StringBuilder sse = new StringBuilder();
@@ -129,7 +129,7 @@ final class MockModelServer implements AutoCloseable {
     return sse.toString();
   }
 
-  /** One tool call whose argument JSON arrives fragmented across three chunks. */
+  /** 一次工具调用，其参数 JSON 分三块碎片化到达。 */
   static String openAiToolCall(String id, String name, String argumentsJson) {
     int a = argumentsJson.length() / 3;
     int b = 2 * argumentsJson.length() / 3;
@@ -168,7 +168,7 @@ final class MockModelServer implements AutoCloseable {
     return sse.toString();
   }
 
-  // ---------------------------------------------------------------- Anthropic wire format
+  // ---------------------------------------------------------------- Anthropic 线格式
 
   static String anthropicText(String text) {
     StringBuilder sse = new StringBuilder();
@@ -231,7 +231,7 @@ final class MockModelServer implements AutoCloseable {
     return sse.toString();
   }
 
-  // ---------------------------------------------------------------- helpers
+  // ---------------------------------------------------------------- 辅助方法
 
   private static String chunk(String json) {
     return "data: " + json + "\n\n";
@@ -241,7 +241,7 @@ final class MockModelServer implements AutoCloseable {
     return "event: " + name + "\n" + "data: " + json + "\n\n";
   }
 
-  /** Splits text into a few pieces so the test exercises delta accumulation, not one big blob. */
+  /** 把文本切成几段，好让测试检验增量累积，而不是一整块。 */
   private static List<String> split(String text) {
     if (text.length() <= 2) {
       return List.of(text);

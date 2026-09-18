@@ -1,225 +1,114 @@
-# Roadmap
+# 路线图
 
-Where this project is going, in the order the work actually has to happen.
+这个项目要往哪走，按照工作真正必须发生的顺序。
 
-Two rules decide that order. **A claim without a way to check it is a liability**, so verification
-comes before features — including features that already exist on paper. And **the guard is the
-product**: this is a tool that runs commands as you, so anything that widens what it may do without
-asking is a bigger decision than anything that makes it faster.
+有两条规则决定这个顺序。**无法核验的主张是负债**，所以验证排在功能之前——包括纸面上已经存在的功能。而**护栏就是产品本身**：这是一个以你的身份运行命令的工具，因此任何在未经询问的前提下扩大它能做的事情的改动，都比任何让它更快的改动更重大。
 
-Status markers used below: `todo`, `doing`, `done`, `blocked`.
+下面用到的状态标记：`todo`、`doing`、`done`、`blocked`。
 
-## Where it stands
+## 现状
 
-Honest inventory as of September 2026, because a roadmap that starts from an inflated picture is
-fiction.
+截至 2026 年 9 月的诚实盘点，因为一份从虚高画面出发的路线图就是虚构。
 
 | | |
 |---|---|
-| Real and working | The loop, both wire protocols, the eight tools, approval, sessions and resume, context projection, compaction with generations, the web UI, workspaces, cross-origin refusal, sub-agents with the conversation's approver |
-| Checked by CI | `./mvnw -B -ntp verify` on Linux and macOS with JDK 21 and Node 20, then packaging the jar and starting it. The Node case files report as skipped when they cannot run, rather than passing |
-| Real but unverified *here* | A change made on the maintainer's Windows machine. There is no JDK, no Maven and no `~/.m2` there, so nothing in this list can be run locally — CI is the only evidence, and a change that never reaches a push has no evidence at all |
-| Missing | Native Windows support, any sandbox, and the Phase 1 correctness gaps below |
-| Recently landed | Phase 2.5 — the loop around the loop: checks that run after an edit, approval rules, queued messages, multi-hunk edits, `fetch`, MCP servers, prompt caching with automatic compaction, and undo. Every item is in [CHANGELOG.md](CHANGELOG.md) with what was measured. Before that: pictures:  one image per turn, described by a **separate** vision model whose endpoint, key and model are configured on their own; the description joins the conversation as ordinary text and the file is stored beside the session. The main model never receives an image, which is why neither wire format, nor `Message`, nor compaction changed. See [VISION.md](VISION.md) |
-| Recently removed | The sub-agent staging directory (`<cwd>/.ccj-work`), and with it the promote step. Approval replaced it — see [SUBAGENTS.md](SUBAGENTS.md) |
+| 真实且可用 | 循环、两种线路协议、八个工具、审批、会话与恢复、上下文投影、带世代的压缩、网页 UI、工作区、跨源拒绝、子代理（用的是对话自己的审批者） |
+| CI 在检查 | `./mvnw -B -ntp verify` 在 Linux 与 macOS 上、JDK 21 与 Node 20 下运行，然后打包 jar 并启动它。Node 用例文件在跑不起来时报告为 skipped，而不是让它通过 |
+| *在这里*真实但未验证 | 在维护者的 Windows 机器上做的改动。那台机器上没有 JDK、没有 Maven、也没有 `~/.m2`，所以这份清单里的任何东西都无法在本地运行——CI 是唯一的证据，而一个从未被推送的改动根本没有证据 |
+| 缺失 | 原生 Windows 支持、任何沙箱，以及下面 Phase 1 的正确性缺口 |
+| 最近落地 | Phase 2.5——围绕循环的循环：编辑之后自动运行的检查、审批规则、排队消息、多块编辑、`fetch`、MCP 服务器、带自动压缩的提示缓存，以及 undo。每一项都在 [CHANGELOG.md](CHANGELOG.md) 里，带着它测量到了什么。在那之前：图片： 每个回合一张图，由一个**独立**的视觉模型描述，其端点、密钥和模型各自配置；描述作为普通文本加入对话，文件存放在会话旁边。主模型从不接收图像，所以两种线路格式、`Message` 和压缩都没有改动。见 [VISION.md](VISION.md) |
+| 最近移除 | 子代理暂存目录（`<cwd>/.ccj-work`），以及随之移除的 promote 步骤。审批取代了它——见 [SUBAGENTS.md](SUBAGENTS.md) |
 
-## Phase 0 — Make the claims checkable — `done`, with three loose ends
+## Phase 0 —— 让主张可核验 —— `done`，留三处尾巴
 
-**What landed, and what it bought.** The Maven Wrapper pins the Maven version, so a contributor's build
-is the build CI runs. A GitHub Actions workflow runs the suite on two platforms, packages the jar and
-starts it — which is the only thing that turns "542 tests pass" from a claim into evidence. And the
-Node case files now report as *skipped* when they cannot run instead of passing, with a test that pins
-that behaviour through `TestAbortedException`.
+**落地了什么，以及它换来了什么。** Maven Wrapper 固定 Maven 版本，所以贡献者跑的构建就是 CI 跑的那份。一个 GitHub Actions 工作流在两个平台上运行测试套件、打包 jar 并启动它——这是唯一能把「542 个测试通过」从主张变成证据的东西。而 Node 用例文件现在在跑不起来时会报告为 *skipped* 而不是通过，并且有一个测试通过 `TestAbortedException` 钉住这个行为。
 
-Loose ends, each small and each the same kind of defect the phase existed to remove. The first one is
-closed since this was written: neither the README nor the workflow names a test count any more, and
-the workflow's comment says why — the number drifts with every test added, and the badge is the live
-answer.
+三处尾巴，每一处都不大，而且都是这一阶段本就是为了消除的那类缺陷。第一处自写下这段文字以来已经关掉了：README 和工作流都不再写明测试数量，工作流的注释说明了原因——这个数字每加一个测试就会漂移，而徽章才是活的答案。
 
-- **The compiler plugin is still implicit.** The wrapper pins Maven, so the default binding is stable
-  in practice, but no version is written down for a reader to check.
-- **Two cases still return early when `app.js` is missing** (`theAnswerIsRenderedAsMarkdown`,
-  `theRendererBuildsNodesAndNeverHtmlSource`), which JUnit records as a pass — the same defect the Node
-  runner just had, in the narrower case of the file rather than the runtime being absent.
+- **编译器插件仍然是隐式的。** wrapper 固定了 Maven，所以默认绑定在实践中是稳定的，但没有任何版本被写下来供读者核对。
+- **仍有两个用例在 `app.js` 缺失时提前返回**（`theAnswerIsRenderedAsMarkdown`、`theRendererBuildsNodesAndNeverHtmlSource`），JUnit 会把它们记成通过——和 Node 运行器刚刚有过的是同一个缺陷，只是这里缺的是文件而不是运行时，范围更窄。
 
-## Phase 1 — Close the correctness gaps that are still open
+## Phase 1 —— 补上仍然敞着的正确性缺口
 
-**Why before new capability.** Each of these is a case where the code is right in the common path and
-wrong at the edge, and the edge is where a coding agent gets used: long sessions, several
-conversations, a user editing the same file in their editor.
+**为什么排在新能力之前。** 这里每一项都是「常见路径上代码是对的、边缘处是错的」的情况，而边缘正是编码代理被用起来的地方：长会话、好几个对话、用户在自己的编辑器里编辑同一个文件。
 
-**Recently closed**, listed so the list below is not read as a backlog that never moves: the sub-agent
-staging escape and the shared-directory cleanup that went with it (both removed with the directory),
-unapprovable sub-agent writes, `edit` and `write` refusing a file that changed or appeared while the
-approval waited, both writes staged-and-renamed instead of written in place, cross-origin state
-changes, an error body read to the end before being truncated, and a Node case file that reported a
-missing runtime as a pass. All of it verified by reading the source — none of it by a run on the
-machine this list was written on.
+**最近关闭的**，列在这里是为了让下面的清单不会被当成一份永不挪动的积压：子代理暂存逃逸及随之而来的共享目录清理（两者都随该目录一起移除）、无法审批的子代理写入、`edit` 和 `write` 拒绝一个在审批等待期间被改动或出现的文件、两次写入改成先暂存再重命名而不是原地写、跨源状态更改、错误响应体在被截断前读到末尾，以及一个把缺失运行时报成通过的 Node 用例文件。全部靠读源码验证——没有一项是在写这份清单的这台机器上跑出来的。
 
-- **1.1 Two conversations, one file** — `done`. `write` takes a fingerprint of the file — size,
-  modification time, and a streamed hash of every byte — before the prompt is shown and refuses if it
-  no longer matches when the answer comes back, the same way it already refused a file that *appeared*
-  during the approval. A size and a timestamp would not have been enough: an editor saving in the same
-  granularity, or a formatter writing back the same number of bytes, would have slipped through. The
-  README's exposure stands where it always did and was defensible — `bash` with no ordering between
-  conversations — and no longer covers a tool that shows a diff and then writes something else.
-  *Acceptance met:* the overwrite case is detected and refused, and the refusal says what to redo.
-- **1.2 The deadline that fires mid-run** — `todo`. Cancellation is well covered (a streaming turn, a
-  running tool, an abort between a turn and its tools, an approval answered by an abort). What is not
-  covered is the case the sub-agent deadline exists for: a run that keeps working past its ten minutes.
-  The queueing half is tested; the firing half is asserted only at the level of the message it
-  produces.
-  *Acceptance:* a scripted sub-agent that never stops is cut off at the deadline, and its report says
-  so.
-- **1.3 Usage accounting** — `doing`. A sub-agent's tokens now reach the conversation that paid
-  (`SubAgentRunner.UsageTally` → `SubAgentReport.withUsage` → the session's books), with tests added
-  alongside this roadmap. Still open: whether a compacted session double-counts, and whether the
-  estimate in the panel can be checked against a provider's own figures.
-  *Acceptance:* the panel's total equals the sum of the provider's per-turn numbers for a session that
-  used sub-agents and was compacted once.
-- **1.4 Session files grow without bound** — `todo`. Known and documented; the question is whether a
-  long-lived session should be pruned, archived, or left alone with the disk as the user's problem.
-  *Acceptance:* a written decision, and a `--max-session-bytes`-shaped option if the answer is "prune".
-- **1.5 A test that drives the page** — `todo`. The markdown cases run the shipped source against a
-  small DOM, which covers parsing and not layout, focus, or the approval handshake in a real browser.
-  *Acceptance:* one browser-level smoke test that drives a turn end to end, marked optional in CI so a
-  machine without a browser still passes.
+- **1.1 两个对话，一个文件** —— `done`。`write` 在提示显示之前给文件取指纹——大小、修改时间，以及逐字节流式计算出的哈希——并在答案回来时指纹不再匹配就拒绝，方式和它此前已经拒绝一个在审批期间*出现*的文件一样。只有大小和时间戳是不够的：编辑器以同样的粒度保存，或者格式化工具回写同样多的字节，都会溜过去。README 里那处暴露面仍在原地，也是站得住的——`bash` 在对话之间没有顺序——而且它不再覆盖一个先显示差异、然后写入别的东西的工具。
+  *验收已满足：* 覆盖写入的那种情况被检测并拒绝，拒绝消息说明了要重做什么。
+- **1.2 在运行中途触发的截止时间** —— `todo`。取消已经覆盖得很好（流式的回合、正在运行的工具、回合与其工具之间的中止、被中止回答的审批）。没有覆盖的是子代理截止时间存在的理由那种情况：一次越过它十分钟还在继续干活的运行。排队那一半有测试；触发那一半只在它产生的消息层面有断言。
+  *验收：* 一个永不停止的脚本化子代理在截止时间被切断，且它的报告说明了这一点。
+- **1.3 用量记账** —— `doing`。子代理的 token 现在会到达付费的那个对话（`SubAgentRunner.UsageTally` → `SubAgentReport.withUsage` → 会话的账本），并随本路线图一起加了测试。仍然敞着的是：被压缩过的会话是否会重复计数，以及面板里的估算值能否与提供方自己的数字对上。
+  *验收：* 对于一个用过子代理、并被压缩过一次的会话，面板的总数等于提供方逐回合数字之和。
+- **1.4 会话文件无限增长** —— `todo`。已知且已记录；问题是一个长期存活的会话应该被裁剪、归档，还是就那样放着、把磁盘当成用户自己的事。
+  *验收：* 一份写下来的决定，以及如果答案是「裁剪」，一个形如 `--max-session-bytes` 的选项。
+- **1.5 一个驱动页面的测试** —— `todo`。markdown 用例拿一小块 DOM 跑随包发布的源码，这只覆盖了解析，没有覆盖布局、焦点，或真实浏览器里的审批握手。
+  *验收：* 一个浏览器层面的冒烟测试，端到端驱动一个回合，在 CI 里标记为可选，这样没有浏览器的机器照样通过。
 
-## Phase 2 — Capability, in the order it earns its keep
+## Phase 2 —— 能力，按它挣得自己位置的顺序
 
-**Why this order.** Each item is judged by how much it expands what the agent can do *without*
-weakening the approval story. Anything that would need a sandbox to be safe does not belong here yet.
+**为什么是这个顺序。** 每一项都按照「在不削弱审批叙事的前提下，它能扩大代理能做的事多少」来评判。任何需要沙箱才安全的东西现在都不属于这里。
 
-- **2.0 Pictures** — `done`. The first capability in this list to land: one image per turn, described
-  by a vision model configured separately from the main provider, with the description — not the image
-  — joining the conversation, and the file stored beside the session rather than in the project.
-  *Acceptance, met:* `POST /api/attachment` with a real PNG produces a turn whose message is the
-  description, the picture is on disk under `<id>.attachments/`, and every refusal (not a picture,
-  over 8 MB, busy conversation, no vision model configured) leaves the vision endpoint uncalled. The
-  design, the measurements and what was not verified are in [VISION.md](VISION.md).
-- **2.1 An MCP client** — `done`, as 2.5.6. Remote tools enter through the same `ToolRegistry` and
-  the same approver, and a server's tools are named as that server's — `mcp__fs__read_file` — in the
-  prompt, the transcript and the rules. See [MCP.md](MCP.md).
-  *Acceptance met:* a configured server's tool ran through the approval path and was answered by a
-  rule; a refusal stopped it.
-- **2.2 More protocols** — `todo`. The OpenAI Responses API and Gemini, behind the existing `Provider`
-  contract. Deliberately after 2.1: a new wire format adds less than a new tool source.
-  *Acceptance:* the same scripted-provider tests pass against each mapping.
-- **2.3 Better editing** — `done`, as 2.5.4. `edits: [...]` is one approval, one write and one diff;
-  a hunk that misses, matches twice or overlaps refuses the whole change, and a miss comes back with
-  the file's lines around where it was expected.
-  *Acceptance met:* one approval shows all hunks, and a partially applied patch is impossible.
-- **2.4 Sub-agent tuning** — `todo`. Per-role model and effort: a cheap model for `explore`, the main
-  one for `verify`. Cost is already counted into the conversation's books, so what is missing is
-  per-run visibility — the transcript says a task ran, not what it spent. Not nesting: recursion is
-  still refused by construction.
-  *Acceptance:* a role can be pinned to a model, and a delegated run's own cost is readable next to
-  the task card.
-- **2.5 Native Windows** — `todo`. A configurable shell instead of `/bin/bash`, and a launcher that is
-  not a bash script. Today WSL is the documented answer, which is honest but limits the audience.
-  *Acceptance:* a turn runs on Windows without WSL, with the shell named in the config.
+- **2.0 图片** —— `done`。这份清单里第一个落地的能力：每个回合一张图，由一个与主提供方分开配置的视觉模型描述，加入对话的是描述——不是图像——而且文件存放在会话旁边而不是项目里。
+  *验收，已满足：* 用一张真实 PNG `POST /api/attachment` 会产生一个回合，其消息就是描述，图片在磁盘上的 `<id>.attachments/` 下，而每一种拒绝（不是图片、超过 8 MB、对话正忙、没有配置视觉模型）都让视觉端点从未被调用。设计、测量结果以及未验证的部分在 [VISION.md](VISION.md)。
+- **2.1 一个 MCP 客户端** —— `done`，作为 2.5.6。远程工具经由同一个 `ToolRegistry` 和同一个审批者进入，服务器的工具以该服务器的名义命名——`mcp__fs__read_file`——在提示、转录和规则里都是如此。见 [MCP.md](MCP.md)。
+  *验收已满足：* 一个已配置服务器的工具走审批路径跑了起来，并被一条规则答复；一次拒绝把它挡了下来。
+- **2.2 更多协议** —— `todo`。OpenAI Responses API 和 Gemini，落在现有 `Provider` 契约之后。故意排在 2.1 之后：一种新的线路格式带来的东西比一个新的工具来源少。
+  *验收：* 同样的脚本化提供方测试对每种映射都通过。
+- **2.3 更好的编辑** —— `done`，作为 2.5.4。`edits: [...]` 是一次审批、一次写入和一份差异；一个匹配不上、匹配两次或互相重叠的块会让整个改动被拒绝，而匹配不上时会带着文件里它本该在的位置周围那些行回来。
+  *验收已满足：* 一次审批显示所有块，而部分应用的补丁不可能发生。
+- **2.4 子代理调优** —— `todo`。按角色指定模型与 effort：给 `explore` 用便宜模型，给 `verify` 用主模型。成本已经计入对话的账本，所以缺的是按次运行的可见性——转录只说某个任务跑过，不说它花了多少。不是嵌套：递归在构造上仍然被拒绝。
+  *验收：* 一个角色可以被钉到某个模型上，而一次委派运行自己的成本能在任务卡旁边读到。
+- **2.5 原生 Windows** —— `todo`。一个可配置的 shell 而不是 `/bin/bash`，以及一个不是 bash 脚本的启动器。目前文档给出的答案是 WSL，这诚实，但限制了受众。
+  *验收：* 一个回合在 Windows 上不用 WSL 跑起来，shell 在配置里指明。
 
-## Phase 2.5 — The loop around the loop
+## Phase 2.5 —— 围绕循环的循环
 
-**Why here.** Phase 2 answers "what can it do"; this answers "why is using it worse than it should
-be". Every item below came out of using the tool and finding the friction, and they are ordered by
-what a person feels first, not by what is most interesting to build.
+**为什么在这里。** Phase 2 回答「它能做什么」；这里回答「为什么用它比本该的更费劲」。下面每一项都来自使用这个工具、撞上摩擦，排序依据是人最先感觉到什么，而不是造什么最有意思。
 
-| # | What | Why it is first | Status |
+| # | 是什么 | 为什么排在前 | 状态 |
 |---|---|---|---|
-| 2.5.1 | **A check runs itself after an edit.** `{"checks": [{"glob": "**/*.java", "command": "mvn -q -o -DskipTests compile"}]}` in the config file: the first check whose glob matches the edited path runs inside the `edit`/`write` call, and its verdict — one line when it passes, a bounded excerpt when it fails — is appended to the tool result | Same reason as above | `done` |
-| 2.5.2 | **Permission rules, not one boolean.** `approvals.json` (keyed by project, in the application home) with allow and deny rules matching a tool, an exact command or one widened by a trailing ` *`, or a path glob — plus **allow for this session** on the prompt. The prompt used to have two answers: yes once, or yes-everything-for-the-session | Same reason as above | `done` |
-| 2.5.3 | **Messages queue instead of 409.** A message sent while a turn runs waits behind it, the composer says how many are waiting, and each queued message runs as a turn of its own. Abort drops the queue and says how many | Same reason as above | `done` |
-| 2.5.4 | **`edit` takes several hunks, and a failed match comes back with the file's neighbourhood** — 2.3, pulled forward to here. `edits: [...]` is matched, approved and written together: all or none, one diff, one write, overlapping hunks refused | The exact-match single hunk is the tool a model fails most often, and every failure used to be a whole round trip | `done` |
-| 2.5.5 | **A networking tool.** `fetch`: `http`/`https` only, text types only, bounded while reading, redirects re-checked hop by hop, approved like everything else with the URL as the rule's subject | Without it the model guesses at APIs, which is when answers get confidently wrong | `done` |
-| 2.5.6 | **An MCP client** — 2.1, pulled back to here. Servers declared in `<home>/mcp.json`, their tools registered as `mcp__<server>__<tool>` through the same `ToolRegistry` and the same approver | The ecosystem gap: the largest difference in what the agent can attempt at all. Behind the items above because those change every turn, and this changes some turns | `done` |
-| 2.5.7 | **Prompt caching and automatic compaction.** Three `cache_control` breakpoints on the Anthropic prefix — system, tools, end of conversation — and a conversation that compacts itself when it grows past `maxContextTokens`, between turns, with a refusal remembered at double the size | Long sessions get slower and more expensive than they need to be, and the user is the one who has to notice | `done` |
-| 2.5.8 | **Checkpoints.** A per-turn snapshot of the files a turn touched, `POST /api/undo` / `/undo` to put the last one back, twenty turns kept, oversized files skipped | Trust is what lets somebody leave auto-approve off *and* let the agent work | `done` |
+| 2.5.1 | **编辑之后自动跑一项检查。** 配置文件里的 `{"checks": [{"glob": "**/*.java", "command": "mvn -q -o -DskipTests compile"}]}`：第一条 glob 与被编辑路径匹配的检查在 `edit`/`write` 调用内部运行，它的判定——通过时一行，失败时有界的摘录——被追加到工具结果 | 同上 | `done` |
+| 2.5.2 | **权限规则，而不是一个布尔值。** `approvals.json`（按项目为键，位于应用 home 下），带匹配某个工具、某条精确命令或由尾部 ` *` 放宽的命令、或某个路径 glob 的允许与拒绝规则——外加提示上的**本次会话允许**。这个提示过去只有两个答案：允许一次，或本次会话全部允许 | 同上 | `done` |
+| 2.5.3 | **消息排队而不是 409。** 回合运行期间发出的消息在它后面等待，输入框说明有多少条在等，每条排队消息都作为自己的回合运行。中止会丢掉队列并说明丢了几条 | 同上 | `done` |
+| 2.5.4 | **`edit` 接受多个块，匹配失败时带着文件的邻近内容回来** —— 2.3，提前到这里。`edits: [...]` 一起匹配、一起审批、一起写入：全有或全无，一份差异，一次写入，重叠的块被拒绝 | 精确匹配的单个块是模型最常失败的工具，而每次失败过去都是一整次往返 | `done` |
+| 2.5.5 | **一个联网工具。** `fetch`：只允许 `http`/`https`，只允许文本类型，读取时有界，重定向逐跳重新检查，像其他一切一样要审批，URL 是规则的对象 | 没有它，模型就只能猜 API，而那正是答案会自信地出错的时候 | `done` |
+| 2.5.6 | **一个 MCP 客户端** —— 2.1，拉回到这里。服务器在 `<home>/mcp.json` 里声明，它们的工具经由同一个 `ToolRegistry` 和同一个审批者注册为 `mcp__<server>__<tool>` | 生态缺口：这是代理能尝试的事情中差别最大的一项。排在上面那些之后，因为那些改变每一个回合，而这个只改变某些回合 | `done` |
+| 2.5.7 | **提示缓存与自动压缩。** Anthropic 前缀上有三个 `cache_control` 断点——系统、工具、对话末尾——以及一个在长过 `maxContextTokens` 之后、在回合之间自我压缩的对话；一次拒绝会被记住，要等到体积翻倍才再试 | 长会话变得比需要的更慢更贵，而察觉这一点的人却是用户 | `done` |
+| 2.5.8 | **检查点。** 每个回合对它所触碰文件的一份快照，`POST /api/undo` / `/undo` 把最近一份放回去，保留二十个回合，超大文件跳过 | 信任才是让人能关掉自动批准*并且*让代理干活的理由 | `done` |
 
-**2.5.1 as built**, in `core/Checks` + `tool/PostEditCheck`, sharing the process plumbing with `bash`
-through `tool/ProcessRunner` (extracted from `BashTool`, which is why its eleven tests were the
-regression net for that refactor). Bounded four ways so it can run on every edit: one check per edit,
-a 4 KiB report, a per-check timeout that kills the process tree, and nothing at all after a failed
-edit or an aborted turn. A third thing came from running it against this repository rather than from
-writing it: the glob decides when the check runs, not what the command looks at, so `mvn compile`
-reported success about a file at the project root it never compiled. The passing line is `exit 0`
-rather than "clean" for that reason, and the caveat is in `Checks`' javadoc, the README and
-SECURITY.md. Two things the tests pinned that would otherwise have been bugs: a check
-never runs for a file outside the session's working directory, and a pattern beginning `**/` matches
-at the project root as well as inside it — `PathMatcher` alone does not do that, and a check that
-silently never fires looks exactly like a check with nothing to report.
+**2.5.1 的实际实现**，在 `core/Checks` + `tool/PostEditCheck` 里，通过 `tool/ProcessRunner`（从 `BashTool` 中抽出，这也是它那十一个测试成为那次重构的回归网的原因）与 `bash` 共用进程管道。用四种方式设上界，好让它能在每次编辑时运行：每次编辑一项检查、4 KiB 的报告、每项检查一个会杀掉进程树的超时，以及在编辑失败或回合被中止之后完全不跑。第三件事来自拿它跑这个仓库，而不是来自写它：glob 决定检查*何时*运行，而不是决定命令看的是什么，所以 `mvn compile` 会对项目根目录下一个它从未编译过的文件报出成功。通过的那一行因此是 `exit 0` 而不是「clean」，这个警告在 `Checks` 的 javadoc、README 和 SECURITY.md 里。测试钉住了两件否则会成为 bug 的事：检查绝不会为会话工作目录之外的文件运行；以 `**/` 开头的模式在项目根目录下同样匹配——仅靠 `PathMatcher` 做不到这一点，而一项从不悄悄触发的检查看起来和一项无事可报的检查一模一样。
 
-**2.5.2 as built.** `Approver` became `ApprovalAnswer approve(ApprovalRequest)` — four answers over a
-structured request (tool, command, path, and the prose for the prompt) — because a boolean could not
-say "this one, not everything", and two strings could not be matched by a rule without matching prose.
-`RuleApprover` puts the rules in front of whoever is watching, and both front ends learned the four
-answers: the browser's prompt has four buttons, the terminal's prompt takes `y`/`s`/`a`/n. Measured on
-the way: two bugs the tests caught that no amount of reading would have — a rule remembered for a
-command containing `>` could never match it (the metacharacter rule was being applied to exact
-comparisons, where nothing can be widened), and the first rule a user ever grants threw
-`UnsupportedOperationException` into the tool call because the empty rules file was an immutable map,
-so "allow from now on" silently did nothing on the very first use. Both are pinned by tests now, and
-the second one is why the third test of that path exists: the two before it started from a file that
-already had a project in it.
+**2.5.2 的实际实现。** `Approver` 变成了 `ApprovalAnswer approve(ApprovalRequest)`——在一个结构化请求（工具、命令、路径，以及给提示用的散文）上给出四个答案——因为一个布尔值说不出「就这一个，不是所有」，而两个字符串无法在不匹配散文的情况下被规则匹配。`RuleApprover` 让规则先于正在看着的那个人作答，两个前端都学会了这四个答案：浏览器的提示有四个按钮，终端的提示接受 `y`/`s`/`a`/n。顺路测出：两个只有测试能抓到、读多少遍代码都抓不到的 bug——为一条含有 `>` 的命令记住的规则永远匹配不上它（元字符规则被用在了精确比较上，而精确比较里没有任何东西能被放宽），以及用户给出的第一条规则会把 `UnsupportedOperationException` 抛进工具调用，因为空的规则文件是个不可变 map，于是「从现在起允许」在第一次使用时静默地什么都没做。两者现在都被测试钉住，而第二个正是那条路径上第三个测试存在的原因：它前面那两个测试都从已经含有一个项目的文件开始。
 
-**What is left, and what each one needs.** 2.5.2 is next (below). After it, in order: **2.5.3**
-message queueing — the composer holds the next message instead of the server answering 409
-(`HttpApi.message`), which needs the hub to keep a per-conversation queue and the page to say so;
-**2.5.4** multi-hunk `edit` (2.3) — the tool one model in five misses, and each miss is a round trip;
-**2.5.5** a `fetch` tool — the first tool that leaves the machine, so it needs its own rules about
-schemes, size and what the model is told to trust; **2.5.6** the MCP client (2.1) — the largest change
-to the tool registry since it was written, and the reason 2.5.2 has to land first, because a server's
-tools must arrive already knowing which rules apply to them; **2.5.7** prompt caching and automatic
-compaction — cheap to add, and it stops the user being the one who has to notice a session has grown;
-**2.5.8** checkpoints — the last of the trust items, and the one that makes leaving the guard on
-comfortable rather than merely possible.
+**2.5 全部落地，而且每一项都是先测量再写的。** 这一批的顺序不是随意的——**2.5.2** 必须在 **2.5.6** 之前，因为一个服务器的工具必须一到就知道哪些规则适用于它们（`mcp__<server>__<tool>` 这个名字形状就是那条规则的落点）。逐项的落地方式、测到过什么、以及每次真机运行改掉的判断，都在 [CHANGELOG.md](CHANGELOG.md) 里；这里只留一句：其中四项（自动压缩的重试距离、多块 `edit` 的块顺序、`write` 等待审批期间文件被改、以及手写配置存不了）是**只在真机或真测试上才显形**的，读多少遍代码都读不出来。
 
-**The decision that came with it, recorded rather than discovered later.** A check command is a
-command, and [CONVENTIONS](CONVENTIONS.md) says approval is the only guard for anything that executes.
-The command is one the user wrote into their own config file, which is the same act as writing it in
-`CCJ.md` or typing it — so it runs without a prompt, and that is a deliberate widening of the approval
-model, written down in [SECURITY.md](../SECURITY.md) as one. What it may not do is become a general
-escape: the hook runs the configured command, with the session's working directory, and nothing else.
-When 2.5.2 lands, the check becomes an ordinary allow rule and this exemption goes away.
+**随之而来的决定，是记录下来而不是以后才发现。** 一条检查命令就是一条命令，而 [CONVENTIONS](CONVENTIONS.md) 说审批是任何会执行的东西的唯一护栏。这条命令是用户写进自己配置文件里的，这和把它写进 `CCJ.md` 或直接敲出来是同一件事——所以它不经提示就运行，而这是对审批模型的一次刻意放宽，并在 [SECURITY.md](../SECURITY.md) 里作为一次放宽写明。它不可以做的是变成一条通用逃生口：这个钩子用会话的工作目录运行那条配置好的命令，仅此而已。2.5.2 落地了，这个豁免**没有**随之消失——`PostEditCheck` 里没有任何审批者，编辑后检查仍然是一条配置好的命令直接跑。这一处是错的，记在这里而不是悄悄删掉：要么它保持为一次写明的放宽（现状，SECURITY.md 就是这么写的），要么它变成一条普通的允许规则——那是还没做的一项。
 
-## Phase 3 — Distribution
+## Phase 3 —— 分发
 
-- **3.1 Releases** — `todo`. Versioned tags, notes that say what changed and what it cost, and a
-  statement of which JDK the jar was built for.
-- **3.2 Packaging** — `todo`. Decide between a fat jar (today), `jpackage`, and a native image. The
-  last one conflicts with reflection-based Jackson configuration unless it is configured for it.
-- **3.3 Documentation that cannot drift** — `todo`. The README's feature table is the project's
-  selling document and its biggest maintenance cost; the pieces that can be generated from code
-  (tool schemas, the usage table) should be.
+- **3.1 发布** —— `todo`。带版本号的标签、说明改了什么、代价是什么的发布说明，以及一句声明这个 jar 是为哪个 JDK 构建的。
+- **3.2 打包** —— `todo`。在 fat jar（今天）、`jpackage` 和 native image 之间做决定。最后一项与基于反射的 Jackson 配置冲突，除非为它专门配置过。
+- **3.3 不会漂移的文档** —— `todo`。README 的功能表是这个项目的销售文档，也是它最大的维护成本；能从代码生成的部分（工具 schema、用法表）就应该生成。
 
-## Not planned
+## 不打算做
 
-Written down so it stops being re-litigated:
+写下来，好让它不再被反复争论：
 
-- **A sandbox.** Approval is the model, and the README says so. A container-based sandbox is a
-  different product with a different trust story.
-- **A multi-user server.** No accounts, no tenancy, no per-user sessions. The web UI is a console for
-  the person who started it.
-- **A plugin marketplace.** MCP (2.1) is the extensibility story.
-- **Cost in currency.** A rate card is an assumption that changes without telling this project; token
-  counts and cache hit rate are facts.
-- **Sub-agents talking to each other.** They report to the main agent, which is the only participant
-  with the whole picture.
+- **一个沙箱。** 审批就是模型，README 也是这么说的。基于容器的沙箱是另一个产品，有另一套信任故事。
+- **一个多用户服务器。** 没有账号、没有租户、没有按用户的会话。网页 UI 是给启动它的那个人的控制台。
+- **一个插件市场。** MCP（2.1）就是可扩展性的答案。
+- **用货币表示的成本。** 一张价目表是一种不打招呼就会变的假设；token 计数和缓存命中率才是事实。
+- **子代理互相交谈。** 它们向主代理汇报，主代理是唯一掌握全貌的参与者。
 
-## How an item gets done
+## 一项工作如何完成
 
-One item at a time, in the order above, with the shape the existing work already has:
+一次一项，按上面的顺序，沿用现有工作已经有的形状：
 
-1. **The test first.** If the item is a bug, the test that fails without the fix is the deliverable's
-   other half. If it is a feature, the acceptance line above is the test.
-2. **The smallest change that satisfies it.** This project's value is that it is readable in an
-   afternoon; a clever fix that costs that is a bad trade.
-3. **Docs in the same change.** README, `docs/`, and the comment next to the code. When a mechanism is
-   removed, its description goes with it — a stale paragraph claiming a guard that no longer exists is
-   worse than no paragraph, because the next reader trusts it.
-4. **Say what was measured.** "Measured: a second conversation deleted the first one's files" is worth
-   ten paragraphs of reasoning, and it is how the existing docs are written.
-5. **Report what did not run.** A change that could not be verified on this machine says so, in the
-   commit message and in the reply to whoever asked for it.
+1. **测试先行。** 如果这项是个 bug，那个没有修复就失败的测试就是交付物的另一半。如果是个功能，上面那行验收就是测试。
+2. **满足它的最小改动。** 这个项目的价值在于一个下午就能读完；一个牺牲了这一点的聪明修法是一笔坏交易。
+3. **文档随改动一起。** README、`docs/`，以及代码旁边的注释。当某个机制被移除时，它的描述也一起走——一段声称某个已不存在的护栏的陈旧文字比没有更糟，因为下一个读者会信它。
+4. **说明测量到了什么。** 「测量：第二个对话删掉了第一个对话的文件」抵得上十段推理，现有文档就是这么写的。
+5. **报告什么没有跑。** 一个无法在这台机器上验证的改动要说明这一点，在提交信息里，也在给请求它的人的回复里。
 
-See [CONVENTIONS.md](CONVENTIONS.md) for the code-level rules that go with this.
+关于与之配套的代码层面规则，见 [CONVENTIONS.md](CONVENTIONS.md)。

@@ -15,20 +15,19 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Exact-string editor.
+ * 精确字符串编辑器。
  *
- * <p>Matching is literal, never regular expressions, so the model must quote the file as it really
- * is. The failure modes are the interesting ones: an absent match reports whether the text exists
- * with different whitespace, and an ambiguous match reports the count - both are what the model
- * needs to retry successfully instead of blindly guessing.
+ * <p>匹配是字面匹配，从不用正则表达式，所以模型必须按文件真实的样子引用它。有意思的是各种失败方式：
+ * 匹配不到时会报告该文本在空白不同的情况下是否存在，匹配有歧义时会报告出现次数——两者都是模型成功重试
+ * 所需要的东西，而不是盲猜。
  */
 public final class EditTool implements Tool {
 
   private static final long MAX_EDIT_BYTES = 32L * 1024 * 1024;
-  /** Where a file's previous content goes, so the turn can be undone. */
+  /** 文件的先前内容放到哪里，以便退回这个回合。 */
   private final CheckpointStore checkpoints;
 
-  /** The check that runs after a successful "edit": nothing unless the user declared one. */
+  /** 成功的「edit」之后运行的检查：除非用户声明过，否则什么也不做。 */
   private final PostEditCheck check;
 
   public EditTool() {
@@ -125,27 +124,26 @@ public final class EditTool implements Tool {
     String label = ToolSupport.display(ctx, file);
 
     if (!Files.exists(file)) {
-      return ToolResult.error("file not found: " + label);
+      return ToolResult.error("找不到文件: " + label);
     }
     if (Files.isDirectory(file)) {
-      return ToolResult.error(label + " is a directory");
+      return ToolResult.error(label + " 是目录");
     }
     for (Hunk hunk : hunks) {
       if (hunk.oldString().isEmpty()) {
         return ToolResult.error(
-            "old_string must not be empty; pass the exact text to replace, or use write to create"
-                + " content from scratch");
+            "old_string 不能为空；传入要替换的确切文本，或者用 write 从零创建内容");
       }
     }
     long size = Files.size(file);
     if (size > MAX_EDIT_BYTES) {
       return ToolResult.error(
-          "cannot edit " + label + ": file is " + size + " bytes, over the " + MAX_EDIT_BYTES
-              + " byte edit limit");
+          "无法编辑 " + label + "：文件 " + size + " 字节，超过 " + MAX_EDIT_BYTES
+              + " 字节的编辑上限");
     }
     String text = ToolSupport.decodeText(Files.readAllBytes(file));
     if (text == null) {
-      return ToolResult.error("cannot edit " + label + ": not a UTF-8 text file (binary content)");
+      return ToolResult.error("无法编辑 " + label + "：不是 UTF-8 文本文件（二进制内容）");
     }
 
     List<int[]> ranges = new ArrayList<>();
@@ -156,17 +154,16 @@ public final class EditTool implements Tool {
       List<int[]> found = ToolSupport.findAll(text, hunk.oldString());
       if (found.isEmpty()) {
         return ToolResult.error(
-            "nothing was written: "
-                + failure(text, hunks, index, "no exact match")
+            "未写入任何内容："
+                + failure(text, hunks, index, "未找到精确匹配")
                 + "\n"
                 + neighbourhood(text, hunk));
       }
       if (found.size() > 1 && !hunk.replaceAll()) {
         return ToolResult.error(
-            "nothing was written: "
-                + failure(text, hunks, index, "matches " + found.size() + " times")
-                + "; add more surrounding context to make it unique, or set replace_all=true for"
-                + " that hunk");
+            "未写入任何内容："
+                + failure(text, hunks, index, "匹配 " + found.size() + " 次")
+                + "；补充更多上下文让它唯一，或者对该块设置 replace_all=true");
       }
       for (int[] range : found) {
         ranges.add(range);
@@ -176,7 +173,7 @@ public final class EditTool implements Tool {
     }
     String overlap = overlap(ranges, owners, hunks);
     if (overlap != null) {
-      return ToolResult.error("nothing was written: " + overlap);
+      return ToolResult.error("未写入任何内容：" + overlap);
     }
 
     String updated = applyAll(text, ranges, replacements);
@@ -184,15 +181,14 @@ public final class EditTool implements Tool {
         new StringBuilder(label)
             .append(" (")
             .append(hunks.size())
-            .append(hunks.size() == 1 ? " hunk, " : " hunks, ")
+            .append(" 个块，")
             .append(ranges.size())
-            .append(ranges.size() == 1 ? " replacement" : " replacements");
+            .append(" 处替换");
     if (!ctx.insideCwd(file)) {
-      detail.append("; OUTSIDE session cwd ").append(ctx.cwd());
+      detail.append("；在会话工作区之外 ").append(ctx.cwd());
     }
-    // One diff of the whole change rather than one per hunk: the person approving is deciding about
-    // the file that comes out of this, and three separate diffs of one file invite three separate
-    // answers to one question.
+    // 整次改动给一个差异，而不是每个块一个：审批的人是在对这之后产出的那个文件做决定，把一个文件拆成
+    // 三份差异，等于邀请对同一个问题给出三个不同的答案。
     detail
         .append(")\n")
         .append(
@@ -205,55 +201,52 @@ public final class EditTool implements Tool {
       return ToolResult.error(refusal);
     }
 
-    // Re-read before writing, because the approval is a window in which somebody else can change the
-    // file — the user in their editor, another conversation's turn, a formatter on save. The ranges
-    // above were computed against the text as it was when the diff was shown, and applying them to
-    // whatever is on disk now would write back a version that predates the other change: their edit
-    // silently gone, with an approval prompt that showed a diff nobody could tell was stale.
+    // 写之前重读一遍，因为审批是一扇窗口，别人可能在这期间改动该文件——用户在编辑器里、另一个对话的
+    // 回合、保存时运行的格式化器。上面的区间是按展示差异时的文本算出来的，把它们套用到磁盘上现在的
+    // 内容，会写回一个早于那次改动的版本：别人的编辑悄无声息地没了，而审批提示展示的差异谁也说不出它
+    // 已经过期。
     String current;
     try {
       current = ToolSupport.decodeText(Files.readAllBytes(file));
     } catch (IOException | RuntimeException e) {
-      return ToolResult.error(label + " could not be re-read before editing: " + e.getMessage());
+      return ToolResult.error(label + " 在编辑前无法重新读取: " + e.getMessage());
     }
     if (!current.equals(text)) {
       return ToolResult.error(
-          "refused: "
+          "已拒绝："
               + label
-              + " changed while this edit was waiting for approval. What is on disk now is not what"
-              + " the diff showed, so applying it would discard the other change. Read the file again"
-              + " and redo the edit against what is there now.");
+              + " 在这次编辑等待审批期间被改动了。磁盘上现在的内容不是差异所展示的那个，套用它就会"
+              + "丢掉另一处改动。请重新读取该文件，并针对现在的内容重做这次编辑。");
     }
 
-    // Recorded before the write, and after the approval: the state worth being able to return to is
-    // the one this turn started with, and a file whose write was refused has nothing to undo.
+    // 在写入之前、审批之后记录：值得退回去的状态是这个回合开始时的状态，而被拒绝写入的文件没有什么
+    // 可退回的。
     checkpoints.record(file, text);
-    // Written to a sibling and moved into place, so a crash or a full disk cannot leave the file
-    // half-written: the failure mode of a partial write to a source file is worse than not editing it.
+    // 先写到旁边的临时文件再移动就位，这样崩溃或磁盘写满都不会留下写了一半的文件：对源文件做部分写入
+    // 的失败方式，比干脆不编辑它更糟。
     writeAtomically(file, updated);
     return ToolResult.ok(
-        "replaced "
-            + ranges.size()
-            + (ranges.size() == 1 ? " occurrence" : " occurrences")
-            + (hunks.size() == 1 ? "" : " across " + hunks.size() + " hunks")
-            + " in "
+        "在 "
             + label
-            + "; file now has "
+            + " 中替换了 "
+            + ranges.size()
+            + " 处"
+            + (hunks.size() == 1 ? "" : "（跨 " + hunks.size() + " 个块）")
+            + "；文件现在有 "
             + ToolSupport.lineCount(updated)
-            + " lines"
+            + " 行"
             + check.afterEditing(file, ctx));
   }
 
-  /** One change to make: what to match, what to put there, and whether every occurrence is meant. */
+  /** 要做的一处改动：匹配什么、在那里放什么，以及是否每一次出现都算数。 */
   private record Hunk(String oldString, String newString, boolean replaceAll) {}
 
   /**
-   * The hunks this request asks for: the several-change form, or the single-change one.
+   * 这次请求所要的块：多改动的形式，或者单改动的形式。
    *
-   * <p>Both shapes stay because they are different jobs. One change is the common case and the flat
-   * arguments are the shortest way to ask for it; several changes to one file are what a model does
-   * when it fixes five places, and doing that as five calls is five approvals, five writes, and four
-   * opportunities for a file to change under an approval that was already shown.
+   * <p>两种形式都留着，因为它们是不同的活儿。单处改动是常见情况，扁平参数是提出它最短的方式；一个
+   * 文件上的多处改动是模型一次修五个地方时做的事，而把那个做成五次调用，就是五次审批、五次写入，以及
+   * 四次让文件在一个已经展示过的审批之下被改动。
    */
   private static List<Hunk> hunks(JsonNode args) {
     JsonNode edits = args.get("edits");
@@ -261,15 +254,15 @@ public final class EditTool implements Tool {
     if (edits != null && !edits.isNull()) {
       if (flat) {
         throw new IllegalArgumentException(
-            "pass either old_string/new_string for one change, or edits for several, not both");
+            "一次改动就传 old_string/new_string，多处改动就传 edits，两者不要同时传");
       }
       if (!edits.isArray() || edits.isEmpty()) {
-        throw new IllegalArgumentException("edits must be a non-empty array of changes");
+        throw new IllegalArgumentException("edits 必须是非空的改动数组");
       }
       List<Hunk> hunks = new ArrayList<>();
       for (JsonNode entry : edits) {
         if (!entry.isObject()) {
-          throw new IllegalArgumentException("each entry of edits must be an object: " + entry);
+          throw new IllegalArgumentException("edits 的每一项都必须是对象: " + entry);
         }
         hunks.add(
             new Hunk(
@@ -286,34 +279,33 @@ public final class EditTool implements Tool {
             ToolSupport.optionalBool(args, "replace_all", false)));
   }
 
-  /** Which hunk failed and why, in the terms a model needs to retry successfully. */
+  /** 哪个块失败了、为什么失败，用的是模型成功重试所需要的说法。 */
   private static String failure(String text, List<Hunk> hunks, int index, String why) {
-    String where = hunks.size() == 1 ? "the edit" : "hunk " + (index + 1) + " of " + hunks.size();
+    String where = hunks.size() == 1 ? "该编辑" : "第 " + (index + 1) + "/" + hunks.size() + " 个块";
     Hunk hunk = hunks.get(index);
     int soft = ToolSupport.countNormalisedMatches(text, hunk.oldString());
     String hint =
         soft == 0
-            ? "no region matches even after collapsing whitespace"
-            : soft + " region(s) match once whitespace is normalised, so indentation or line breaks "
-                + "differ from the file";
-    return where + " found " + why + ": " + hint;
+            ? "折叠空白后也没有任何区域匹配"
+            : "折叠空白后有 " + soft + " 个区域匹配，说明缩进或换行与文件不同";
+    return where + why + "：" + hint;
   }
 
-  /** The lines around where a failed hunk was expected, so the retry needs no separate read. */
+  /** 失败的块原本预期出现的位置附近那几行，这样重试不必再单独读一次。 */
   private static String neighbourhood(String text, Hunk hunk) {
     int line = ToolSupport.lineOfFirstLine(text, hunk.oldString());
     if (line < 0) {
-      return "(its first line appears nowhere in the file)";
+      return "(它的首行在文件里哪儿都找不到)";
     }
-    return "(around line " + line + ", where its first line appears)\n"
+    return "(它首行出现的位置附近，第 " + line + " 行左右)\n"
         + ToolSupport.excerpt(text, line, PREVIEW_CONTEXT);
   }
 
   /**
-   * Refuses hunks that overlap, naming both.
+   * 拒绝互相重叠的块，并把两个都点出来。
    *
-   * <p>Overlapping hunks have no defined result — whichever is applied second is applied to text the
-   * first one replaced — and a patch that half-applies is the thing this tool must never produce.
+   * <p>重叠的块没有确定的结果——后应用的那个会套用到前一个已经替换掉的文本上——而半途生效的补丁是这个
+   * 工具绝不能产出的东西。
    */
   private static String overlap(List<int[]> ranges, List<Integer> owners, List<Hunk> hunks) {
     List<Integer> order = new ArrayList<>();
@@ -325,26 +317,23 @@ public final class EditTool implements Tool {
       int previous = order.get(i - 1);
       int current = order.get(i);
       if (ranges.get(current)[0] < ranges.get(previous)[1]) {
-        return "hunks "
+        return "第 "
             + (owners.get(previous) + 1)
-            + " and "
+            + " 个和第 "
             + (owners.get(current) + 1)
-            + " overlap in "
-            + "the text they match; merge them into one hunk, or reorder them so they do not"
-            + " cover the same text";
+            + " 个块在它们匹配的文本上重叠；把它们合并成一个块，或者重新排序，让它们不再覆盖"
+            + "同一段文本";
       }
     }
     return null;
   }
 
   /**
-   * Every replacement, applied from the end of the file backwards.
+   * 每一处替换，从文件末尾往前应用。
    *
-   * <p>Backwards is what keeps the offsets valid: a replacement changes the length of the text after
-   * it, so the ones nearer the start must be applied last. Sorting by position rather than trusting
-   * the order the hunks arrived in is the part that matters — a model writing the bottom change first
-   * is normal, and measured, doing it by arrival order produced `class Notes implint a = 2;neable {`
-   * from a two-hunk edit that both hunks had matched.
+   * <p>从后往前正是让偏移保持有效的原因：一处替换会改变它之后文本的长度，所以更靠前的那些必须最后
+   * 应用。要紧的一步是按位置排序，而不是相信各个块到达的顺序——模型先写靠下的那处改动是正常的，而且
+   * 实测过，按到达顺序应用会让一次两个块都匹配上的编辑产出 `class Notes implint a = 2;neable {`。
    */
   private static String applyAll(String text, List<int[]> ranges, List<String> replacements) {
     List<Integer> order = new ArrayList<>();
@@ -361,11 +350,11 @@ public final class EditTool implements Tool {
   }
 
   /**
-   * Writes through a temporary file in the same directory, then renames it into place.
+   * 经由同目录下的临时文件写入，然后把它重命名就位。
    *
-   * <p>The rename is atomic within one filesystem, so a reader sees either the old file or the new
-   * one — never a truncated mixture. Same directory because a rename across filesystems is a copy,
-   * which is the non-atomic thing this exists to avoid.
+   * <p>在同一个文件系统内，重命名是原子的，所以读取者看到的要么是旧文件要么是新文件——绝不会是截断
+   * 的混合物。之所以要同目录，是因为跨文件系统的重命名其实是一次复制，而那个非原子的东西正是这里要
+   * 避免的。
    */
   private static void writeAtomically(Path file, String content) throws IOException {
     Path parent = file.getParent();
@@ -373,13 +362,12 @@ public final class EditTool implements Tool {
         Files.createTempFile(parent == null ? Path.of(".") : parent, ".ccj-edit", ".tmp");
     try {
       Files.write(staged, content.getBytes(StandardCharsets.UTF_8));
-      // Copied onto the sibling so the replacement keeps the original's permissions: a fresh temp
-      // file is 0600, and silently tightening a file the user had made readable is a change nobody
-      // asked for.
+      // 复制到旁边的文件上，让替换品保留原文件的权限：新建的临时文件是 0600，而悄悄收紧一个用户
+      // 原本设为可读的文件，是没人要求过的改动。
       try {
         Files.setPosixFilePermissions(staged, Files.getPosixFilePermissions(file));
       } catch (UnsupportedOperationException | IOException ignored) {
-        // Not a POSIX filesystem, or the permissions cannot be read: the content is what matters.
+        // 不是 POSIX 文件系统，或者权限读不出来：内容才是要紧的。
       }
       Files.move(staged, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     } catch (IOException e) {
@@ -388,7 +376,7 @@ public final class EditTool implements Tool {
     }
   }
 
-  /** Applies the replacements back to front so earlier offsets stay valid. */
+  /** 从后往前应用替换，让更早的偏移保持有效。 */
   private static String replaceAll(String text, List<int[]> ranges, String newString) {
     StringBuilder builder = new StringBuilder(text);
     for (int i = ranges.size() - 1; i >= 0; i--) {

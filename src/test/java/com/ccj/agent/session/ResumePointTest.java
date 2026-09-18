@@ -12,13 +12,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The note a process leaves for the next one: which conversation to open again.
+ * 一个进程留给下一个进程的便条：再次打开哪段会话。
  *
- * <p>A restart replaces the process, and a fresh process opens a fresh session — so the work the
- * user was watching disappears from the screen at exactly the moment they asked for it to be
- * updated. This is the one fact that has to survive the handover. It is a plain file in the home
- * directory rather than an environment variable or a flag, because the launcher re-runs the same
- * command and knows nothing about sessions.
+ * <p>重启会换掉进程，而新进程会开一段新会话——于是用户正看着的那份工作，恰好在他们要求更新它的那一刻从
+ * 屏幕上消失。这是交接中唯一必须活下来的事实。它是 home 目录里的一个普通文件，而不是环境变量或命令行
+ * 开关，因为启动器只是重跑同一条命令，对会话一无所知。
  */
 class ResumePointTest {
 
@@ -56,8 +54,7 @@ class ResumePointTest {
 
   @Test
   void aDamagedNoteIsIgnoredRatherThanFatal() throws Exception {
-    // The note is a convenience, not a record: a process must never refuse to start because it is
-    // unreadable or was overwritten by something else.
+    // 便条是一份方便，不是记录：进程绝不能因为读不了它、或它被别人覆盖过就拒绝启动。
     Path file = ResumePoint.file(home);
     Files.writeString(file, "not a session id at all\nsecond line\n", StandardCharsets.UTF_8);
     assertTrue(ResumePoint.read(home).isEmpty());
@@ -67,13 +64,12 @@ class ResumePointTest {
 
     Files.delete(file);
     Files.createDirectories(file);
-    assertTrue(ResumePoint.read(home).isEmpty(), "a directory where the note belongs is just absent");
+    assertTrue(ResumePoint.read(home).isEmpty(), "便条该在的位置上是个目录，那也只是等于不存在");
   }
 
   @Test
   void anIdThatCouldNotBeAFileNameIsNeverStored() {
-    // Storing it would be a claim that the next process can open it, and it cannot: an id is a file
-    // name, and this one is a path.
+    // 存下来就等于声称下一个进程能打开它，而它打不开：id 是一个文件名，而这个是路径。
     ResumePoint.write(home, "../../etc/passwd");
     ResumePoint.write(home, "");
     ResumePoint.write(home, null);

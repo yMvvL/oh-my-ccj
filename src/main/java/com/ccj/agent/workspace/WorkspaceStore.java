@@ -17,15 +17,14 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The list of known workspaces, kept in {@code <home>/workspaces.json}.
+ * 已知工作区的列表，存放在 {@code <home>/workspaces.json}。
  *
- * <p>The workspace {@code ccj} was started in is seeded from the starting directory and keeps using
- * the top-level {@code <home>/sessions} directory, so conversations recorded before workspaces
- * existed stay exactly where they were. Workspaces added later get their own directory under
- * {@code <home>/workspaces/<name>/sessions}.
+ * <p>{@code ccj} 启动时所在的那个工作区由启动目录播种，并继续使用顶层的 {@code <home>/sessions}
+ * 目录，于是在工作区存在之前记录的会话留在原地一动不动。之后添加的工作区在
+ * {@code <home>/workspaces/<name>/sessions} 下有各自的目录。
  *
- * <p>Only the registry lives here: forgetting a workspace never deletes conversation files, because
- * a tool that silently removes history because an entry left a list would be a bad tool.
+ * <p>这里只住着登记表：忘掉一个工作区永远不会删掉会话文件，因为一个仅因某个条目离开了列表就悄悄抹去
+ * 历史的工具，会是个糟糕的工具。
  */
 public final class WorkspaceStore {
 
@@ -43,9 +42,9 @@ public final class WorkspaceStore {
   }
 
   /**
-   * Loads the registry, seeding the starting directory as the active workspace on first use.
+   * 载入登记表，首次使用时把启动目录播种为活动工作区。
    *
-   * @param startingDir the directory the front end was started in; used when there is no registry
+   * @param startingDir 前端启动时所在的目录；没有登记表时使用
    */
   public static WorkspaceStore open(Path home, Path startingDir) {
     WorkspaceStore store = new WorkspaceStore(home);
@@ -87,7 +86,7 @@ public final class WorkspaceStore {
     return name == null ? Optional.empty() : Optional.ofNullable(workspaces.get(name.strip()));
   }
 
-  /** Makes {@code name} the active workspace. */
+  /** 把 {@code name} 设为活动工作区。 */
   public synchronized Workspace activate(String name) {
     Workspace workspace = find(name).orElseThrow(() -> unknown(name));
     active = workspace.name();
@@ -95,14 +94,14 @@ public final class WorkspaceStore {
     return workspace;
   }
 
-  /** Registers a workspace under an explicit name, creating its directory if needed. */
+  /** 以显式给出的名字注册一个工作区，必要时创建它的目录。 */
   public synchronized Workspace add(String name, Path path) {
     String clean = Workspace.requireValidName(name);
     if (workspaces.containsKey(clean)) {
-      throw new IllegalArgumentException("a workspace named '" + clean + "' already exists");
+      throw new IllegalArgumentException("名为 '" + clean + "' 的工作区已存在");
     }
     if (path == null) {
-      throw new IllegalArgumentException("a workspace needs a directory");
+      throw new IllegalArgumentException("一个工作区需要一个目录");
     }
     Path directory = usableDirectory(path);
     Workspace workspace = new Workspace(clean, directory, sessionsDirFor(clean));
@@ -115,16 +114,15 @@ public final class WorkspaceStore {
   }
 
   /**
-   * Registers a directory picked from a chooser, naming it after the directory itself.
+   * 注册一个从选择器里挑出来的目录，以目录自身的名字给它命名。
    *
-   * <p>Picking a folder says everything the registry needs: the folder is the name, and a second step
-   * that asks for a name the folder already carries is a step nobody wants. When the name is taken —
-   * the same project twice, or two directories that share a last segment — the next free suffix is
-   * used, because refusing would send the user back to type a name for something that already has one.
+   * <p>挑一个文件夹已经说全了登记表需要的一切：文件夹就是名字，再要求一步、让用户为一个文件夹已经带着
+   * 的名字再打一遍，是谁也不想要的一步。名字被占用时——同一个项目来两次，或者两个目录的最后一段相同
+   * ——用下一个空闲的后缀，因为拒绝会把用户推回去，为一个已经有名字的东西打一个名字。
    */
   public synchronized Workspace add(Path path) {
     if (path == null) {
-      throw new IllegalArgumentException("a workspace needs a directory");
+      throw new IllegalArgumentException("一个工作区需要一个目录");
     }
     Path directory = path.toAbsolutePath().normalize();
     String base = directory.getFileName() == null ? "" : directory.getFileName().toString();
@@ -132,17 +130,16 @@ public final class WorkspaceStore {
   }
 
   /**
-   * Registers {@code directory} under {@code base}, or the next free {@code base-2}, {@code base-3}…
+   * 以 {@code base} 注册 {@code directory}，或用下一个空闲的 {@code base-2}、{@code base-3}……
    *
-   * <p>The name that lands in the registry, the name its session directory is derived from and the
-   * name in the error message are decided in one place, so a suffixed workspace cannot end up with
-   * another one's history.
+   * <p>落进登记表的名字、它的会话目录所依据的名字、以及错误消息里的名字都在一处决定，于是带后缀的工作区
+   * 不会拿到别人的历史。
    */
   private Workspace addNamed(Path path, String base) {
     String wanted = base.length() > 40 ? base.substring(0, 40) : base;
     if (!Workspace.validName(wanted)) {
       throw new IllegalArgumentException(
-          "the folder name '" + base + "' cannot be a workspace name: " + Workspace.RULE);
+          "文件夹名 '" + base + "' 不能作为工作区名：" + Workspace.RULE);
     }
     String clean = wanted;
     for (int suffix = 2; workspaces.containsKey(clean); suffix++) {
@@ -160,25 +157,24 @@ public final class WorkspaceStore {
   }
 
   /**
-   * The directory as it will be stored, created if it does not exist.
+   * 目录将被存下来的样子，不存在时创建它。
    *
-   * <p>Creating it is deliberate: adding a workspace for a project that does not exist yet is a
-   * normal thing to want, and an empty directory is cheap.
+   * <p>创建是刻意为之：为一个还不存在的项目添加工作区是正常的想法，而一个空目录很便宜。
    */
   private Path usableDirectory(Path path) {
     Path directory = path.toAbsolutePath().normalize();
     try {
       Files.createDirectories(directory);
     } catch (IOException e) {
-      throw new IllegalArgumentException("cannot use " + directory + ": " + e.getMessage(), e);
+      throw new IllegalArgumentException("无法使用 " + directory + "：" + e.getMessage(), e);
     }
     if (!Files.isDirectory(directory)) {
-      throw new IllegalArgumentException("not a directory: " + directory);
+      throw new IllegalArgumentException("不是目录：" + directory);
     }
     return directory;
   }
 
-  /** Forgets a workspace. Its session files stay on disk. */
+  /** 忘掉一个工作区。它的会话文件仍然留在磁盘上。 */
   public synchronized void remove(String name) {
     String clean = name == null ? "" : name.strip();
     if (!workspaces.containsKey(clean)) {
@@ -186,22 +182,22 @@ public final class WorkspaceStore {
     }
     if (clean.equals(active)) {
       throw new IllegalArgumentException(
-          "cannot remove the active workspace '" + clean + "'; switch to another one first");
+          "无法移除活动工作区 '" + clean + "'；请先切换到另一个");
     }
     workspaces.remove(clean);
     save();
   }
 
-  /** The sessions directory a newly added workspace gets. */
+  /** 新添加的工作区获得的会话目录。 */
   public Path sessionsDirFor(String name) {
     return home.resolve("workspaces").resolve(name).resolve(LEGACY_SESSIONS);
   }
 
   private IllegalArgumentException unknown(String name) {
     return new IllegalArgumentException(
-        "no workspace named '"
+        "没有名为 '"
             + (name == null ? "" : name.strip())
-            + "'; known workspaces: "
+            + "' 的工作区；已知工作区："
             + String.join(", ", workspaces.keySet()));
   }
 
@@ -223,10 +219,10 @@ public final class WorkspaceStore {
     try {
       root = Json.parse(Files.readString(file));
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot read " + file, e);
+      throw new UncheckedIOException("无法读取 " + file, e);
     }
     if (!root.isObject()) {
-      throw new IllegalArgumentException(file + " must contain a JSON object");
+      throw new IllegalArgumentException(file + " 必须包含一个 JSON 对象");
     }
     active = root.path("active").isTextual() ? root.path("active").asText() : null;
     JsonNode entries = root.path("workspaces");
@@ -235,7 +231,7 @@ public final class WorkspaceStore {
         String name = entry.path("name").asText("");
         String path = entry.path("path").asText("");
         if (!Workspace.validName(name) || path.isBlank()) {
-          continue; // an entry we cannot use is skipped rather than fatal
+          continue; // 用不了的条目跳过，而不是致命
         }
         String sessions = entry.path("sessions").asText("");
         Path sessionsDir =
@@ -257,7 +253,7 @@ public final class WorkspaceStore {
       if (sessions.equals(home.resolve(LEGACY_SESSIONS))) {
         entry.put("sessions", LEGACY_SESSIONS);
       } else if (sessions.equals(sessionsDirFor(workspace.name()))) {
-        // The derived location is the default, so it is not written down.
+        // 推导出的位置就是默认值，所以不写下来。
       } else {
         entry.put("sessions", home.relativize(sessions).toString());
       }
@@ -271,11 +267,11 @@ public final class WorkspaceStore {
           java.nio.file.StandardOpenOption.CREATE,
           java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot write " + file, e);
+      throw new UncheckedIOException("无法写入 " + file, e);
     }
   }
 
-  /** Names of every workspace, for error messages and tests. */
+  /** 每个工作区的名字，供错误消息和测试使用。 */
   public synchronized List<String> names() {
     return new ArrayList<>(workspaces.keySet());
   }

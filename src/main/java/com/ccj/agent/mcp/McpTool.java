@@ -6,25 +6,24 @@ import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
 
 /**
- * One tool a server offers, as a tool this agent can call.
+ * 服务器提供的一个工具，作为这个代理可以调用的工具。
  *
- * <p>The name is `mcp__<server>__<tool>`, and the three parts are all load-bearing: the model can see
- * where a capability came from, the transcript does not pretend a remote tool is a built-in, and an
- * approval rule can name one server (`mcp__fs__*`) or one tool of it without describing the others.
+ * <p>名字是 `mcp__<server>__<tool>`，三个部分都承重：模型能看见一个能力来自哪里，转录不会假装
+ * 一个远端工具是内置的，而一条审批规则可以点名某个服务器（`mcp__fs__*`）或它的某一个工具，
+ * 而不用去描述其余的工具。
  *
- * <p>Approval is not optional and not delegated: a server's own idea of what it may do is not this
- * program's, so every call goes through the same `Approver` as `bash`, with the tool's own name as the
- * subject of the request. A server that wanted to run unasked could not, which is the only way a
- * user-installed program can be allowed to exist here.
+ * <p>审批不是可选项，也不能被委托出去：服务器自己对「它能做什么」的看法不是本程序的看法，因此
+ * 每次调用都和 `bash` 一样经过同一个 `Approver`，以工具自己的名字作为请求的对象。一个想不经
+ * 询问就运行的服务器做不到——这是用户安装的程序能被允许存在于这里的唯一方式。
  */
 public final class McpTool implements Tool {
 
   /**
-   * Where a tool gets the client it calls through.
+   * 工具从何处拿到它调用所用的客户端。
    *
-   * <p>A seam rather than a field because starting a server is deferred: the registry holds tools
-   * whose server is not running yet, and the first call is what pays for the process. Implemented by
-   * {@link McpTools}, which keeps one client per server alive for the run.
+   * <p>做成接缝而不是字段，是因为启动服务器是延后的：注册表持有的工具，其服务器还没在运行，
+   * 而第一次调用才是为那个进程付账的时刻。由 {@link McpTools} 实现，它在本次运行期间为每个
+   * 服务器保活一个客户端。
    */
   public interface Clients {
     McpClient forServer(McpConfig.Server server);
@@ -45,11 +44,11 @@ public final class McpTool implements Tool {
   }
 
   /**
-   * The same tool, bound to a running client.
+   * 同一个工具，绑定到一个运行中的客户端。
    *
-   * <p>Discovery and calling are separated because a client is not started until a tool of its server
-   * is actually used: an agent that never calls a remote tool never pays for a process, and a machine
-   * with no MCP servers configured pays nothing at all.
+   * <p>发现与调用是分开的，因为在其服务器的某个工具真正被用到之前，客户端不会被启动：一个从不
+   * 调用远端工具的代理，永远不会为一个进程付账，而一台没有配置任何 MCP 服务器的机器，则什么
+   * 都不用付。
    */
   private McpTool(McpTool discovered, Clients clients) {
     this.server = discovered.server;
@@ -83,8 +82,8 @@ public final class McpTool implements Tool {
 
   @Override
   public ToolResult execute(String argumentsJson, ToolContext ctx) {
-    // Approval first: a server that is started before the question is asked has already run a
-    // process, and "nothing was sent" would stop being true.
+    // 先审批：一个在问题被问出口之前就启动的服务器，已经运行了一个进程，而「什么都没发送」
+    // 就不再为真。
     String refusal = ctx.refusal(ApprovalRequest.tool(name(), name() + " " + argumentsJson));
     if (refusal != null) {
       return ToolResult.error(refusal);
@@ -96,7 +95,7 @@ public final class McpTool implements Tool {
     }
   }
 
-  /** The client this tool needs before it can run, which is what a registry start is for. */
+  /** 这个工具运行前所需的客户端；注册表的启动正是为它准备的。 */
   McpConfig.Server server() {
     return server;
   }

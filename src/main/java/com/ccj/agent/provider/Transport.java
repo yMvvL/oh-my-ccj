@@ -18,19 +18,19 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
- * Shared HTTP plumbing for the concrete providers: timeouts, retry policy and error reporting.
+ * 各具体提供方共用的 HTTP 管道：超时、重试策略与错误上报。
  *
- * <p>Keeping this in one place means both vendors retry the same way and fail with the same
- * message shape, which is what makes provider failures diagnosable from the console.
+ * <p>集中在一处，意味着两个厂家以同样的方式重试、以同样形状的消息失败，而这正是让提供方的失败在控制台
+ * 上可诊断的原因。
  */
 final class Transport {
 
   static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(15);
 
-  /** A long turn can stream for minutes, so the request deadline has to be generous. */
+  /** 一个长回合可能流式输出好几分钟，所以请求的截止时间必须给得宽裕。 */
   static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(10);
 
-  /** Attempts in total — the first send plus the retries — before a transient fault is fatal. */
+  /** 一次瞬时故障算作致命之前的总尝试次数——首次发送加上重试。 */
   static final int MAX_ATTEMPTS = 3;
 
   private static final long BASE_BACKOFF_MILLIS = 150;
@@ -53,10 +53,9 @@ final class Transport {
   }
 
   /**
-   * Sends {@code request} and returns the first 2xx response, whose body is still an unconsumed
-   * stream. Transport faults, 408, 429 and 5xx are retried with exponential backoff plus jitter,
-   * announcing each one through {@code listener}. Any other non-2xx is thrown immediately: a 400
-   * means the request itself is wrong, so repeating it only wastes the user's time.
+   * 发送 {@code request}，返回第一个 2xx 响应，其响应体仍是尚未消费的流。传输层故障、408、429 和
+   * 5xx 会以指数退避加抖动重试，每一次都通过 {@code listener} 播报。其他任何非 2xx 立刻抛出：400
+   * 意味着请求本身有问题，重复发送只是浪费用户的时间。
    */
   static HttpResponse<Stream<String>> send(
       HttpClient http, HttpRequest request, Consumer<Provider.Event> listener) throws Exception {
@@ -71,50 +70,48 @@ final class Transport {
         if (!retryable(status) || attempt >= MAX_ATTEMPTS) {
           throw new Exception("HTTP " + status + ": " + truncate(body));
         }
-        // A throttled endpoint usually says how long to wait, and retrying sooner than it asked is
-        // how a 429 becomes a longer ban.
+        // 被限流的端点通常会说明该等多久，而比它要求的更早重试，正是 429 变成更长时间封禁的原因。
         awaitRetry(listener, attempt, "HTTP " + status, retryAfterMillis(response));
       } catch (IOException e) {
         if (attempt >= MAX_ATTEMPTS) {
-          throw new Exception("request failed after " + attempt + " attempts: " + e, e);
+          throw new Exception("请求在 " + attempt + " 次尝试后失败：" + e, e);
         }
         awaitRetry(listener, attempt, e.toString(), -1);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
-        throw new Exception("interrupted while waiting for the model API", e);
+        throw new Exception("等待模型 API 时被中断", e);
       }
     }
   }
 
   /**
-   * The diagnostic for a 2xx body that was not an event stream.
+   * 对「2xx 响应体却不是事件流」的诊断。
    *
-   * <p>A relay failing upstream, or a server ignoring {@code stream: true}, answers 200 with JSON.
-   * The frame decoder finds nothing in it, so without a word about what arrived the turn ends as a
-   * silent empty answer — the one failure a user cannot diagnose. Returned rather than thrown so
-   * each provider can name itself.
+   * <p>上游失败的中继，或者无视 {@code stream: true} 的服务器，会用 JSON 回一个 200。帧解码器在其中
+   * 找不到任何东西，所以如果不说一句收到的是什么，这个回合就会以一句无声的空回答结束——这是用户唯一无法
+   * 诊断的失败。以返回而非抛出的方式给出，好让每个提供方报出自己的名字。
    */
   static String noEvents(HttpResponse<?> response, String arrived) {
     String contentType = response.headers().firstValue("content-type").orElse("");
-    return "the endpoint returned no events ("
-        + (contentType.isBlank() ? "no content type" : contentType)
-        + "): "
-        + (arrived.isBlank() ? "(empty body)" : truncate(arrived));
+    return "端点没有返回任何事件（"
+        + (contentType.isBlank() ? "缺少 content type" : contentType)
+        + "）："
+        + (arrived.isBlank() ? "（空响应体）" : truncate(arrived));
   }
 
-  /** Keeps the first couple of kilobytes a body delivered, for the message above. */
+  /** 留下响应体开头的一两 KB，供上一条消息使用。 */
   static void remember(StringBuilder buffer, String line) {
     if (buffer.length() < 2048) {
       buffer.append(line).append('\n');
     }
   }
 
-  /** Ceiling on a server-supplied wait, so a wrong header cannot park a turn for an hour. */
+  /** 服务器给出的等待时间的上限，免得一个错误的首部把一个回合停住一小时。 */
   static final long MAX_RETRY_AFTER_MILLIS = 60_000;
 
   /**
-   * The wait a response asks for, in milliseconds, or -1 when it asks for nothing usable. The header
-   * is legally either a number of seconds or an HTTP date, and both forms are read here.
+   * 响应要求的等待时长，单位毫秒；没有可用的要求时返回 -1。这个首部的合法形式要么是秒数，要么是 HTTP
+   * 日期，两种都读。
    */
   static long retryAfterMillis(HttpResponse<?> response) {
     String header = response.headers().firstValue("retry-after").orElse("").strip();
@@ -124,7 +121,7 @@ final class Transport {
     try {
       return Math.max(0, Long.parseLong(header) * 1000L);
     } catch (NumberFormatException numberOfSecondsExpected) {
-      // Not a number: an HTTP date is the other legal form of the same header.
+      // 不是数字：HTTP 日期是同一个首部的另一种合法形式。
     }
     try {
       ZonedDateTime when = ZonedDateTime.parse(header, DateTimeFormatter.RFC_1123_DATE_TIME);
@@ -138,15 +135,14 @@ final class Transport {
     return status == 408 || status == 429 || status >= 500;
   }
 
-  /** Backoff for the attempt that just failed; {@code failedAttempt} is 1-based. */
+  /** 刚刚失败的这次尝试的退避时间；{@code failedAttempt} 从 1 开始计数。 */
   static long backoffMillis(int failedAttempt) {
     long exponential = BASE_BACKOFF_MILLIS << (failedAttempt - 1);
     return exponential + ThreadLocalRandom.current().nextLong(MAX_JITTER_MILLIS + 1);
   }
 
   /**
-   * Announces the wait and takes it. {@code requestedMillis} is what the server asked for, or -1 to
-   * fall back to the local backoff curve.
+   * 播报这次等待并真的等下去。{@code requestedMillis} 是服务器要求的时长，-1 表示回退到本地退避曲线。
    */
   private static void awaitRetry(
       Consumer<Provider.Event> listener, int attempt, String reason, long requestedMillis)
@@ -160,15 +156,13 @@ final class Transport {
   }
 
   /**
-   * Reads an error response, stopping once there is more than {@link #ERROR_BODY_LIMIT} of it.
+   * 读取一段错误响应，一旦超过 {@link #ERROR_BODY_LIMIT} 就停下。
    *
-   * <p>Bounded while reading rather than after. The previous version collected the whole body and cut
-   * it when formatting, so the memory a display limit was meant to protect was already spent: an error
-   * page of any size — a misconfigured gateway returning a large HTML page, a proxy splash screen —
-   * was held in full before being thrown away. The limit is a limit only if it applies to the read.
+   * <p>是在读取过程中设限，而不是读完之后。先前的版本把整个响应体收下来、格式化时才截断，于是那道显示上限
+   * 本想省下的内存早就花掉了：任意大小的错误页面——配置错误的网关返回的大 HTML 页、代理的启动画面——在被
+   * 丢掉之前都完整地占用着内存。上限只有施加在读取上，才是真的上限。
    *
-   * <p>The stream is closed either way, since abandoning a body without closing it leaks the
-   * connection.
+   * <p>无论如何都会关闭流，因为撇下一个不关闭的响应体会泄漏连接。
    */
   static String readBody(Stream<String> lines) {
     try (lines) {
@@ -178,8 +172,7 @@ final class Transport {
           kept.append('\n');
         }
         kept.append(line);
-        // Room for the marker the formatter adds, so a body exactly at the limit is not read twice
-        // over to discover it does not fit.
+        // 给格式化器要加的那句标记留出余地，这样一个刚好卡在上限的响应体不会被重读一遍才发现放不下。
         if (kept.length() > ERROR_BODY_LIMIT + 64) {
           break;
         }
@@ -192,6 +185,6 @@ final class Transport {
     String flat = body == null ? "" : body.strip();
     return flat.length() <= ERROR_BODY_LIMIT
         ? flat
-        : flat.substring(0, ERROR_BODY_LIMIT) + "... (truncated)";
+        : flat.substring(0, ERROR_BODY_LIMIT) + "… （已截断）";
   }
 }

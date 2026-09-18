@@ -1,11 +1,10 @@
 package com.ccj.agent.core;
 
 /**
- * A capability the model can invoke.
+ * 模型可以调用的一项能力。
  *
- * <p>Implementations are stateless: everything they need about the environment arrives through
- * {@link ToolContext}. Returning {@link ToolResult#error} for expected failures (missing file, bad
- * arguments) keeps the loop alive so the model can correct itself; throwing is reserved for bugs.
+ * <p>实现都是无状态的：关于环境的一切都通过 {@link ToolContext} 传进来。对可预期的失败（文件不存在、
+ * 参数不对）返回 {@link ToolResult#error}，可以保住循环，让模型自行纠正；抛异常只留给真正的 bug。
  */
 public interface Tool {
 
@@ -13,15 +12,14 @@ public interface Tool {
 
   String description();
 
-  /** JSON Schema object describing the arguments, as raw JSON text. */
+  /** 描述参数的 JSON Schema 对象，以原始 JSON 文本给出。 */
   String parametersJson();
 
   ToolResult execute(String argumentsJson, ToolContext ctx) throws Exception;
 
   /**
-   * True for a tool that only reads: it changes nothing, never asks for approval, and is therefore
-   * safe to run at the same time as another one. The loop uses this to decide what may overlap —
-   * an agent reading six files in one turn should not pay for six round trips.
+   * 只读工具为 true：它不改变任何东西，从不请求审批，因此可以安全地与其他工具同时运行。循环据此决定哪些
+   * 调用可以重叠——一个回合里要读六个文件的代理不该为此付出六个来回的代价。
    */
   default boolean readOnly() {
     return false;

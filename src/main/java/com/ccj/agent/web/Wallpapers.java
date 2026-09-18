@@ -13,28 +13,25 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
- * The pictures the page may use as a background: one directory, read only.
+ * 页面可以拿来当背景的图片：一个目录，只读。
  *
- * <p>A wallpaper is not a tool and has no approval gate — the page asks the server it is already
- * talking to for a file, and the server hands back a regular image from this one directory or
- * nothing at all. Everything else about a name is refused: one carrying a separator, one that
- * resolves out of the directory through a link, an absolute path, a file that is not an image. It
- * is the same rule the session store applies to session ids, for the same reason — the name arrives
- * from the browser, so it is input and not a fact.
+ * <p>壁纸不是工具，也没有审批关口——页面向它已经在对话的那个服务器要一个文件，服务器就从这一个目录里
+ * 交回一张普通图片，或者什么都不给。名字的其他一切情形都被拒绝：带分隔符的、经由链接解析到目录之外的、
+ * 绝对路径、不是图片的文件。这和会话存储对 session id 施加的是同一条规则，理由也一样——名字来自浏览器，
+ * 所以它是输入，而不是事实。
  *
- * <p>SVG is deliberately left out: it is a document that can carry script, and a background image
- * is not worth that hole. Raster formats only, and the bytes decide which one — a file named
- * {@code .jpg} that really holds a PNG is served as the PNG it is.
+ * <p>SVG 被有意排除：它是可以携带脚本的文档，而一张背景图不值得开这个口子。只收光栅格式，由字节说了算
+ * ——一个名字叫 {@code .jpg} 而实际内容为 PNG 的文件，就按它本来的 PNG 提供。
  */
 public final class Wallpapers {
 
-  /** The environment variable that points somewhere else. */
+  /** 指向别处的环境变量。 */
   public static final String ENV = "CCJ_WALLPAPERS";
 
-  /** Where they live when nothing says otherwise, relative to {@code $HOME}. */
+  /** 没人另行指定时它们住在哪儿，相对于 {@code $HOME}。 */
   public static final String DEFAULT_SUBDIR = "Pictures/ccj-backgrounds";
 
-  /** How many leading bytes are enough to name a raster format. */
+  /** 开头多少个字节就足以认出一种光栅格式。 */
   private static final int SNIFF_BYTES = 16;
 
   private static final Comparator<String> NATURAL = Wallpapers::natural;
@@ -45,7 +42,7 @@ public final class Wallpapers {
     this.dir = dir == null ? null : dir.toAbsolutePath().normalize();
   }
 
-  /** A flag, then the environment, then the usual place: {@code ~/Pictures/ccj-backgrounds}. */
+  /** 先看旗标，再看环境变量，最后是常规位置：{@code ~/Pictures/ccj-backgrounds}。 */
   public static Wallpapers from(Map<String, String> env, String flag) {
     if (flag != null && !flag.isBlank()) {
       return new Wallpapers(Path.of(flag.strip()));
@@ -66,12 +63,12 @@ public final class Wallpapers {
     return dir;
   }
 
-  /** True when there is a directory to read: a missing one simply means nobody has any pictures. */
+  /** 有可读目录时为 true：目录不存在只意味着还没有人放过图片。 */
   public boolean available() {
     return dir != null && Files.isDirectory(dir);
   }
 
-  /** The images in the directory, numbered ones in the order a person reads them: 1, 2, … 10. */
+  /** 目录里的图片；带编号的按人阅读的顺序排：1、2、……10。 */
   public List<String> names() {
     if (!available()) {
       return List.of();
@@ -80,7 +77,7 @@ public final class Wallpapers {
       List<String> names = new ArrayList<>();
       for (Path entry : entries.toList()) {
         String name = entry.getFileName().toString();
-        // The same test the page's request will get: listed here means servable there.
+        // 与页面请求将受到的同一个测试：在这里列出，就意味着在那里可被提供。
         if (resolve(name).isPresent()) {
           names.add(name);
         }
@@ -88,11 +85,11 @@ public final class Wallpapers {
       names.sort(NATURAL);
       return List.copyOf(names);
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot read the wallpaper directory " + dir, e);
+      throw new UncheckedIOException("无法读取壁纸目录 " + dir, e);
     }
   }
 
-  /** The file behind a name the page asked for, or empty when it is not one of ours. */
+  /** 页面所请求的名字背后的文件；不属于这个目录时为空。 */
   public Optional<Path> resolve(String name) {
     if (!available() || name == null || !name.matches("[A-Za-z0-9][A-Za-z0-9._-]*")) {
       return Optional.empty();
@@ -104,7 +101,7 @@ public final class Wallpapers {
       return Optional.empty();
     }
     try {
-      // A link that sits in this directory but points out of it is not this directory's picture.
+      // 位于本目录却指向目录之外的链接，不是本目录的图片。
       if (!file.toRealPath().startsWith(dir.toRealPath())) {
         return Optional.empty();
       }
@@ -114,7 +111,7 @@ public final class Wallpapers {
     return Optional.of(file);
   }
 
-  /** The media type of an image, read from its own leading bytes. */
+  /** 一张图片的媒体类型，读它自己的开头字节得出。 */
   public Optional<String> contentType(Path file) {
     byte[] head;
     try (InputStream in = Files.newInputStream(file)) {
@@ -135,14 +132,14 @@ public final class Wallpapers {
     if (at(b, 0, 'G', 'I', 'F', '8')) {
       return "image/gif";
     }
-    // RIFF is a container shared with other formats; the form identifier is what says WebP.
+    // RIFF 是与其他格式共用的容器；说出它是 WebP 的是里面那个形式标识。
     if (at(b, 0, 'R', 'I', 'F', 'F') && at(b, 8, "WEBP")) {
       return "image/webp";
     }
     if (at(b, 0, 'B', 'M')) {
       return "image/bmp";
     }
-    // ISO base media files all start with an ftyp box; the brand says whether it is an AVIF.
+    // ISO 基础媒体文件都以 ftyp box 开头；品牌说明它是不是 AVIF。
     if (at(b, 4, "ftyp") && (at(b, 8, "avif") || at(b, 8, "avis"))) {
       return "image/avif";
     }
@@ -173,7 +170,7 @@ public final class Wallpapers {
     return true;
   }
 
-  /** {@code 2.png} before {@code 10.jpg}: a numbered set is read by its numbers. */
+  /** {@code 2.png} 排在 {@code 10.jpg} 之前：带编号的一组图是按数字读的。 */
   private static int natural(String a, String b) {
     int i = 0;
     int j = 0;
@@ -205,7 +202,7 @@ public final class Wallpapers {
     return Integer.compare(a.length() - i, b.length() - j);
   }
 
-  /** Numeric order for two digit runs, without parsing: leading zeros are not a magnitude. */
+  /** 两个数字串的数值序，不做解析：前导零不是量级。 */
   private static int compareDigits(String a, String b) {
     String x = stripLeadingZeros(a);
     String y = stripLeadingZeros(b);

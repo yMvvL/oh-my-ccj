@@ -1,6 +1,6 @@
 package com.ccj.agent.core;
 
-/** Raised when the loop cannot continue, e.g. the provider call failed. */
+/** 循环无法继续时抛出，例如提供方调用失败。 */
 public class AgentException extends RuntimeException {
 
   public AgentException(String message) {

@@ -10,22 +10,19 @@ import java.security.SecureRandom;
 import java.util.HexFormat;
 
 /**
- * The web token this installation keeps between runs, in {@code <home>/web-token}.
+ * 本安装跨多次运行保留的 web token，位于 {@code <home>/web-token}。
  *
- * <p>It exists because the point of the whole feature is one word: {@code ccj}, and then the page is
- * reachable from the phone. A token that had to be passed every time would put a secret in shell
- * history, in {@code ps}, and in whatever shell alias was written to avoid the first two — so the
- * first run that needs one generates 32 random bytes, keeps them in a file only the user can read,
- * and prints the URL that carries them. Later runs reuse them, which is what makes the phone's
- * cookie survive a restart.
+ * <p>它存在，是因为整个功能的要点就一个词：{@code ccj}，然后手机就能打开这个页面。每次都要传一个 token
+ * 的话，机密就会留在 shell 历史、{@code ps}，以及为了避开前两者而写下的哪个 shell 别名里——所以第一次
+ * 需要 token 的那次运行会生成 32 个随机字节，存进一个只有用户能读的文件，并打印带着它的 URL。之后的运行
+ * 复用同一个 token，这正是手机的 cookie 能熬过重启的原因。
  *
- * <p>Generated rather than asked for: a token a human invents is the weak link in a 256-bit design,
- * and there is nothing for a human to choose here — the value is never typed, only clicked.
+ * <p>生成而不是向人要：一个人编出来的 token 是 256 位设计里最弱的一环，而且这里没有需要人来选的东西
+ * ——这个值从不被输入，只会被点击。
  */
 public final class WebToken {
 
-  /** The file inside the application home; the name says what it is so a reader of a directory
-   * listing can tell. */
+  /** 应用 home 里的那个文件；名字说明了它是什么，看目录列表的人一眼就能分辨。 */
   public static final String FILE_NAME = "web-token";
 
   private static final int BYTES = 32;
@@ -35,10 +32,10 @@ public final class WebToken {
   private WebToken() {}
 
   /**
-   * The token for this installation, generating and storing one when there is not one yet.
+   * 本安装的 token；还没有的话就生成一个并存起来。
    *
-   * @throws IOException when the home directory cannot be written, which the caller reports rather
-   *     than serving a network bind with a token nobody can guess — and nobody can read either
+   * @throws IOException home 目录无法写入时抛出；调用方会把它报出来，而不是带着一个谁也猜不到、谁也读不到
+   *     的 token 去服务一次网络绑定
    */
   public static String from(Path home) throws IOException {
     Path file = home.resolve(FILE_NAME);
@@ -47,7 +44,7 @@ public final class WebToken {
       if (!existing.isEmpty()) {
         return existing;
       }
-      // An empty file is a mistake, not a policy: rewrite it rather than serving with no token.
+      // 空文件是失误，不是策略：重写它，而不是不带 token 地对外服务。
     }
     String created = generate();
     Files.createDirectories(home);
@@ -62,19 +59,19 @@ public final class WebToken {
     return created;
   }
 
-  /** 32 random bytes as hex: 256 bits, and nothing in it to remember. */
+  /** 32 个随机字节的十六进制：256 位，里面没有任何需要记住的东西。 */
   static String generate() {
     byte[] bytes = new byte[BYTES];
     RANDOM.nextBytes(bytes);
     return HexFormat.of().formatHex(bytes);
   }
 
-  /** Best effort: a filesystem without POSIX permissions keeps its default rather than failing. */
+  /** 尽力而为：没有 POSIX 权限的文件系统保持默认，而不是失败。 */
   private static void restrictToOwner(Path file) {
     try {
       Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
     } catch (UnsupportedOperationException | IOException ignored) {
-      // The token is stored either way; this only narrows who can read it.
+      // token 两种情况下都会被存下；这一步只是收窄谁可以读它。
     }
   }
 }

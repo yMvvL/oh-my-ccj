@@ -46,10 +46,10 @@ class ToolsTest {
         registry.execute(new Message.ToolCall("3", "nope", "{}"), ToolContext.of(dir));
 
     assertTrue(missing.error(), missing.content());
-    assertTrue(missing.content().contains("missing required argument 'path'"), missing.content());
+    assertTrue(missing.content().contains("缺少必需参数 'path'"), missing.content());
     assertTrue(malformed.error(), malformed.content());
-    assertTrue(malformed.content().contains("invalid JSON"), malformed.content());
+    assertTrue(malformed.content().contains("JSON 无效"), malformed.content());
     assertTrue(unknown.error(), unknown.content());
-    assertTrue(unknown.content().contains("unknown tool 'nope'"), unknown.content());
+    assertTrue(unknown.content().contains("未知工具 'nope'"), unknown.content());
   }
 }

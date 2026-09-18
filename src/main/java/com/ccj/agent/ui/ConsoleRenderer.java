@@ -8,12 +8,12 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 /**
- * Turns loop callbacks into something a human watching a terminal can follow.
+ * 把主循环的回调变成盯在终端上的人能跟得上的东西。
  *
- * <p>Assistant prose is streamed as it arrives; reasoning is dimmed so it reads as a whisper; tool
- * calls become a compact card whose argument summary is derived from the call's JSON so the user
- * sees {@code read src/Main.java} rather than a wall of arguments. The renderer must never be the
- * reason a run is unreadable, so every decision here degrades to plain lines when there is no TTY.
+ * <p>助手的散文随到随流式输出；推理内容被调暗，读起来像一声低语；工具调用变成一张紧凑的卡片，
+ * 其参数摘要从调用的 JSON 里推导，因此用户看到的是 {@code read src/Main.java}，而不是一堵参数
+ * 墙。渲染器绝不能成为一次运行读不下去的原因，所以这里的每个决定在没有 TTY 时都会退化成朴素的
+ * 行。
  */
 public final class ConsoleRenderer implements AgentListener {
 
@@ -32,7 +32,7 @@ public final class ConsoleRenderer implements AgentListener {
   private boolean spinnerPaused;
   private int pendingTools;
 
-  /** Auto-detects colour from the terminal and the {@code NO_COLOR} convention. */
+  /** 从终端和 {@code NO_COLOR} 约定自动检测颜色。 */
   public ConsoleRenderer() {
     this(System.out, System.err, Ansi.enabled());
   }
@@ -81,7 +81,7 @@ public final class ConsoleRenderer implements AgentListener {
 
   @Override
   public void onAssistant(Message.Assistant message) {
-    // Providers that do not stream deltas still have to be visible.
+    // 不流式输出增量的提供方，同样必须能被看见。
     if (!turnTextStarted && !message.text().isBlank()) {
       beginTextBlock();
       out.print(message.text());
@@ -119,9 +119,8 @@ public final class ConsoleRenderer implements AgentListener {
     }
     ensureNewline();
     boolean failed = result.error();
-    // A negative timing is a call that was interrupted before it ran: it has no duration, and "0 ms"
-    // would read as a measurement.
-    String timing = elapsedMillis < 0 ? "(not run)" : "(" + elapsedMillis + " ms)";
+    // 负的耗时是在运行前就被中断的调用：它没有时长，而「0 ms」会被读成一次测量。
+    String timing = elapsedMillis < 0 ? "（未运行）" : "(" + elapsedMillis + " ms)";
     String line = (failed ? "✖ " : "✔ ") + call.name() + " " + timing;
     out.println(Ansi.style(failed ? "31" : "32", line, colour));
     printResultBody(result.content());
@@ -139,16 +138,15 @@ public final class ConsoleRenderer implements AgentListener {
   }
 
   /**
-   * Silences the spinner while something else owns the terminal — an approval prompt, for example.
-   * A spinner redrawing itself over a question the user is trying to answer is worse than no
-   * spinner at all.
+   * 当别的东西占住终端时让 spinner 闭嘴——比如一个审批提示。spinner 在一个用户正要回答的问题
+   * 上反复重画，比没有 spinner 更糟。
    */
   public void pauseSpinner() {
     spinnerPaused = true;
     spinner.stop();
   }
 
-  /** Restores the spinner, but only if a tool is still running. */
+  /** 恢复 spinner，但只在还有工具在跑的时候。 */
   public void resumeSpinner() {
     if (!spinnerPaused) {
       return;
@@ -159,7 +157,7 @@ public final class ConsoleRenderer implements AgentListener {
     }
   }
 
-  /** Clears transient state between runs: stops the spinner and closes any half-written line. */
+  /** 清掉运行之间的瞬时状态：停掉 spinner，并收尾任何写到一半的行。 */
   public void reset() {
     pendingTools = 0;
     spinnerPaused = false;
@@ -208,11 +206,11 @@ public final class ConsoleRenderer implements AgentListener {
     }
     int remaining = lines.length - shown;
     if (remaining > 0) {
-      out.println(Ansi.style("2", "    … (" + remaining + " more lines)", colour));
+      out.println(Ansi.style("2", "    … （还有 " + remaining + " 行）", colour));
     }
   }
 
-  /** Single-line stderr spinner, active only on a real terminal so pipes and tests stay clean. */
+  /** 单行 stderr spinner，只在真实终端上活跃，因此管道和测试都保持干净。 */
   private final class Spinner implements Runnable {
 
     private static final String[] FRAMES = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};

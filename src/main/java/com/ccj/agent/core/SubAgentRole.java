@@ -3,20 +3,18 @@ package com.ccj.agent.core;
 import java.util.List;
 
 /**
- * What a sub-agent is for, which decides what it may touch.
+ * 子代理是做什么的，而这决定了它能碰什么。
  *
- * <p>The role chooses the tools rather than the caller choosing both, because the two are one
- * decision: a verifier that can fix what it finds is not verifying, and an explorer that can write is
- * a hidden agent editing the user's files. Stating the role states the boundary.
+ * <p>由角色来挑选工具，而不是让调用方同时挑两者，因为这两件事是同一个决定：一个能顺手修好所发现问题的
+ * 校验者就不是在校验，而一个能写入的探索者就是一个偷偷改动用户文件的隐藏代理。说清了角色，也就说清了边界。
  */
 public enum SubAgentRole {
 
   /**
-   * Finds things out: reads, searches, follows a lead through a codebase.
+   * 查清事情：读、搜、顺着线索在代码库里一路追下去。
    *
-   * <p>Read-only, so nothing it does can change anything and nothing it does needs asking. This is
-   * the default because it is the one whose value does not depend on trust — the context it saves is
-   * saved whether or not anybody is watching it.
+   * <p>只读，所以它做的任何事都改变不了什么，也不需要征求同意。它是默认角色，因为它的价值不依赖信任——
+   * 无论有没有人盯着，它省下的上下文都一样省下。
    */
   EXPLORE(
       "explore",
@@ -25,14 +23,11 @@ public enum SubAgentRole {
       false),
 
   /**
-   * Checks work that exists: a standard solution against a brute force, an implementation against
-   * its spec, a claim against the code.
+   * 检查已经存在的工作：标准解法对暴力解法，实现对规格，断言对代码。
    *
-   * <p>Takes the same tools as {@link #EXPLORE} on purpose — they differ in what the prompt asks for,
-   * not in what they may touch. Splitting them by capability would invent a constraint the work does
-   * not have. The point of the role is that it <em>reports</em>: a verifier that quietly repairs what
-   * it finds has replaced the evidence with its own work, and no one learns that the thing was ever
-   * wrong.
+   * <p>刻意与 {@link #EXPLORE} 用同一套工具——两者的区别在于提示要求它们做什么，而不在于它们能动什么。
+   * 按能力把它们拆开，会凭空造出一条工作本身并不存在的约束。这个角色的要点在于它<em>报告</em>：一个悄悄
+   * 修好所发现问题的校验者，等于用自己的工作替换了证据，也就没人知道那东西曾经错过。
    */
   VERIFY(
       "verify",
@@ -42,10 +37,10 @@ public enum SubAgentRole {
       false),
 
   /**
-   * Produces artefacts: code, tests, data, documents.
+   * 产出制品：代码、测试、数据、文档。
    *
-   * <p>The only role that writes. Its changes go through the same approval the main agent asks for,
-   * because a hidden agent editing files with no prompt is the thing this feature must not become.
+   * <p>唯一会写入的角色。它的改动走与主代理相同的审批，因为一个不弹提示就能改文件的隐藏代理，正是这个
+   * 功能绝不能变成的东西。
    */
   BUILD(
       "build",
@@ -65,29 +60,29 @@ public enum SubAgentRole {
     this.writes = writes;
   }
 
-  /** The name the model passes to the {@code task} tool. */
+  /** 模型传给 {@code task} 工具的名字。 */
   public String wireName() {
     return wireName;
   }
 
-  /** What this role is told about itself. */
+  /** 告诉这个角色它自己是什么。 */
   public String instruction() {
     return instruction;
   }
 
-  /** True for the one role that may write. */
+  /** 唯一可以写入的角色为 true。 */
   public boolean writes() {
     return writes;
   }
 
-  /** The tool names this role may use, in the order they are offered. */
+  /** 该角色可用的工具名，按它们被提供的顺序。 */
   public List<String> toolNames() {
     return writes
         ? List.of("read", "glob", "grep", "write", "edit")
         : List.of("read", "glob", "grep");
   }
 
-  /** The role for a name, or empty when the model asked for one that does not exist. */
+  /** 名字对应的角色；模型要了一个不存在的名字时为空。 */
   public static java.util.Optional<SubAgentRole> of(String name) {
     if (name == null) {
       return java.util.Optional.empty();
@@ -101,7 +96,7 @@ public enum SubAgentRole {
     return java.util.Optional.empty();
   }
 
-  /** The names to offer a model that asked for something else. */
+  /** 提供给「要了别的东西」的模型的名字列表。 */
   public static String names() {
     StringBuilder out = new StringBuilder();
     for (SubAgentRole role : values()) {

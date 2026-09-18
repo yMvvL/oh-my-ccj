@@ -22,17 +22,16 @@ import javax.swing.JFileChooser;
 import javax.swing.SwingUtilities;
 
 /**
- * Opens whatever folder chooser the desktop actually has.
+ * 打开桌面实际拥有的那个文件夹选择器。
  *
- * <p>Order of preference: {@code zenity}, then {@code kdialog} — both are native dialogs and need no
- * toolkit initialisation — and finally Swing's {@link JFileChooser}, which is always available with
- * a JDK but looks less native. A machine with no display gets a clear refusal instead of a hang,
- * because typing the path is a perfectly good fallback.
+ * <p>优先顺序：{@code zenity}，然后是 {@code kdialog}——两者都是原生对话框，不需要初始化工具包——最后
+ * 是 Swing 的 {@link JFileChooser}，它有 JDK 就一定在，只是看起来没那么原生。没有显示器的机器得到的是
+ * 明确的拒绝而不是卡住，因为手动输入路径是完全够用的退路。
  */
 public final class NativeFolderChooser implements FolderChooser {
 
   private static final String NO_DESKTOP =
-      "no desktop session available, so ccj cannot open a folder chooser — type the path instead";
+      "没有可用的桌面会话，ccj 无法打开文件夹选择器——请改为直接输入路径";
 
   private static final ScheduledExecutorService WATCHDOG =
       Executors.newSingleThreadScheduledExecutor(
@@ -50,15 +49,14 @@ public final class NativeFolderChooser implements FolderChooser {
     this(Duration.ofSeconds(120));
   }
 
-  /** @param timeout how long a chooser may stay open before it is dismissed */
+  /** @param timeout 选择器可以停留多久，超时即被关闭 */
   public NativeFolderChooser(Duration timeout) {
     this(timeout, null);
   }
 
   /**
-   * Runs {@code command} instead of looking for a desktop chooser. Exists so the subprocess
-   * plumbing — output parsing, exit codes, the watchdog — can be tested without a human clicking a
-   * dialog, which is otherwise the only way to exercise it.
+   * 运行 {@code command}，而不是去找桌面选择器。它存在，是为了让子进程那套管线——输出解析、退出码、看门狗
+   * ——能在没有人点击对话框的情况下被测到，否则那是唯一能走到这条路径的办法。
    */
   NativeFolderChooser(Duration timeout, List<String> command) {
     this.timeout = timeout;
@@ -68,20 +66,19 @@ public final class NativeFolderChooser implements FolderChooser {
   @Override
   public Optional<Path> choose(String title) throws IOException {
     if (!open.compareAndSet(false, true)) {
-      throw new IOException("a folder chooser is already open");
+      throw new IOException("已经有一个文件夹选择器处于打开状态");
     }
     try {
-      // The command override is checked before the desktop test, not after: it exists to exercise
-      // this class's subprocess plumbing without a human clicking a dialog, and a headless JVM is
-      // exactly where that is needed — the test that runs it otherwise fails wherever there is no
-      // display, which is every CI runner and every ssh session.
+      // 命令覆盖在桌面检查之前判断，而不是之后：它存在的意义就是在没有人点击对话框的情况下走通本类的子
+      // 进程管线，而无头 JVM 正是需要它的地方——否则运行它的测试在任何没有显示器的地方都会失败，而每个 CI
+      // runner 和每个 ssh 会话都是这种情况。
       if (commandOverride != null) {
         return run(commandOverride);
       }
       if (java.awt.GraphicsEnvironment.isHeadless()) {
         throw new IOException(NO_DESKTOP);
       }
-      String label = title == null || title.isBlank() ? "Choose a folder" : title;
+      String label = title == null || title.isBlank() ? "选择文件夹" : title;
       if (onPath("zenity")) {
         return run(
             List.of("zenity", "--file-selection", "--directory", "--title=" + label));
@@ -102,9 +99,8 @@ public final class NativeFolderChooser implements FolderChooser {
   }
 
   /**
-   * Runs a chooser command and reads its answer. The output stream is drained on this thread, which
-   * doubles as the wait: EOF arrives when the process exits, so a chatty dialog cannot fill its pipe
-   * and block, and a watchdog kills one that is simply never answered.
+   * 运行一个选择器命令并读取它的回答。输出流就在本线程上抽干，这同时充当等待：进程退出时 EOF 到达，所以
+   * 一个话多的对话框填不满自己的管道、也就阻塞不了，而看门狗会杀掉一个根本没人回答的进程。
    */
   private Optional<Path> run(List<String> command) throws IOException {
     Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
@@ -116,14 +112,13 @@ public final class NativeFolderChooser implements FolderChooser {
           new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
         output = reader.lines().collect(Collectors.joining("\n")).strip();
       }
-      // EOF only means the chooser stopped writing: the watchdog may have destroyed it, and a
-      // destroyed process still needs reaping before its exit code can be read.
+      // EOF 只说明选择器停止写入了：它可能已被看门狗销毁，而被销毁的进程在其退出码可读之前仍需被回收。
       if (!process.waitFor(2, TimeUnit.SECONDS)) {
         process.destroyForcibly();
         return Optional.empty();
       }
       if (process.exitValue() != 0 || output.isEmpty()) {
-        return Optional.empty(); // cancelled, or the watchdog dismissed it
+        return Optional.empty(); // 用户取消，或者看门狗把它关掉了
       }
       Path chosen = Path.of(output);
       return Files.isDirectory(chosen) ? Optional.of(chosen) : Optional.empty();
@@ -157,7 +152,7 @@ public final class NativeFolderChooser implements FolderChooser {
       return Optional.empty();
     } catch (InvocationTargetException e) {
       Throwable cause = e.getCause() == null ? e : e.getCause();
-      throw new IOException("the folder chooser failed: " + cause.getMessage(), cause);
+      throw new IOException("文件夹选择器出错：" + cause.getMessage(), cause);
     }
     return Optional.ofNullable(chosen.get());
   }

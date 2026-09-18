@@ -1,241 +1,155 @@
-# Conventions
+# 约定
 
-How code, tests and documentation are written in this repository. It exists because the project's
-main asset is that one person can read it in an afternoon and know what it does — every rule below is
-in service of that, and a rule that stops serving it should be changed here rather than worked around
-in a file.
+这个仓库里代码、测试和文档怎么写。它存在的理由是：这个项目最主要的资产是一个人能在一个下午读完并知道它在做什么——下面每一条规则都服务于这一点，而一条不再服务于它的规则应该在这里被改掉，而不是在某个文件里被绕过。
 
-## The shape of the thing
+## 这个事物的形状
 
-`core/` is the contract. `cli/`, `ui/`, `web/`, `provider/`, `session/`, `tool/` and `demo/` plug into
-it, and none of them knows about each other. The loop sees a `Provider` and a `ToolRegistry` and has
-never heard of HTTP or a terminal, which is why the same loop runs headless in a test, behind a
-scripted provider, and behind the page.
+`core/` 是契约。`cli/`、`ui/`、`web/`、`provider/`、`session/`、`tool/` 和 `demo/` 插进它里面，而它们彼此互不知晓。循环看到的是一个 `Provider` 和一个 `ToolRegistry`，从没听说过 HTTP 或终端，这也是为什么同一个循环能在测试里无头运行、在脚本化提供方后面运行、在页面后面运行。
 
-Rules that keep it that way:
+让它保持这样的规则：
 
-- **Nothing in `core/` imports from a front end.** If a change needs `core` to know about a socket, the
-  seam is wrong.
-- **Only `cli/` calls `System.exit`.** Everything else returns a value or throws.
-- **A tool never throws at the model.** `ToolRegistry.execute` turns a bad argument, an unknown tool
-  name and a thrown exception into a `ToolResult.error` the model can read and correct. A tool that
-  throws where it could report is a bug in the tool.
-- **A front end never re-implements the loop.** It implements `AgentListener` and gets the events.
+- **`core/` 里没有任何东西从前端 import。** 如果一个改动需要 `core` 知道 socket，那这个接缝就是错的。
+- **只有 `cli/` 调用 `System.exit`。** 其他一切都返回一个值或者抛出。
+- **工具绝不向模型抛出。** `ToolRegistry.execute` 会把坏参数、未知的工具名和抛出的异常都变成模型能读、能纠正的 `ToolResult.error`。一个本可以报告却在抛出的工具，是这个工具自己的 bug。
+- **前端绝不重新实现循环。** 它实现 `AgentListener` 并拿到事件。
 
-## Toolchain and dependencies
+## 工具链与依赖
 
-- **Java 21.** Records, sealed interfaces, pattern matching in `switch`, virtual threads. No preview
-  features.
-- **One runtime dependency:** `jackson-databind`. A second one is a decision to argue for in a commit
-  message, not a convenience. Tests use JUnit 5 only.
-- **No build step for the front end.** `web/app.js` is a classic script with no modules, no bundler and
-  no npm dependency. It is served out of the jar as written.
-- **Tests are offline.** No network, no API key, no live model. A test that needs one of those is a
-  test that cannot run in CI, which means it is not a test.
-- **Supported platforms:** Linux and macOS. Windows through WSL. `BashTool` hard-codes `/bin/bash`; do
-  not claim Windows support until that is configurable.
+- **Java 21。** record、密封接口、`switch` 里的模式匹配、虚拟线程。不用预览特性。
+- **一个运行时依赖：** `jackson-databind`。第二个依赖是一个要在提交信息里论证的决定，不是图方便。测试只用 JUnit 5。
+- **前端没有构建步骤。** `web/app.js` 是一个经典脚本，没有模块、没有打包器、没有 npm 依赖。它就按写好的样子从 jar 里发出。
+- **测试是离线的。** 没有网络、没有 API 密钥、没有实时模型。一个需要其中任何一样的测试就是一个无法在 CI 里运行的测试，也就意味着它不是测试。
+- **支持的平台：** Linux 和 macOS。Windows 经 WSL。`BashTool` 硬编码了 `/bin/bash`；在它变成可配置之前不要声称支持 Windows。
 
-## Code
+## 代码
 
-- **Two-space indent, ~100 columns.** Continuation lines are indented to read as a unit, not to satisfy
-  a formatter.
-- **`final class` for anything not designed for inheritance.** Records for value types. Enums for
-  closed sets of choices (`SubAgentRole`).
-- **Javadoc explains *why*, never *what*.** `/** Runs the command. */` on a method called `run` is
-  noise. A paragraph on why the interrupt is aimed only at the model call, and not at a running tool,
-  is the kind of comment that earns its place.
-- **Record the measurement.** When a comment says a design was chosen because of a failure, name the
-  failure — "measured: a sub-agent wrote `../../真实文件.txt` over a real file, with no prompt". That
-  sentence is why the next person does not delete the check.
-- **No comment describing behaviour that no longer exists.** When a mechanism is removed, its
-  paragraph goes in the same change. A stale comment is worse than none: the reader trusts it.
-- **Names say what the thing is.** `SubAgentRunner`, `ContextBudget`, `SessionRepair`. Short names are
-  fine inside a small scope (`i`, `cwd`, `ctx`), not for anything a reader has to hold across a screen.
-- **Errors carry what the caller needs to act.** `EditTool` reports that `old_string` matched three
-  times and suggests `replace_all`, rather than "invalid edit". `FileSession` reports the file and the
-  line number of a malformed record.
-- **No magic numbers without a name.** `CANCEL_POLL_MILLIS = 150` with a sentence about why 150 is
-  enough, not `Thread.sleep(150)`.
+- **两空格缩进，约 100 列。** 续行的缩进是为了读起来像一个整体，不是为了满足格式化器。
+- **没为继承设计的东西一律 `final class`。** 值类型用 record。封闭的选择集合用 enum（`SubAgentRole`）。
+- **Javadoc 解释*为什么*，绝不解释*是什么*。** 在名为 `run` 的方法上写 `/** Runs the command. */` 是噪音。一段说明为什么中断只针对模型调用、而不针对正在运行的工具的文字，才是那种挣得自己位置的注释。
+- **把测量记下来。** 当一条注释说某个设计是因为一次失败才被选中时，点名那次失败——「测量：一个子代理在没有任何提示的情况下用 `../../真实文件.txt` 覆盖了一个真实文件」。正是这句话让下一个人不会删掉那个检查。
+- **不要留下描述已不存在行为的注释。** 当一个机制被移除时，它的那段文字在同一个改动里一起走。陈旧的注释比没有更糟：读者会信它。
+- **名字说明这个东西是什么。** `SubAgentRunner`、`ContextBudget`、`SessionRepair`。短名字在小作用域里没问题（`i`、`cwd`、`ctx`），但不适用于读者要跨越整个屏幕记住的东西。
+- **错误带着调用方行动所需的东西。** `EditTool` 报告 `old_string` 匹配了三次并建议 `replace_all`，而不是「invalid edit」。`FileSession` 报告文件以及畸形记录的行号。
+- **没有名字的魔法数字不要出现。** 写成 `CANCEL_POLL_MILLIS = 150` 外加一句为什么 150 够用，而不是 `Thread.sleep(150)`。
 
-### Names
+### 命名
 
-The name is the documentation that cannot go stale, so it carries the meaning and the comment does not
-have to. One pattern per kind of thing, and it is the pattern the rest of the tree already uses:
+名字是不会过期的文档，所以它承载含义，注释不必再承载。每一类东西只有一种模式，而且就是树里其余部分已经在用的模式：
 
-| Kind | Shape | Examples |
+| 类别 | 形态 | 例子 |
 |---|---|---|
-| Class, record, enum | `PascalCase`, a noun — what the thing *is*, never `Manager`/`Helper`/`Util` | `ContextBudget`, `AttachmentStore`, `VisionConfig`, `SubAgentRole` |
-| Method | `camelCase`, a verb phrase — what it *does*, no `get`/`set` prefix | `resolved()`, `forgetProviderSettings()`, `describePicture()`, `readBounded()` |
-| Boolean-returning method / boolean field | `is`/`has`/`can` + the property, phrased as the question it answers | `isConfigured()`, `hasKey()`, `settingsBelongTo(provider)`, `isEmpty()` |
-| Constant | `SCREAMING_SNAKE_CASE` with the unit or the bound in the name | `DEFAULT_MAX_TOKENS`, `MAX_REPLY_BYTES`, `HEARTBEAT_MILLIS` |
-| Field | the noun it holds, no prefix, no `m_` | `vision`, `remembered`, `maxTokens` |
-| Local, parameter | the name a reader would say out loud; short only where the scope is one screen | `provider`, `budget`, `settings` — `i`, `e`, `p` inside a loop or a `catch` |
-| Test | the claim, as a sentence in the present tense, so a failure reads as the bug | `aPictureOverTheLimitIsRefusedWithoutBeingHeld` |
-| JSON key on the wire | `camelCase`, and the same word on both sides | `visionMaxTokens`, `apiKeySource`, `sessionId` |
-| DOM id, CSS class | `kebab-case` for ids, `kebab-case` for classes; a `cfg-` prefix for anything inside the settings form | `cfg-vision-maxtokens`, `photo-hint`, `ev-user` |
+| 类、record、enum | `PascalCase`，一个名词——这个东西*是*什么，绝不用 `Manager`/`Helper`/`Util` | `ContextBudget`、`AttachmentStore`、`VisionConfig`、`SubAgentRole` |
+| 方法 | `camelCase`，一个动词短语——它*做*什么，不带 `get`/`set` 前缀 | `resolved()`、`forgetProviderSettings()`、`describePicture()`、`readBounded()` |
+| 返回布尔的方法 / 布尔字段 | `is`/`has`/`can` + 属性，写成它所回答的那个问题 | `isConfigured()`、`hasKey()`、`settingsBelongTo(provider)`、`isEmpty()` |
+| 常量 | `SCREAMING_SNAKE_CASE`，名字里带单位或界限 | `DEFAULT_MAX_TOKENS`、`MAX_REPLY_BYTES`、`HEARTBEAT_MILLIS` |
+| 字段 | 它所持有的名词，无前缀，不要 `m_` | `vision`、`remembered`、`maxTokens` |
+| 局部变量、参数 | 读者会念出声的名字；只在作用域是一屏时才短 | `provider`、`budget`、`settings`——循环或 `catch` 里的 `i`、`e`、`p` |
+| 测试 | 主张，用现在时写成一句话，这样失败读起来就是那个 bug | `aPictureOverTheLimitIsRefusedWithoutBeingHeld` |
+| 线路上的 JSON key | `camelCase`，两边用同一个词 | `visionMaxTokens`、`apiKeySource`、`sessionId` |
+| DOM id、CSS 类 | id 用 `kebab-case`，类用 `kebab-case`；设置表单里的一切加 `cfg-` 前缀 | `cfg-vision-maxtokens`、`photo-hint`、`ev-user` |
 
-Three rules that come out of the table, because they are the ones that get broken:
+从这张表里出来的三条规则，因为它们是那种会被打破的规则：
 
-- **A name that lies is worse than a long name.** `normalizeLanguage` returning null for "auto" is a
-  method that does more than the name says; `withoutVisionKey` says exactly what it did.
-- **The same thing keeps the same word everywhere** — code, javadoc, HTTP field, config key, docs. A
-  second word for one concept is how the docs and the code drift apart.
-- **Do not name a thing after its implementation.** `remembered` is what the map means to the reader;
-  a `hashMapOfKeys` would name today's data structure.
+- **撒谎的名字比长名字更糟。** 对 `"auto"` 返回 null 的 `normalizeLanguage` 是一个做得比名字所说的更多的方法；`withoutVisionKey` 则准确说出了它做了什么。
+- **同一个东西在所有地方保持同一个词**——代码、javadoc、HTTP 字段、配置 key、文档。一个概念出现第二个词，就是文档和代码漂移的方式。
+- **不要按实现给东西命名。** `remembered` 是这个 map 对读者的意义；`hashMapOfKeys` 命名的是今天的数据结构。
 
-### Comments
+### 注释
 
-- **A comment earns its place by explaining a *why* the code cannot show**: a choice made against the
-  obvious alternative, a failure that was measured, a boundary that is load-bearing, a word about what
-  a caller must not do. Everything else is noise, and noise is what hides the comments that matter.
-- **Restating the signature is forbidden.** `/** Reads the file. */` on `readFile` adds nothing; the
-  paragraph about *bounded* reading — that the limit only limits if it applies to the read — is the
-  part a future reader needs.
-- **Measured means measured.** Give the number and what produced it: "measured: 1500 of 1500 tokens on
-  reasoning, `content` empty", not "may be too small".
-- **Comments go with the code they describe**, in the same change, including when the code is removed.
-  A paragraph describing a guard that no longer exists is trusted by the next reader, which is worse
-  than no paragraph.
-- **No commented-out code, no `TODO` without a home.** Something not being done now is a
-  [ROADMAP](ROADMAP.md) item with an acceptance line, not a comment that will outlive its context.
-- **Section banners are for the browser files only.** `app.js` is one 5k-line classic script whose
-  cases lift functions out of the shipped source by name, so `/* ---- transcript */` markers are part
-  of the test harness. Java files get package, class and method javadoc instead.
+- **注释靠解释代码展示不出来的*为什么*挣得自己的位置**：一个逆着显而易见的替代方案做出的选择、一次被测量到的失败、一条承重的边界、一句关于调用方绝不能做什么的话。其他一切都是噪音，而噪音正是会盖住要紧注释的东西。
+- **禁止复述签名。** 在 `readFile` 上写 `/** Reads the file. */` 什么都加不了；关于*有界*读取的那段话——上限只有作用在读取上才成其为上限——才是未来的读者需要的那部分。
+- **测量了就是测量了。** 给出数字和产生它的东西：「测量：1500 个 token 全花在推理上，`content` 为空」，而不是「可能太小」。
+- **注释与它所描述的代码同行**，在同一个改动里，包括代码被移除时。一段描述着已不存在的护栏的文字会被下一个读者信任，这比没有那段文字更糟。
+- **没有注释掉的代码，没有无家可归的 `TODO`。** 现在不做的事情是一个带验收行的 [ROADMAP](ROADMAP.md) 条目，不是一条会比它的语境活得更久的注释。
+- **分节横幅只用于浏览器文件。** `app.js` 是一个五千行的经典脚本，它的用例按名字把函数从随包发布的源码里提出来，所以 `/* ---- transcript */` 标记是测试工装的一部分。Java 文件改用包、类和方法 javadoc。
 
-### Errors
+### 错误
 
-- **The message says what to do next.** `EditTool`: "`old_string` matched three times; pass a longer
-  snippet or `replace_all`". `VisionClient`: "the model ran out of room while still reasoning (1500
-  tokens, 1500 of them spent thinking) … Raise it with `maxTokens` …". The reader is a person pressing
-  a button, or a model with one more attempt in it.
-- **Name the thing that failed, with its identity**: the file and line, the endpoint and status, the
-  provider and model, the variable or flag that sets it. "invalid input" is a bug report about the
-  error message.
-- **Never swallow a failure to keep a path simple.** A refusal that a caller cannot see, or a
-  placeholder that looks like a success, is worse than a stopped turn: the empty vision reply is
-  exactly this, and it is why `describe` throws instead of returning "".
-- **Throw the type the caller maps to a status.** `IllegalArgumentException` → 400,
-  `IllegalStateException` → 409, `PayloadTooLargeException` → 413, anything else → 500. An endpoint that
-  wants a different answer returns it itself.
+- **消息说出下一步该做什么。** `EditTool`：`old_string` 匹配了三次；传一段更长的片段或 `replace_all`。`VisionClient`：模型在还在推理时就把空间用完了（1500 个 token，其中 1500 个花在思考上）……用 `maxTokens` 提高它……。读者是一个正按按钮的人，或者一个还剩一次尝试机会的模型。
+- **点名失败的东西，带上它的身份**：文件和行号、端点和状态、提供方和模型、设置它的变量或标志。「invalid input」是一份关于错误消息本身的 bug 报告。
+- **绝不要为了保持一条路径简单而吞掉失败。** 调用方看不见的拒绝，或者看起来像成功的占位符，比一个停下来的回合更糟：空的视觉回复正是这个，这也是为什么 `describe` 抛出而不是返回 `""`。
+- **抛出调用方映射到状态的那个类型。** `IllegalArgumentException` → 400、`IllegalStateException` → 409、`PayloadTooLargeException` → 413，其他任何东西 → 500。想要不同答案的端点自己返回它。
 
-### The front end
+### 前端
 
-- **One classic script, no build step, no framework.** `app.js` is served as written, so it must parse
-  in a browser without a bundler and use no modules.
-- **The page reads the server's vocabulary, not its own.** Provider names, reasoning levels and
-  languages come from the API; a list invented in the page is a list of choices nothing acts on.
-- **Model output is rendered as text** — DOM nodes, never HTML source — and a link only gets an `href`
-  after its scheme is filtered.
-- **A control that hides its label keeps an accessible name.** Below 720px the composer's buttons drop
-  their words and keep their glyphs, so each of them carries an `aria-label`; the visible text is not
-  the only name a screen reader can read.
-- **Empty means "leave it as it is"** for every text field in the settings form, so anything that is a
-  *removal* — clearing a key, turning a feature off — is sent as a flag of its own rather than as an
-  empty string.
+- **一个经典脚本，没有构建步骤，没有框架。** `app.js` 按写好的样子发出，所以它必须在没有打包器的浏览器里能解析，并且不使用模块。
+- **页面读服务器的词汇，不读自己的。** 提供方名字、推理层级和语言都来自 API；一个在页面里编出来的列表是一份没有任何东西会照着做的选择清单。
+- **模型输出渲染为文本**——DOM 节点，绝不是 HTML 源码——而链接只有在它的 scheme 被过滤之后才得到一个 `href`。
+- **隐藏标签的控件保留一个无障碍名称。** 在 720px 以下，输入框的按钮丢掉文字、保留字形，所以它们每一个都带一个 `aria-label`；可见文本不是屏幕阅读器唯一能读到的名字。
+- **空的意思是「保持原样」**，对设置表单里每一个文本字段都是如此，所以任何属于*移除*的操作——清掉一个密钥、关掉一个功能——都作为它自己的标志发出，而不是作为一个空字符串。
 
-### Spelling and voice
+### 拼写与语气
 
-- **British English**, in prose, comments, identifiers and messages: `normalise`, `summarise`,
-  `serialise`, `behaviour`, `colour`. The codebase is written that way and a second spelling of one word
-  is drift with no benefit.
-- **Except where a platform owns the spelling**: CSS properties (`color`, `text-align: center`),
-  browser APIs (`overscroll-behavior`, `behavior: 'smooth'`), JDK/Maven/vendor names (`Path.normalize`,
-  `maven-shade-plugin`, a vendor's JSON field). Those are quoted, not translated.
-- **Voice: terse, concrete, second person in docs, no marketing.** Say what was measured and what was
-  not. A bare number ("542 tests pass") is true only until somebody adds one, which makes it a claim
-  about a run nobody can reproduce; a number that names its run and its conditions — which command,
-  on which platform, and whether the browser cases ran or skipped — stays a fact.
+- **散文、注释、文档和给人看的消息一律用中文书写。** 文档正文、javadoc、行注释、错误消息、提示与面板文案用中文；只有在标识符、路径、命令、协议名和引用的代码片段里保留英文。
+- **残留的英文词仍用英式拼写**：`normalise`、`summarise`、`serialise`、`behaviour`、`colour`。同一个词出现第二种拼写是无益的漂移，而 `core/ConventionsTest` 正是为此而存在。
+- **除非拼写由平台拥有**：CSS 属性（`color`、`text-align: center`）、浏览器 API（`overscroll-behavior`、`behavior: 'smooth'`）、JDK/Maven/厂商名（`Path.normalize`、`maven-shade-plugin`、厂商的 JSON 字段）。这些是引用的，不翻译。
+- **语气：简洁、具体，文档里用第二人称，不推销。** 说明测量了什么、没测量什么。一个只有数字的说法（「542 个测试通过」）只到有人再加一个测试之前为真，这使它成为一个没人能复现的运行的主张；一个写明自己的运行和条件的数字——哪条命令、在哪个平台、浏览器用例跑了还是跳过了——才一直是事实。
 
-## Security
+## 安全
 
-The product runs commands as the user. Everything here is load-bearing.
+这个产品以用户的身份运行命令。这里的一切都是承重的。
 
-- **Approval is the guard, and it is the only one.** Do not add a code path that writes or executes
-  without going through `Approver`. Do not widen a default (`Approver.ALWAYS`) to make a feature
-  convenient — that is how the sub-agent staging escape happened.
-- **A sub-agent asks the same person the main agent asks.** It is invisible in what it *reads*, never
-  in what it *does*.
-- **No wildcard bind, ever.** Named addresses only, and any non-loopback address requires the token.
-- **State-changing endpoints check `Origin`.** The loopback and `Host` checks cannot tell one browser
-  page from another; that check is the only one that can.
-- **Keys are never printed or returned to the browser.** `/config` shows at most `***1234`. The settings
-  response says whether a key exists, not what it is.
-- **The page renders model output as text.** No `innerHTML`, no `insertAdjacentHTML`, no `eval`. Link
-  schemes are filtered after normalisation. A test asserts this on the shipped source.
-- **A claim of safety must be one the code makes.** If a paragraph in `SECURITY.md` describes a
-  boundary, there is a test that fails when the boundary is removed.
+- **审批是护栏，而且是唯一的那条。** 不要添加一条不经过 `Approver` 就写入或执行的代码路径。不要为了让某个功能方便就放宽一个默认值（`Approver.ALWAYS`）——子代理暂存逃逸就是这么发生的。
+- **子代理问的是主代理问的同一个人。** 它在*读*什么上可以不可见，在*做*什么上绝不可以。
+- **绝不做通配绑定。** 只用具名地址，而任何非回环地址都需要那个 token。
+- **改变状态的端点检查 `Origin`。** 回环和 `Host` 检查分辨不出一个浏览器页面和另一个；那个检查是唯一能做到的。
+- **密钥绝不打印，也绝不返回给浏览器。** `/config` 最多显示 `***1234`。设置响应说的是密钥是否存在，而不是它是什么。
+- **页面把模型输出渲染为文本。** 不用 `innerHTML`、不用 `insertAdjacentHTML`、不用 `eval`。链接 scheme 在规范化之后被过滤。有一个测试在随包发布的源码上断言这一点。
+- **安全主张必须是代码做出的主张。** 如果 `SECURITY.md` 里有一段描述某条边界，那就有一个在该边界被移除时会失败的测试。
 
-## Sub-agents
+## 子代理
 
-- **No `task` in a sub-registry.** Recursion is refused by construction; there is no depth counter to
-  get wrong.
-- **The role decides the tools.** A verifier that can write is not a verifier.
-- **One writer at a time**, process-wide. Two writers on one path lose one result silently.
-- **The deadline covers the queue**, not just the work.
-- **Usage is added to the conversation that paid.** Hiding the reading is the feature; hiding the cost
-  would be a number that is quietly wrong.
+- **子注册表里没有 `task`。** 递归在构造上就被拒绝；没有会弄错的深度计数器。
+- **角色决定工具。** 能写的验证者不是验证者。
+- **同一时间只有一个写者**，进程范围内。两个写者写同一条路径会静默地丢掉一个结果。
+- **截止时间覆盖队列**，不只是覆盖工作本身。
+- **用量加到付费的那个对话上。** 把读数藏起来是特性；把成本藏起来会是一个悄悄出错的数字。
 
-## Tests
+## 测试
 
-- **The name is the claim.** `aCrossOriginRequestCannotChangeState`,
-  `aQueuedWriterGivesUpRatherThanRunningPastItsDeadline`. A test whose name does not state a property
-  is a test that will be deleted the first time it fails.
-- **Test behaviour through the real thing.** A real `AgentLoop` with a scripted `Provider`, a real file
-  system under `@TempDir`, the real CLI over a real HTTP server. No mocks of the class under test.
-- **A test that cannot run must not look like one that passed.** Skipping is `Assumptions` or an
-  explicit failure, never an early `return`.
-- **Deliberately awkward inputs are the point.** SSE frames split mid-line, tool output cut mid-UTF-8
-  character, a session file interrupted between a call and its result. The mock server fragments frames
-  on purpose, because a relay does.
-- **The front end's cases run the shipped source.** `src/test/js/*.test.mjs` lifts the renderer out of
-  `web/app.js` between its banner comments, so the assertions are about what is served, not a copy of
-  it.
-- **Every fixed bug gets a test that fails without the fix.** Written in the same change, not after.
+- **名字就是主张。** `aCrossOriginRequestCannotChangeState`、`aQueuedWriterGivesUpRatherThanRunningPastItsDeadline`。名字不陈述一条性质的测试，是一个第一次失败就会被删掉的测试。
+- **通过真实的东西测试行为。** 一个真实的 `AgentLoop` 配一个脚本化的 `Provider`、`@TempDir` 下一个真实的文件系统、真实 CLI 跑在真实 HTTP 服务器上。不要 mock 被测的类。
+- **跑不了的测试绝不能看起来像通过了的测试。** 跳过要用 `Assumptions` 或显式失败，绝不是提前 `return`。
+- **故意难缠的输入才是重点。** SSE 帧在行中间被切开、工具输出从一个 UTF-8 字符中间截断、会话文件在一次调用和它的结果之间被打断。mock 服务器故意打碎帧，因为中继就是这么干的。
+- **前端的用例跑随包发布的源码。** `src/test/js/*.test.mjs` 在横幅注释之间把渲染器从 `web/app.js` 里提出来，所以断言针对的是被发出的东西，而不是它的一份副本。
+- **每一个修掉的 bug 都有一个没有修复就失败的测试。** 在同一个改动里写，不是之后。
 
-## Documentation
+## 文档
 
-- **Docs ship with the code.** README, `docs/`, `SECURITY.md` and the comment next to the change, in one
-  commit. A feature nobody can find is a feature nobody has.
-- **The README feature table is a claim per row.** A row that no longer matches the code is a bug.
-- **Say what was measured, and what was not.** "472 tests" belongs in the README only while a run can
-  reproduce it. When something was not verified on the machine doing the work, the change says so.
-- **`Limitations` is not an apology section.** Every entry is a trade the reader needs in order to
-  decide whether to trust the tool, written as the trade it is.
+- **文档随代码一起交付。** README、`docs/`、`SECURITY.md` 以及改动旁边的注释，在一个提交里。没人能找到的功能就是没人有的功能。
+- **README 功能表每一行都是一个主张。** 一行不再与代码相符就是 bug。
+- **说明测量了什么、没测量什么。** 「472 个测试」只在一次运行能复现它时才属于 README。当某样东西没有在做这项工作的机器上验证过时，改动要说明这一点。
+- **`Limitations` 不是道歉小节。** 每一条都是读者为了决定是否信任这个工具所需要的取舍，就按它作为取舍的样子写。
 
-## How a rule here is checked
+## 这里的一条规则是如何被检查的
 
-A rule nobody can check is a preference. Where a rule can be made mechanical it is, and the mechanism
-is named next to it:
+一条没人能检查的规则只是一种偏好。一条能被机械化的规则就被机械化，而机制就在它旁边点名：
 
-| Rule | Checked by |
+| 规则 | 由谁检查 |
 |---|---|
-| Names, comments, spelling | `mvn test`: `core/ConventionsTest` scans `src/main/java` for the American spellings this house does not use and fails with the file and the line |
-| The page never builds HTML from a string | `WebMarkdownTest`, over the shipped `app.js` between its banners |
-| The browser cases run the shipped source | `src/test/js/*.test.mjs`, run by `Web*Test` through node, reported as *skipped* when node is absent |
-| Approval is the only guard | `SECURITY.md` says it, and the tests that remove a guard fail when the guard goes |
-| Docs agree with the code | Review, and the entries in [CHANGELOG.md](CHANGELOG.md) and [ROADMAP.md](ROADMAP.md) that name the version — a README row that no longer matches is a bug |
+| 命名、注释、拼写 | `mvn test`：`core/ConventionsTest` 扫描 `src/main/java` 里本仓库不用的美式拼写，失败时报出文件和行号 |
+| 页面绝不用字符串构建 HTML | `WebMarkdownTest`，跑在横幅之间的随包发布 `app.js` 上 |
+| 浏览器用例跑随包发布的源码 | `src/test/js/*.test.mjs`，由 `Web*Test` 通过 node 运行，node 不在时报告为 *skipped* |
+| 审批是唯一的护栏 | `SECURITY.md` 这么说，而那些移除护栏的测试在护栏消失时会失败 |
+| 文档与代码相符 | 评审，以及 [CHANGELOG.md](CHANGELOG.md) 和 [ROADMAP.md](ROADMAP.md) 里点名版本的条目——一行不再相符的 README 行就是 bug |
 
-## Making a change
+## 做一次改动
 
-1. **Read the file first.** Evaluate what is on disk, not what it was last time.
-2. **Write the failing test**, or name the acceptance check for a feature.
-3. **Make the smallest change that satisfies it.** Readability is the budget being spent.
-4. **Run what can be run.** If the toolchain is not available on this machine, say so explicitly rather
-   than implying a green run.
-5. **Update the docs and the comments** in the same change, including removing what is no longer true.
-6. **Commit messages:** `<type>: <what changed, in the imperative>`, e.g.
-   `feat: a CCJ.md leads the prompt, read from one directory`. The body says why, and names anything
-   that was measured. `fix:` for a defect, `docs:` for documentation only, `refactor:` for a change
-   that alters no behaviour.
+1. **先读文件。** 评估磁盘上的东西，而不是它上次是什么。
+2. **写出那个失败的测试**，或者为功能点名验收检查。
+3. **做满足它的最小改动。** 可读性就是被花掉的那个预算。
+4. **跑能跑的东西。** 如果这台机器上没有工具链，就明说，而不是暗示一次绿色的运行。
+5. **在同一个改动里更新文档和注释**，包括移除不再为真的东西。
+6. **提交信息：** `<type>: <改了什么，用祈使语气>`，例如 `feat: a CCJ.md leads the prompt, read from one directory`。正文说明为什么，并点名任何被测量的东西。缺陷用 `fix:`，纯文档用 `docs:`，不改变行为的改动用 `refactor:`。
 
-### Definition of done
+### 完成的定义
 
-- [ ] A test fails without this change, and passes with it
-- [ ] `mvn -q test` green, or the reason it could not run is stated
-- [ ] The JS cases run, or CI reports them as skipped rather than passed
-- [ ] README / `docs/` / `SECURITY.md` agree with the code, including anything removed
-- [ ] No comment left describing behaviour that is gone
-- [ ] No new dependency, or the commit message argues for it
-- [ ] The approval path is unchanged, or the change says how it was kept honest
+- [ ] 没有这个改动，某个测试失败；有它则通过
+- [ ] `mvn -q test` 是绿的，或者说明它为什么跑不了
+- [ ] JS 用例跑了，或者 CI 把它们报告为 skipped 而不是 passed
+- [ ] README / `docs/` / `SECURITY.md` 与代码相符，包括任何被移除的东西
+- [ ] 没有留下描述已消失行为的注释
+- [ ] 没有新依赖，或者提交信息为它做了论证
+- [ ] 审批路径未变，或者改动说明了它是如何保持诚实的
 
-See [ROADMAP.md](ROADMAP.md) for what is being worked on, in what order.
+要看正在做什么、按什么顺序，见 [ROADMAP.md](ROADMAP.md)。

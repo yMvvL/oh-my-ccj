@@ -18,14 +18,13 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The providers the user defined, kept in {@code <home>/providers.json}.
+ * 用户自己定义的提供方，保存在 {@code <home>/providers.json}。
  *
- * <p>A separate file from {@code config.json} because they answer different questions: the config
- * says *which* provider is active and holds a key, this says *what* providers exist. Adding one must
- * not disturb the model you are currently using, and a definition survives switching away from it.
+ * <p>与 {@code config.json} 分开，因为它们回答的是不同的问题：配置说的是*哪一个*提供方在用、并存放密
+ * 钥，这里说的是*有哪些*提供方。新增一个不能打扰你正在用的模型，而一个定义在切走之后依然存在。
  *
- * <p>Built-in providers are not stored here — they are code — so a deleted entry can never take
- * {@code openai} or {@code anthropic} with it.
+ * <p>内置提供方不存这里——它们是代码——所以删掉一个条目永远不会把 {@code openai} 或
+ * {@code anthropic} 一起带走。
  */
 public final class ProviderStore {
 
@@ -36,20 +35,18 @@ public final class ProviderStore {
   private final Map<String, ProviderDefinition> definitions = new LinkedHashMap<>();
 
   /**
-   * Model lists the user edited, per provider name — including built-ins, which have no definition
-   * of their own. Once a list is recorded here it is authoritative, so removing a model sticks;
-   * before that the catalogue's own list applies.
+   * 用户编辑过的模型列表，按提供方名字存放——也包括没有自己的定义的内置提供方。一份列表一旦记在这里就有
+   * 了决定权，所以删掉的模型会一直保持被删；在那之前，用的是目录自带的那份列表。
    */
   private final Map<String, List<String>> modelLists = new LinkedHashMap<>();
 
   /**
-   * The providers the user actually has, once they have narrowed the list.
+   * 用户收窄列表之后，他真正拥有的那些提供方。
    *
-   * <p>{@code null} means "no opinion: everything the agent ships plus your definitions"; a list —
-   * including an empty one — is the whole answer. Once anything is removed the list becomes
-   * explicit, so a deleted provider is simply absent rather than remembered as "hidden" — the UI
-   * has nothing to explain and nothing to restore, and adding one back is an ordinary add. The
-   * difference between {@code null} and empty is what {@link #narrowed()} exists to report.
+   * <p>{@code null} 表示「没有意见：代理自带的一切加上你的定义」；而一个列表——包括空列表——就是全部答
+   * 案。只要有东西被删，列表就变成显式的，所以被删掉的提供方就是不在，而不是被记成「已隐藏」——UI 没有什么
+   * 要解释、也没有什么要恢复，加回来就是一次普通的添加。{@code null} 与空列表的区别，正是
+   * {@link #narrowed()} 存在的意义。
    */
   private java.util.List<String> shown;
 
@@ -73,16 +70,15 @@ public final class ProviderStore {
     return file;
   }
 
-  /** The explicit list, or empty when the user has never removed a provider. */
+  /** 显式列表；用户从未删过提供方时为空。 */
   public synchronized List<String> shown() {
     return shown == null ? List.of() : List.copyOf(shown);
   }
 
   /**
-   * True once the user has narrowed the list, which {@link #shown()} cannot say: it returns an
-   * empty list both for "no opinion" and for "I removed the last one". Callers that decide what to
-   * offer have to tell those apart — otherwise removing the last provider resurrects every
-   * built-in, and adding one to an emptied list is never recorded.
+   * 用户收窄过列表之后为 true，这一点 {@link #shown()} 说不出来：无论「没有意见」还是「我把最后一个删
+   * 了」，它都返回空列表。决定要给出什么的调用方必须分得清这两者——否则删掉最后一个提供方会让所有内置项复活，
+   * 而往一个已清空的列表里添加也永远记不下来。
    */
   public synchronized boolean narrowed() {
     return shown != null;
@@ -97,8 +93,7 @@ public final class ProviderStore {
   }
 
   /**
-   * Records the whole list. Called with what should remain, because only the caller knows the
-   * built-ins the store never stored.
+   * 记录整份列表。调用时传的是「应当剩下的那些」，因为只有调用方知道那些本存储从未存过的内置项。
    */
   public synchronized void setShown(List<String> providers) {
     java.util.List<String> clean = new java.util.ArrayList<>();
@@ -113,11 +108,10 @@ public final class ProviderStore {
   }
 
   /**
-   * The list the user recorded for a provider.
+   * 用户为某个提供方记下的列表。
    *
-   * <p>Empty means "never recorded, use the catalogue's own list"; a present-but-empty list means
-   * "recorded as empty" — the difference is what lets a user remove the last model and have it stay
-   * removed instead of the provider's default list reappearing.
+   * <p>空表示「从未记录过，用目录自带的列表」；存在但为空表示「记录为空的」——正是这个区别让用户删掉最后
+   * 一个模型之后它保持被删，而不是提供方的默认列表又冒出来。
    */
   public synchronized java.util.Optional<List<String>> modelsFor(String provider) {
     if (provider == null) {
@@ -127,13 +121,13 @@ public final class ProviderStore {
   }
 
   /**
-   * Records the model list for a provider. The caller passes the list it wants to end up with,
-   * because only the catalogue knows what "the list without this model" means.
+   * 记录某个提供方的模型列表。调用方传入的是它希望最终得到的那份列表，因为只有目录知道「去掉这个模型之后的
+   * 列表」是什么意思。
    */
   public synchronized void setModels(String provider, List<String> models) {
     String key = provider == null ? "" : provider.strip().toLowerCase();
     if (key.isEmpty()) {
-      throw new IllegalArgumentException("a provider name is required");
+      throw new IllegalArgumentException("需要提供方名字");
     }
     List<String> clean = new java.util.ArrayList<>();
     for (String model : models == null ? List.<String>of() : models) {
@@ -156,7 +150,7 @@ public final class ProviderStore {
         : Optional.ofNullable(definitions.get(name.strip().toLowerCase()));
   }
 
-  /** Adds or replaces a definition. */
+  /** 新增或替换一个定义。 */
   public synchronized ProviderDefinition save(ProviderDefinition definition) {
     ProviderDefinition valid = definition.requireValid();
     definitions.put(valid.name().toLowerCase(), valid);
@@ -168,10 +162,10 @@ public final class ProviderStore {
     String key = name == null ? "" : name.strip().toLowerCase();
     if (definitions.remove(key) == null) {
       throw new IllegalArgumentException(
-          "no custom provider named '"
+          "没有名为 '"
               + key
-              + "'; defined: "
-              + (definitions.isEmpty() ? "(none)" : String.join(", ", definitions.keySet())));
+              + "' 的自定义提供方；已定义："
+              + (definitions.isEmpty() ? "（无）" : String.join(", ", definitions.keySet())));
     }
     write();
   }
@@ -181,7 +175,7 @@ public final class ProviderStore {
     try {
       root = Json.parse(Files.readString(file));
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot read " + file, e);
+      throw new UncheckedIOException("无法读取 " + file, e);
     }
     JsonNode shownNames = root.path("shown");
     if (shownNames.isArray()) {
@@ -226,22 +220,22 @@ public final class ProviderStore {
                     new ProviderDefinition(name, kind, baseUrl, apiKeyEnv, modelNames).requireValid();
                 definitions.put(definition.name().toLowerCase(), definition);
               } catch (IllegalArgumentException ignored) {
-                // An entry we cannot use is skipped: one broken definition must not hide the rest.
+                // 用不了的条目会被跳过：一个坏定义不能把其余的藏起来。
               }
             });
   }
 
   /**
-   * A definition the list does not mention is invisible, which no user wants: definitions written
-   * by an older build (or by a bug) are folded back into the explicit list instead of being lost.
+   * 列表没有提到的定义就是不可见的，没有用户想要这样：旧版本（或被 bug）写下的定义会被折回显式列表，而不是
+   * 丢失。
    */
   private boolean healList() {
     if (shown == null) {
       return false;
     }
     boolean changed = false;
-    // The definition's own spelling, not the lower-cased key it is stored under: the list is shown
-    // to the user, and silently renaming their provider would be a surprise.
+    // 用定义自己的拼写，而不是存储时用的那个小写键：这份列表是给用户看的，悄悄改掉他们提供方的名字会让人
+    // 意外。
     for (ProviderDefinition definition : definitions.values()) {
       String name = definition.name();
       if (shown.stream().noneMatch(known -> known.equalsIgnoreCase(name))) {
@@ -286,7 +280,7 @@ public final class ProviderStore {
           StandardOpenOption.CREATE,
           StandardOpenOption.TRUNCATE_EXISTING);
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot write " + file, e);
+      throw new UncheckedIOException("无法写入 " + file, e);
     }
   }
 }

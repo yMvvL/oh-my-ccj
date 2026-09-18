@@ -1,16 +1,15 @@
 package com.ccj.agent.core;
 
 /**
- * Knobs the agent loop itself cares about.
+ * 代理循环本身在意的旋钮。
  *
- * <p>There is deliberately no ceiling on model turns per user input. A turn ends when the model
- * stops asking for tools, or when someone aborts it — nothing else. A cap cannot tell a model stuck
- * in a rut from one working through a long task, and the number that cuts the second one off to
- * punish the first is worse than no number: it fails a run that was going to succeed, and it does so
- * at an arbitrary point that has nothing to do with the work. Stopping is {@link AgentLoop#abort()}.
+ * <p>对每次用户输入所触发的模型回合数，刻意不设上限。回合结束于模型不再要求调用工具，或者有人中止它——
+ * 没有别的结束方式。上限分辨不出一个陷在车辙里的模型和一个正在啃长任务的模型，而为了惩罚前者去砍掉后者的
+ * 那个数字比没有数字更糟：它会让一场本可成功的运行失败，且失败点随机得与工作毫无关系。要停下来请用
+ * {@link AgentLoop#abort()}。
  *
- * @param model provider-specific model identifier
- * @param system system prompt, or null for {@link Prompts#DEFAULT_SYSTEM}
+ * @param model 提供方特定的模型标识符
+ * @param system 系统提示词，null 表示使用 {@link Prompts#DEFAULT_SYSTEM}
  */
 public record AgentOptions(
     String model,
@@ -20,7 +19,7 @@ public record AgentOptions(
     String reasoning,
     Integer maxContextTokens) {
 
-  /** The knobs as they were before a prompt budget existed: no budget. */
+  /** 提示词预算出现之前的旋钮形态：没有预算。 */
   public AgentOptions(
       String model, String system, Double temperature, Integer maxTokens, String reasoning) {
     this(model, system, temperature, maxTokens, reasoning, null);
@@ -30,16 +29,15 @@ public record AgentOptions(
     return new AgentOptions(null, null, null, null, null, null);
   }
 
-  /** The effort tier the model should spend, or null to leave it to the provider. */
+  /** 模型应投入的努力档位，null 表示交给提供方决定。 */
   public String reasoning() {
     return reasoning;
   }
 
   /**
-   * The prompt budget in estimated tokens, or 0 for "send the whole conversation".
+   * 提示词预算，以估算 token 计；0 表示「把整段对话都发出去」。
    *
-   * <p>Unset by default on purpose: a wrong guess about a model's context window is worse than no
-   * guess, and the number that matters is the one the user paid for.
+   * <p>默认不设置是刻意的：把模型的上下文窗口猜错比不猜更糟，而真正算数的数字是用户花钱买的那个。
    */
   public int contextBudget() {
     return maxContextTokens == null || maxContextTokens <= 0 ? 0 : maxContextTokens;

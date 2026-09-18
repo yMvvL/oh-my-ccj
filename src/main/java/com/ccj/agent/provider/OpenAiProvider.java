@@ -22,13 +22,11 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
- * Provider for OpenAI's {@code /chat/completions} API and the servers that copy it (DeepSeek,
- * Groq, Ollama, ...).
+ * OpenAI {@code /chat/completions} API 及其模仿者（DeepSeek、Groq、Ollama……）的提供方。
  *
- * <p>Two wire details drive the mapping. Tool call arguments travel as a JSON <em>string</em>, not
- * as an object, so a call assembled from streamed fragments must keep its raw text. And streamed
- * tool calls arrive as fragments keyed by {@code index}: the first one names the call, later ones
- * append argument text, which is why the assembler buffers per index instead of assuming order.
+ * <p>两个线路细节决定了这套映射。工具调用的参数以 JSON <em>字符串</em>、而非对象的形式传输，所以从流式
+ * 片段拼出来的调用必须保留它的原始文本。另外，流式工具调用是以 {@code index} 为键的片段到达的：第一个片段
+ * 给这次调用命名，后续片段追加参数文本，这就是组装器按索引缓冲、而不是假定顺序的原因。
  */
 public final class OpenAiProvider implements Provider {
 
@@ -43,7 +41,7 @@ public final class OpenAiProvider implements Provider {
 
   public OpenAiProvider(String baseUrl, String apiKey) {
     if (baseUrl == null || baseUrl.isBlank()) {
-      throw new IllegalArgumentException("openai base URL is required");
+      throw new IllegalArgumentException("openai 需要 base URL");
     }
     this.baseUrl = stripTrailingSlash(baseUrl);
     this.apiKey = apiKey == null ? "" : apiKey;
@@ -64,7 +62,7 @@ public final class OpenAiProvider implements Provider {
     try (Stream<String> lines = response.body()) {
       return consume(response, lines, sink);
     } catch (UncheckedIOException e) {
-      throw new Exception("connection lost while streaming the response: " + e.getCause(), e);
+      throw new Exception("流式读取响应时连接断开：" + e.getCause(), e);
     }
   }
 
@@ -87,7 +85,7 @@ public final class OpenAiProvider implements Provider {
   private ObjectNode buildBody(Request request) {
     String model = request.model();
     if (model == null || model.isBlank()) {
-      throw new IllegalArgumentException("openai requests need a model");
+      throw new IllegalArgumentException("openai 请求需要 model");
     }
     ObjectNode root = Json.object();
     root.put("model", model);
@@ -120,8 +118,8 @@ public final class OpenAiProvider implements Provider {
         root.put("max_tokens", request.maxTokens());
       }
     } else {
-      // Reasoning endpoints take "reasoning_effort"; the protocol tops out at high, so "max" asks
-      // for that plus a much larger completion budget, which is the only other lever it has.
+      // 推理类端点接受 "reasoning_effort"；协议最高只到 high，所以 "max" 要的是 high 再加上一个大得
+      // 多的补全预算，那是它仅剩的另一根杠杆。
       root.put("reasoning_effort", "max".equals(effort) ? "high" : effort);
       int budget =
           "max".equals(effort)
@@ -147,9 +145,8 @@ public final class OpenAiProvider implements Provider {
     return switch (message) {
       case Message.System system -> textTurn("system", system.text());
       case Message.User user -> textTurn("user", user.text());
-      // A summary travels as a user turn, carrying the marker that says what it is: the chat API has
-      // no shape for "prose the model must read but did not write", and the alternative — pretending
-      // it is the assistant's own earlier answer — is what makes a model trust an invention.
+      // 摘要以 user 回合传输，带着标明它是什么的标记：chat API 没有「模型必须读、但不是它写的散文」这种
+      // 形状，而另一条路——假装这是助手自己先前的回答——正是让模型相信一个凭空造物的原因。
       case Message.Summary summary -> textTurn("user", summary.text());
       case Message.Assistant assistant -> assistantTurn(assistant);
       case Message.ToolResult result -> toolTurn(result);
@@ -166,7 +163,7 @@ public final class OpenAiProvider implements Provider {
         entry.put("type", "function");
         ObjectNode function = entry.putObject("function");
         function.put("name", call.name());
-        // Arguments stay a JSON *string* on this wire format; the model parses them itself.
+        // 在这个线路格式里，参数保持为 JSON *字符串*；模型自己解析它们。
         function.put("arguments", call.arguments());
       }
     }
@@ -177,14 +174,14 @@ public final class OpenAiProvider implements Provider {
     ObjectNode node = Json.object();
     node.put("role", "tool");
     node.put("tool_call_id", result.toolCallId());
-    // There is no error channel on a tool turn, so the flag reaches the model only as prose.
+    // 工具回合上没有错误通道，所以这个标志只能以散文的形式到达模型。
     node.put("content", result.error() ? result.content() + " (error)" : result.content());
     return node;
   }
 
   /**
-   * Reads the stream to completion. Only deltas observed on the wire are forwarded; the assembled
-   * turn comes from the same fragments, so the listener and the caller can never disagree.
+   * 把流读到结束。只有在线路上观察到的增量会被转发；组装出的回合来自同一批片段，所以监听者和调用方永远不
+   * 会各说各话。
    */
   private Message.Assistant consume(
       HttpResponse<?> response, Stream<String> lines, Consumer<Event> sink) {
@@ -203,8 +200,8 @@ public final class OpenAiProvider implements Provider {
       }
     }
     if (frames == 0) {
-      // A body with no frames is not a turn: reporting it as an empty answer would leave the user
-      // with a silent stop and no way to see that the endpoint never spoke this protocol.
+      // 没有任何帧的响应体不是一个回合：把它当作空回答报出去，用户只会看到一次无声的停止，看不出这个端点根本
+      // 没在说这个协议。
       throw new IllegalStateException(Transport.noEvents(response, arrived.toString()));
     }
     List<Message.ToolCall> calls = new ArrayList<>(buffers.size());
@@ -221,7 +218,7 @@ public final class OpenAiProvider implements Provider {
       Consumer<Event> sink) {
     JsonNode error = chunk.get("error");
     if (error != null && !error.isNull()) {
-      throw new IllegalStateException("provider error: " + error);
+      throw new IllegalStateException("提供方错误：" + error);
     }
     JsonNode choices = chunk.path("choices");
     JsonNode choice = choices.isArray() && !choices.isEmpty() ? choices.get(0) : null;
@@ -240,8 +237,8 @@ public final class OpenAiProvider implements Provider {
   }
 
   /**
-   * Empty content is skipped: OpenAI primes every stream with a role-only chunk whose content is
-   * {@code ""}, and forwarding it would only make the UI redraw for nothing.
+   * 空内容会被跳过：OpenAI 给每个流开场的都是一条只带 role 的 chunk，其 content 是 {@code ""}，转发它
+   * 只会让 UI 白白重绘一次。
    */
   private static void appendText(JsonNode content, StringBuilder text, Consumer<Event> sink) {
     if (content == null || !content.isTextual() || content.asText().isEmpty()) {
@@ -282,12 +279,10 @@ public final class OpenAiProvider implements Provider {
   }
 
   /**
-   * The slot a fragment belongs to. The documented stream always carries {@code index}, but some
-   * compatible servers leave it out; defaulting those to zero merges two parallel calls into one
-   * corrupt call — an unknown tool with concatenated arguments, and a call the model never hears
-   * about. So a fragment that names a call starts a new slot, unless that id is already open, in
-   * which case it is the same call speaking again; a fragment with nothing but arguments continues
-   * the newest slot.
+   * 一个片段属于哪个槽位。文档中的流总会带上 {@code index}，但一些兼容服务器会把它省掉；把那些默认成
+   * 零，会把两次并行的调用合并成一次损坏的调用——一个参数被拼在一起的未知工具，以及一次模型从未听说过的调
+   * 用。所以给调用命名的片段会开一个新槽位，除非那个 id 已经开着，那就还是同一次调用在说话；只带参数的片段
+   * 则续在最新的槽位上。
    */
   private static int slot(JsonNode fragment, Map<Integer, ToolCallBuffer> buffers) {
     JsonNode index = fragment.get("index");
@@ -300,9 +295,8 @@ public final class OpenAiProvider implements Provider {
     }
     for (Map.Entry<Integer, ToolCallBuffer> open : buffers.entrySet()) {
       if (id.asText().equals(open.getValue().id)) {
-        // A server that drops `index` and forwards the whole call object it built repeats the id on
-        // every fragment. Reading that as a second call would split one call in two: one holding
-        // truncated arguments, one with no name at all.
+        // 一个丢掉 `index`、转发它构建出的整个调用对象的服务器，会在每个片段上重复这个 id。把它读成第二次
+        // 调用，会把一次调用拆成两个：一个拿着被截断的参数，一个连名字都没有。
         return open.getKey();
       }
     }
@@ -313,7 +307,7 @@ public final class OpenAiProvider implements Provider {
     return next;
   }
 
-  /** Prefers the top-level usage object, then the choice-level copy some gateways send. */
+  /** 优先用顶层的 usage 对象，其次用某些网关发来的 choice 级副本。 */
   private static void emitUsage(JsonNode usage, JsonNode choiceUsage, Consumer<Event> sink) {
     JsonNode source = usage != null && usage.isObject() ? usage : choiceUsage;
     if (source == null || !source.isObject()) {
@@ -332,18 +326,17 @@ public final class OpenAiProvider implements Provider {
   }
 
   /**
-   * A JSON number, or null when the field is absent <em>or</em> explicitly null: a null is "not
-   * reported", and counting it as zero would put a fabricated measurement in the totals.
+   * 一个 JSON 数字；字段缺失<em>或</em>显式为 null 时返回 null：null 的意思是「没有上报」，把它当作零
+   * 会让总计里多出一个凭空捏造的测量值。
    */
   private static JsonNode number(JsonNode node) {
     return node == null || !node.isNumber() ? null : node;
   }
 
   /**
-   * Cache accounting, when the endpoint reports it: OpenAI puts it under
-   * {@code prompt_tokens_details.cached_tokens}, DeepSeek and friends expose
-   * {@code prompt_cache_hit_tokens}. Absent fields mean "not reported", which is not the same as
-   * zero — the UI distinguishes the two.
+   * 端点上报告时的缓存统计：OpenAI 把它放在 {@code prompt_tokens_details.cached_tokens} 下，DeepSeek
+   * 之流则暴露 {@code prompt_cache_hit_tokens}。字段缺失意味着「没有上报」，这和零不是一回事——UI 分得
+   * 清这两者。
    */
   private static Integer cachedTokens(JsonNode usage) {
     JsonNode details = usage.path("prompt_tokens_details").path("cached_tokens");
@@ -362,7 +355,7 @@ public final class OpenAiProvider implements Provider {
     return stripped.endsWith("/") ? stripped.substring(0, stripped.length() - 1) : stripped;
   }
 
-  /** Mutable state for one streamed tool call; fragments address it by index, not by order. */
+  /** 一次流式工具调用的可变状态；片段按索引访问它，而不是按顺序。 */
   private static final class ToolCallBuffer {
     private String id = "";
     private String name = "";

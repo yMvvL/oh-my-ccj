@@ -9,18 +9,15 @@ import java.nio.file.StandardOpenOption;
 import java.util.Optional;
 
 /**
- * The conversation the next process should open, written down before this one goes away.
+ * 下一个进程应该打开的会话，在本进程离开之前写下来。
  *
- * <p>A restart replaces the process on purpose: {@code restart} installs a freshly built jar and the
- * launcher starts it again. The new process opens a new session, because that is what a front end
- * does when nothing tells it otherwise — so the conversation the user was watching vanishes at the
- * exact moment the work they asked for lands. The session file is on disk and resumable, but
- * "resumable" is not the same as "already there", and asking someone to find the row they were just
- * looking at is a worse answer than remembering it for them.
+ * <p>重启是刻意换掉进程：{@code restart} 装上刚构建好的 jar，启动器再把它跑起来。新进程会开一个新
+ * 会话，因为前端在没人告诉它别的时就是这么做的——于是用户正看着的那段会话，恰好在他们要求的工作落地的
+ * 那一刻消失。会话文件在磁盘上、可以恢复，但「可以恢复」不等于「已经在眼前」，让人去找他刚刚看着的那
+ * 一行，不如替他记住。
  *
- * <p>This is a note, not a record. It holds one session id, it is overwritten on every restart, and
- * it is read only to answer "where were we". A damaged or missing note is therefore never an error:
- * the worst case is the behaviour a front end had before this existed.
+ * <p>这是一张便条，不是记录。它只存一个会话 id，每次重启都被覆盖，被读到只是为了回答「我们刚才在哪」。
+ * 因此便条损坏或缺失永远不算错误：最坏的结果也不过是这件事存在之前前端的表现。
  */
 public final class ResumePoint {
 
@@ -28,17 +25,16 @@ public final class ResumePoint {
 
   private ResumePoint() {}
 
-  /** Where the note lives for a given home directory. */
+  /** 便条针对某个 home 目录所在的位置。 */
   public static Path file(Path home) {
     return home.resolve(FILE_NAME);
   }
 
   /**
-   * Remembers {@code sessionId} for the next process.
+   * 为下一个进程记住 {@code sessionId}。
    *
-   * <p>An id that could not name a session file is refused rather than stored: writing it down would
-   * be a promise that the next process can open it, and {@link FileSession#isValidId} is what decides
-   * whether that is true.
+   * <p>一个没法成为会话文件名的 id 会被拒绝而不是存下来：写下它就等于承诺下一个进程能打开它，而
+   * {@link FileSession#isValidId} 才是判定这句话真假的依据。
    */
   public static void write(Path home, String sessionId) {
     if (sessionId == null || !FileSession.isValidId(sessionId)) {
@@ -54,11 +50,11 @@ public final class ResumePoint {
           StandardOpenOption.CREATE,
           StandardOpenOption.TRUNCATE_EXISTING);
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot write " + file, e);
+      throw new UncheckedIOException("无法写入 " + file, e);
     }
   }
 
-  /** The session to open again, or empty when there is none to open. */
+  /** 要再次打开的会话，没有可打开的时为空。 */
   public static Optional<String> read(Path home) {
     Path file = file(home);
     String text;
@@ -68,7 +64,7 @@ public final class ResumePoint {
       }
       text = Files.readString(file, StandardCharsets.UTF_8).strip();
     } catch (IOException e) {
-      // Unreadable is the same answer as absent: this note never blocks a start.
+      // 读不了和不存在是同一个答案：这张便条从不拦住一次启动。
       return Optional.empty();
     }
     int newline = text.indexOf('\n');
@@ -78,12 +74,12 @@ public final class ResumePoint {
     return FileSession.isValidId(text) ? Optional.of(text) : Optional.empty();
   }
 
-  /** Forgets the note, so the next process starts fresh. */
+  /** 忘掉这张便条，好让下一个进程从头开始。 */
   public static void clear(Path home) {
     try {
       Files.deleteIfExists(file(home));
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot delete " + file(home), e);
+      throw new UncheckedIOException("无法删除 " + file(home), e);
     }
   }
 }

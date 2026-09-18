@@ -81,8 +81,8 @@ class MessageCodecTest {
 
   @Test
   void thinkingBlocksSurviveTheRoundTripAndCostNothingWhenAbsent() {
-    // Extended thinking has to be handed back to the API verbatim, which means the session file is
-    // where a signature has to survive: a lost signature is a turn the API refuses.
+    // 扩展思考必须原样交回给 API，这意味着会话文件正是签名必须活下来的地方：丢一个签名就是一段 API 会
+    // 拒绝的回合。
     Message.Assistant thinking =
         new Message.Assistant(
             "answer",
@@ -97,14 +97,13 @@ class MessageCodecTest {
     assertEquals(2, ((Message.Assistant) decoded).thinking().size());
     assertTrue(((Message.Assistant) decoded).thinking().get(1).redacted());
 
-    // A turn without thinking is written exactly as it was before thinking existed.
+    // 一个没有 thinking 的回合写出来的东西，与 thinking 存在之前完全一样。
     Message.Assistant plain = new Message.Assistant("answer", List.of());
     assertEquals(
         "{\"type\":\"assistant\",\"text\":\"answer\",\"tool_calls\":[]}",
         MessageCodec.toJson(plain));
 
-    // And an empty block — a stream cut before it carried anything — is dropped rather than kept as
-    // something the API would reject.
+    // 而一个空块——一条还没带上任何内容就被切断的流——会被丢掉，而不是留成 API 会拒绝的东西。
     Message.Assistant empty =
         (Message.Assistant)
             MessageCodec.fromJson(

@@ -8,17 +8,15 @@ import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Running one command the way this agent runs commands: a shell, a closed stdin, a bounded capture,
- * a deadline, and a kill that reaches the process tree.
+ * 按这个代理执行命令的方式运行一条命令：一个 shell、关闭的 stdin、有界的捕获、一个截止时间，以及能杀到
+ * 整棵进程树的 kill。
  *
- * <p>Shared by the two places that run something — the `bash` tool, where the command is the model's,
- * and the post-edit check, where it is the user's configuration. They need the same four things for
- * the same reasons, and the version of this that existed inside `bash` alone was already the version
- * a second caller would have copy-pasted.
+ * <p>由两个会运行东西的地方共用——`bash` 工具，命令来自模型；以及编辑后检查，命令来自用户的配置。它们
+ * 出于同样的理由需要这同样的四件事，而当初只存在于 `bash` 内部的那版实现，本来就已经是第二个调用方会直接
+ * 复制粘贴的版本。
  *
- * <p>What it deliberately does not do is decide whether running is allowed. Approval, and the
- * question of whether a command comes from the model or from the config file, belongs to the caller
- * that knows which it is.
+ * <p>它刻意不做的事，是决定是否允许运行。审批，以及一条命令来自模型还是来自配置文件的问题，属于知道答案
+ * 的那个调用方。
  */
 final class ProcessRunner {
 
@@ -29,29 +27,28 @@ final class ProcessRunner {
   private ProcessRunner() {}
 
   /**
-   * What a finished command left behind.
+   * 一条结束的命令留下的东西。
    *
-   * @param exitCode the shell's status, or -1 when it never exited on its own
-   * @param finished false when the deadline or a cancellation ended it, which is why it was killed
-   * @param cancelled true when the run that owns {@code ctx} asked to stop
-   * @param output stdout and stderr merged, bounded by the context's output limit
-   * @param millis how long it ran, for the caller that wants to say so
+   * @param exitCode shell 的状态码；它从未自行退出时为 -1
+   * @param finished 截止时间或取消终结了它时为 false，这正是它被 kill 的原因
+   * @param cancelled 拥有 {@code ctx} 的那次运行要求停止时为 true
+   * @param output 合并后的 stdout 与 stderr，受上下文的输出上限限制
+   * @param millis 它跑了多久，给想说明这一点的调用方用
    */
   record Result(
       int exitCode, boolean finished, boolean cancelled, String output, long millis) {
 
-    /** True when the command ran to completion and reported success. */
+    /** 命令跑到结束并报告成功时为 true。 */
     boolean succeeded() {
       return finished && exitCode == 0;
     }
   }
 
   /**
-   * Runs {@code command} through {@code /bin/bash -lc} in {@code cwd}.
+   * 在 {@code cwd} 里通过 {@code /bin/bash -lc} 运行 {@code command}。
    *
-   * <p>{@code outputLimitBytes} is the caller's, not the context's: a `bash` call spends the turn's
-   * whole budget on the model's command, while a check that runs after every edit spends a few
-   * kilobytes, because its output is going into a result the user pays for on every later turn.
+   * <p>{@code outputLimitBytes} 是调用方给的，不是上下文给的：一次 `bash` 调用把整个回合的预算都花在模型
+   * 的命令上，而每次编辑之后运行的检查只花几 KB，因为它的输出会进入一份用户此后每个回合都要付费的结果。
    */
   static Result run(
       String command, Path cwd, int timeoutSeconds, int outputLimitBytes, ToolContext ctx)
@@ -65,16 +62,15 @@ final class ProcessRunner {
               .redirectErrorStream(true)
               .start();
     } catch (IOException e) {
-      return new Result(-1, false, ctx.isCancelled(), "failed to start " + SHELL + ": " + e.getMessage(), 0);
+      return new Result(-1, false, ctx.isCancelled(), "无法启动 " + SHELL + ": " + e.getMessage(), 0);
     }
     try {
-      // Nobody is going to type at this process: the agent has no terminal to hand it. Leaving the
-      // pipe open makes every command that reads stdin — `cat`, `sort`, a `read` in a script — wait
-      // for input that will never come until the timeout kills it. Closing it hands them EOF, which
-      // is what a command run by a script should see.
+      // 没有人会对着这个进程打字：代理没有终端可以交给它。留着管道开着，会让每条读取 stdin 的命令——
+      // `cat`、`sort`、脚本里的 `read`——一直等永远不会到来的输入，直到超时把它杀掉。关闭管道是给它们
+      // EOF，这正是一条由脚本运行的命令应当看到的东西。
       process.getOutputStream().close();
     } catch (IOException e) {
-      // Already gone; the exit status is reported either way.
+      // 已经没了；退出状态两种情况都会报告。
     }
 
     int limit = Math.max(1, outputLimitBytes);
@@ -88,7 +84,7 @@ final class ProcessRunner {
                   try (InputStream in = process.getInputStream()) {
                     capture.drain(in);
                   } catch (IOException ignored) {
-                    // The process was killed mid-read; keep whatever was captured.
+                    // 进程在读取中途被杀掉；保留已经捕获到的内容。
                   }
                 });
 
@@ -104,8 +100,8 @@ final class ProcessRunner {
   }
 
   /**
-   * Waits for the command to finish, its own timeout to expire, or the run to be cancelled — the
-   * last one is what makes "stop" mean stop instead of "wait for the ten-minute timeout".
+   * 等待命令结束、它自己的超时到期，或者本次运行被取消——最后这一项才让「停止」真的意味着停止，而不是
+   * 「等满十分钟的超时」。
    */
   private static boolean waitFor(Process process, int timeoutSeconds, ToolContext ctx)
       throws InterruptedException {
@@ -120,7 +116,7 @@ final class ProcessRunner {
     }
   }
 
-  /** Kills the command and everything it started, since a shell's children outlive the shell. */
+  /** 杀掉这条命令以及它启动的一切，因为 shell 的子进程会比 shell 活得久。 */
   private static void killTree(Process process) {
     process.descendants().forEach(ProcessHandle::destroyForcibly);
     process.destroyForcibly();
@@ -132,8 +128,8 @@ final class ProcessRunner {
   }
 
   /**
-   * Head-and-tail capture: the first {@code headCapacity} bytes and a ring of the last {@code
-   * tailCapacity} bytes, with the total counted so the omission can be reported exactly.
+   * 头尾捕获：最前面的 {@code headCapacity} 字节，加上一个保存最后 {@code tailCapacity} 字节的环形缓冲；
+   * 总数也一并统计，以便精确报告省略了多少。
    */
   private static final class Capture {
 
@@ -175,26 +171,26 @@ final class ProcessRunner {
     String render(int limit) {
       byte[] last = tailBytes();
       if (total <= limit) {
-        // Nothing was dropped, so the two buffers are contiguous and are decoded as one array: a
-        // character straddling the boundary between them must not become two replacement glyphs.
+        // 什么都没丢，所以两块缓冲是连续的，作为一个数组解码：跨在两者边界上的字符不能变成两个替换
+        // 字形。
         byte[] whole = new byte[headLength + tailLength];
         System.arraycopy(head, 0, whole, 0, headLength);
         System.arraycopy(last, 0, whole, headLength, tailLength);
         return new String(whole, StandardCharsets.UTF_8);
       }
-      // Something was omitted, so each half is decoded on its own — and a half that was cut in the
-      // middle of a character drops that partial sequence instead of rendering it as garbage.
+      // 有东西被省略了，所以每一半各自解码——而在字符中间被切开的那一半会丢掉这个残缺序列，而不是把它
+      // 渲染成乱码。
       int headEnd = headLength - partialTail(head, headLength);
       int tailStart = partialHead(last, tailLength);
       String headText = new String(head, 0, headEnd, StandardCharsets.UTF_8);
       String tailText = new String(last, tailStart, tailLength - tailStart, StandardCharsets.UTF_8);
       long omitted = total - headLength - tailLength;
-      return headText + "\n... omitted " + omitted + " bytes ...\n" + tailText;
+      return headText + "\n... 省略了 " + omitted + " 字节 ...\n" + tailText;
     }
 
     /**
-     * Bytes at the end of a slice that are the beginning of a UTF-8 sequence whose remaining bytes
-     * are not in the slice — what a cut in the middle of a character leaves behind.
+     * 切片末尾那些字节，它们是一个 UTF-8 序列的开头，而该序列其余的字节不在这个切片里——也就是在字符
+     * 中间切一刀留下的东西。
      */
     private static int partialTail(byte[] bytes, int length) {
       int lead = -1;
@@ -213,7 +209,7 @@ final class ProcessRunner {
       return expected > present ? present : 0;
     }
 
-    /** Leading continuation bytes of a slice whose first character started before it. */
+    /** 切片开头那些续接字节，它们的首字符在切片之前就开始了。 */
     private static int partialHead(byte[] bytes, int length) {
       int skip = 0;
       while (skip < length && skip < 3 && (bytes[skip] & 0xC0) == 0x80) {

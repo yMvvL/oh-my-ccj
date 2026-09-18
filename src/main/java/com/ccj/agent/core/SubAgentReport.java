@@ -6,56 +6,52 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * What a sub-agent hands back: a conclusion, not its conversation.
+ * 子代理交回来的东西：一个结论，而不是它的对话。
  *
- * <p>The whole point of a sub-agent is that its reading does not reach the main conversation, so its
- * report is a fixed shape rather than free prose. Two parts of it earn their place:
+ * <p>子代理的全部意义就在于它读过的内容不会进入主对话，所以它的报告是一个固定的形状，而不是自由散文。
+ * 其中有两部分撑得起自己的位置：
  *
  * <ul>
- *   <li><b>The findings.</b> The answer, with the paths and line numbers it lives at — enough to act
- *       on without going back to look.
- *   <li><b>The file list, each marked final or disposable.</b> This is what lets the main agent decide
- *       what to keep <em>without reading anything</em>. If it had to open each file to judge it, the
- *       context this feature exists to save would be spent on the judgement instead.
+ *   <li><b>发现。</b>答案本身，连同它所在的路径和行号——足够据以行动，而不必回去查。
+ *   <li><b>文件清单，每一项标为 final 或 disposable。</b>正是它让主代理<em>不读任何东西</em>就能决定留下
+ *       什么。如果它得逐个打开文件才能判断，这个功能本来要省下的上下文就会花在判断上。
  * </ul>
  *
- * <p>Parsing is forgiving by design. A model that writes three of the four headings, or spells one
- * differently, has still done the work — and refusing its report over a formatting slip would throw
- * away a run that cost real tokens. Anything unrecognised becomes part of the findings, which is the
- * part a human reads anyway.
+ * <p>解析刻意宽容。一个只写了四个标题里的三个、或把某个拼得不一样的模型，工作仍然是做了的——因为格式上的
+ * 小疏漏就退回它的报告，等于扔掉一次花了真金白银的运行。任何无法识别的内容都归入发现，而那本来也是人要读的
+ * 部分。
  */
 public final class SubAgentReport {
 
-  /** How the report starts a section. Matched case-insensitively, with or without the colon. */
+  /** 报告如何开始一个分节。不区分大小写匹配，冒号可有可无。 */
   private static final String STATUS = "status";
   private static final String SUMMARY = "summary";
   private static final String FILES = "files";
   private static final String FINDINGS = "findings";
 
   /**
-   * Cap on the report as it reaches the main conversation.
+   * 报告进入主对话时的上限。
    *
-   * <p>A sub-agent exists to keep one conversation from filling with another one's reading, and a
-   * verbose report is that failure arriving by a different door. Over the cap the text is cut with a
-   * marker — the same honesty {@link ContextBudget} uses — so the main agent knows it is reading a
-   * partial answer rather than a complete short one.
+   * <p>子代理存在的意义，是别让一段对话被另一段对话的阅读材料填满，而一份啰嗦的报告就是这个失败从另一扇
+   * 门进来。超过上限时文本会被截断并留下标记——和 {@link ContextBudget} 一样的诚实——好让主代理知道自己
+   * 读到的是部分答案，而不是一份完整但简短的答案。
    */
   public static final int LIMIT_CHARS = 8_000;
 
-  /** What the cut says. */
+  /** 截断时写的话。 */
   static final String CUT_MARKER =
-      "\n... (cut short: this report did not fit; ask for a narrower follow-up) ...";
+      "\n...（已截短：这份报告装不下；请改成更窄的后续请求）...";
 
   /**
-   * One file a run produced.
+   * 一次运行产出的一个文件。
    *
-   * @param path where it is, relative to the working directory the sub-agent was given
-   * @param disposable true for an intermediate kept only to work with, false for finished work
-   * @param note one line on what it is, so the decision to keep it does not need the file opened
+   * @param path 它在哪里，相对于给子代理的工作目录
+   * @param disposable 只是为了方便工作而留下的中间产物为 true，完成的工作为 false
+   * @param note 一行说明它是什么，这样决定是否保留它时不必打开文件
    */
   public record Artifact(String path, boolean disposable, String note) {
 
-    /** True when this is finished work rather than a by-product. */
+    /** 这是完成的工作、而不是副产品时为 true。 */
     public boolean keepable() {
       return !disposable;
     }
@@ -84,33 +80,31 @@ public final class SubAgentReport {
   }
 
   /**
-   * What this run cost.
+   * 这次运行花了多少。
    *
-   * <p>Carried back so the conversation that delegated the work can count it. Hiding the sub-agent's
-   * transcript is the point; hiding what it spent would be a different thing — a token count that
-   * quietly omits the delegated half is a number the user cannot trust.
+   * <p>带回来是为了让委派工作的那段对话能把它算进去。藏起子代理的转录才是要点；藏起它的花销就是另一回事
+   * 了——一个悄悄漏掉被委派那一半的 token 计数，是用户没法信任的数字。
    */
   public UsageTotals usage() {
     return usage;
   }
 
-  /** The same report with the run's cost attached. */
+  /** 同一份报告，附上这次运行的花销。 */
   public SubAgentReport withUsage(UsageTotals spent) {
     return new SubAgentReport(status, summary, findings, artifacts, spent, directory);
   }
 
   /**
-   * The directory the reported paths are relative to.
+   * 所报告的路径相对于哪个目录。
    *
-   * <p>Set by the run that produced the report, because the paths are only meaningful next to it: a
-   * writing role works in its own staging directory, and a report that named the project as the
-   * location would send the main agent to a place the files are not.
+   * <p>由产出这份报告的那次运行设置，因为那些路径只有挨着它才有意义：会写入的角色在自己的暂存目录里工作，
+   * 而一份把项目说成所在地的报告会把主代理引到文件并不在的地方。
    */
   public String directory() {
     return directory;
   }
 
-  /** The same report, saying where its paths are relative to. */
+  /** 同一份报告，说明它的路径相对于哪里。 */
   public SubAgentReport in(String where) {
     return new SubAgentReport(status, summary, findings, artifacts, usage, where);
   }
@@ -131,7 +125,7 @@ public final class SubAgentReport {
     return artifacts;
   }
 
-  /** The files worth promoting, in the order they were reported. */
+  /** 值得提升为成果的文件，按它们被报告的顺序。 */
   public List<Artifact> keepable() {
     List<Artifact> keep = new ArrayList<>();
     for (Artifact artifact : artifacts) {
@@ -142,7 +136,7 @@ public final class SubAgentReport {
     return List.copyOf(keep);
   }
 
-  /** The by-products: kept to work with, not the answer. */
+  /** 副产品：只是为了方便工作而留下的，不是答案。 */
   public List<Artifact> disposable() {
     List<Artifact> out = new ArrayList<>();
     for (Artifact artifact : artifacts) {
@@ -154,11 +148,10 @@ public final class SubAgentReport {
   }
 
   /**
-   * Reads a report out of what a sub-agent said.
+   * 从子代理说的话里读出一份报告。
    *
-   * <p>Never throws and never returns null: text with no headings at all is a report whose findings
-   * are the whole of it, because that is what a model that ignored the format actually produced, and
-   * it is still the answer the main agent needs.
+   * <p>从不抛异常，也从不返回 null：完全没有任何标题的文本，就是一份「发现即全部」的报告，因为那正是一个
+   * 无视了格式的模型实际产出的东西，而它仍然是主代理需要的答案。
    */
   public static SubAgentReport parse(String text) {
     String body = text == null ? "" : text.strip();
@@ -166,16 +159,14 @@ public final class SubAgentReport {
     String current = FINDINGS;
     sections.put(current, new StringBuilder());
     for (String line : body.split("\n", -1)) {
-      // Only the four known words end a section. A path like `src/Parser.java  final  ...` contains a
-      // colon, so a rule of "a colon means a heading" would swallow the file list it is meant to
-      // read — the words are the whole test, and there are only four of them.
+      // 只有那四个已知的词能结束一个分节。像 `src/Parser.java  final  ...` 这样的路径里含冒号，所以「有
+      // 冒号就是标题」的规则会把它本该读到的文件清单吞掉——这四个词就是全部的判据，而且只有四个。
       String heading = headingOf(line);
       if (heading != null) {
         current = heading;
         sections.computeIfAbsent(current, key -> new StringBuilder());
-        // What followed the colon on a heading line is that section's first content: "SUMMARY: found
-        // it" is one line and one statement, and dropping the half after the colon would lose the
-        // summary of every model that writes it that way.
+        // 标题行里冒号后面的内容是那个分节的第一段正文：「SUMMARY: found it」是一行、一句话，把冒号后的
+        // 一半丢掉，就会丢掉每一个这么写的模型的摘要。
         String rest = afterHeading(line);
         if (!rest.isEmpty()) {
           sections.get(current).append(rest).append('\n');
@@ -189,13 +180,12 @@ public final class SubAgentReport {
     String findings = clean(sections.get(FINDINGS));
     List<Artifact> artifacts = parseArtifacts(sections.get(FILES));
     if (status.isEmpty()) {
-      // No STATUS heading: a report that came back at all is a run that finished. Saying so is more
-      // useful than reporting an empty status the caller has to special-case.
+      // 没有 STATUS 标题：一份毕竟回来了的报告，就是一次跑完了的运行。把这件事说出来，比报一个调用方还得
+      // 特判的空状态更有用。
       status = body.isEmpty() ? "failed" : "done";
     }
     if (summary.isEmpty()) {
-      // Fall back to the first line of the body, which is what a model that skipped the format
-      // writes first: the sentence that says what happened.
+      // 退回正文的第一行，那正是跳过格式的模型最先写的东西：说明发生了什么的那个句子。
       summary = firstLine(body);
     }
     if (findings.isEmpty() && !summary.isEmpty() && !summary.equals(firstLine(body))) {
@@ -204,7 +194,7 @@ public final class SubAgentReport {
     return new SubAgentReport(status, summary, findings, artifacts, null, null);
   }
 
-  /** What a heading line carries after its colon, which is the section's first line of content. */
+  /** 标题行在冒号之后携带的内容，也就是该分节的第一行正文。 */
   private static String afterHeading(String line) {
     String bare = line.strip().startsWith("#")
         ? line.strip().replaceAll("^#+\\s*", "")
@@ -213,19 +203,19 @@ public final class SubAgentReport {
     return colon < 0 ? "" : bare.substring(colon + 1).strip();
   }
 
-  /** The heading a line is, or null when it is ordinary text. */
+  /** 这一行是什么标题；它就是普通文本时为 null。 */
   private static String headingOf(String line) {
     String trimmed = line.strip();
     if (trimmed.isEmpty()) {
       return null;
     }
-    // "STATUS: done" and "## Findings" both count. A model told to use headings uses one convention
-    // or the other and rarely both; accepting either costs a line and saves a run.
+    // 「STATUS: done」和「## Findings」都算数。被告知要用标题的模型会用其中一种写法，很少两种都用；两种
+    // 都接受，代价是一行代码，救回的是一次运行。
     String bare = trimmed.startsWith("#") ? trimmed.replaceAll("^#+\\s*", "") : trimmed;
     int colon = bare.indexOf(':');
     if (colon < 0) {
-      // A bare word is only a heading when it is short enough to be one: "STATUS" is, and a sentence
-      // that happens to end in a full stop after one word is not worth the risk of guessing.
+      // 光秃秃的一个词只有在短得足以当标题时才算标题：「STATUS」算，而一个碰巧只有一个词加句号的句子不值
+      // 得冒险去猜。
       String whole = bare.strip().toLowerCase(java.util.Locale.ROOT);
       if (whole.contains(" ")) {
         return null;
@@ -242,12 +232,11 @@ public final class SubAgentReport {
   }
 
   /**
-   * The file list.
+   * 文件清单。
    *
-   * <p>Accepts the shape the prompt asks for — {@code path  final|disposable  note} — and the shapes
-   * a model reaches for instead: a leading dash, a colon after the path, the mark anywhere in the
-   * line. A line with no mark is treated as finished work, because promoting a file that turns out to
-   * be an intermediate is a smaller mistake than deleting one that turns out to be the answer.
+   * <p>既接受提示要求的形状——{@code path  final|disposable  note}——也接受模型顺手写成的其他形状：
+   * 开头的短横线、路径后的冒号、标记出现在行内任何位置。没有标记的行按完成的工作处理，因为把一个其实是中间
+   * 产物的文件提升上来，比删掉一个其实是答案的文件错得更轻。
    */
   private static List<Artifact> parseArtifacts(StringBuilder section) {
     if (section == null) {
@@ -273,10 +262,8 @@ public final class SubAgentReport {
         path = line.substring(0, colon).strip();
         note = line.substring(colon + 1).strip();
       } else {
-        // Column-aligned (two or more spaces, or a tab) is what the prompt asks for, but a model
-        // that puts single spaces between the three fields is common enough that reading the whole
-        // line as one path would lose the file it names. So the mark is what the split is anchored
-        // on: everything before it is the path, everything after is the note.
+        // 提示要求的是对齐成列（两个及以上空格，或一个制表符），但用单个空格隔开三个字段的模型相当常见，
+        // 把整行读成一个路径就会丢掉它点名的文件。所以拆分的锚点是那个标记：它之前是路径，之后是注记。
         if (mark >= 0) {
           path = line.substring(0, mark).strip();
           note = line.substring(mark).strip();
@@ -286,7 +273,7 @@ public final class SubAgentReport {
           note = parts.length > 1 ? parts[1].strip() : "";
         }
       }
-      // The mark may be the note itself; leaving "final" in the note would read as a description.
+      // 标记本身可能就在注记里；把「final」留在注记里会被读成一句描述。
       note = note.replaceAll("(?i)^(final|disposable|intermediate)\\s*[:,-]?\\s*", "").strip();
       if (!path.isEmpty()) {
         found.add(new Artifact(path, disposable, note));
@@ -296,10 +283,10 @@ public final class SubAgentReport {
   }
 
   /**
-   * Where the final/disposable mark starts on a line, or -1 when the line carries none.
+   * 一行里 final/disposable 标记的起始位置；该行没有标记时为 -1。
    *
-   * <p>Found by looking for the word as a whole, so a directory called {@code temporary-output/} does
-   * not mark a file disposable and a note that merely mentions the word later does not either.
+   * <p>按整词查找，所以一个叫 {@code temporary-output/} 的目录不会把文件标成 disposable，一句只是后来
+   * 提到该词的注记也不会。
    */
   private static int markIndex(String line) {
     java.util.regex.Matcher matcher =
@@ -324,11 +311,10 @@ public final class SubAgentReport {
   }
 
   /**
-   * The report as it goes back to the main conversation, bounded and labelled.
+   * 报告发回主对话时的样子，有界且带标签。
    *
-   * @param workspace the directory the reported paths are relative to, used only when the run did not
-   *     name one of its own. It matters that this is right: a report naming a directory the files are
-   *     not in sends the main agent looking in the wrong place.
+   * @param workspace 所报告的路径相对于哪个目录；只在这次运行没有自己点名时使用。它是否正确很重要：一份
+   *     点着文件并不在的目录的报告，会把主代理引向错误的地方。
    */
   public String render(String workspace) {
     String where = directory.isEmpty() ? workspace : directory;
@@ -358,14 +344,14 @@ public final class SubAgentReport {
     return text;
   }
 
-  /** A report for a run that never produced one: cancelled, timed out, or the model refused. */
+  /** 为一次从未产出报告的运行准备的报告：被取消、超时，或模型拒绝。 */
   public static SubAgentReport failed(String reason) {
     return new SubAgentReport("failed", reason == null ? "" : reason, "", List.of(), null, null);
   }
 
-  /** A run that finished but wrote nothing and said nothing usable. */
+  /** 跑完了，但什么都没写、也没说出任何可用内容的运行。 */
   public static SubAgentReport empty() {
     return new SubAgentReport(
-        "done", "(the sub-agent produced no report)", "", List.of(), null, null);
+        "done", "（子代理没有产出报告）", "", List.of(), null, null);
   }
 }

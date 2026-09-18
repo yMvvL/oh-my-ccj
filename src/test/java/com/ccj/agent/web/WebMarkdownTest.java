@@ -13,16 +13,15 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 /**
- * The assistant's markdown renderer is browser code — it lives in {@code web/app.js}, which is a
- * classic script with no exports — so its cases cannot be JUnit assertions directly. They are a
- * node script ({@code src/test/js/markdown.test.mjs}) that lifts the renderer's own source out of
- * the shipped file and runs it against a small DOM.
+ * 助手的 markdown 渲染器是浏览器代码——它住在 {@code web/app.js} 里，那是一个没有导出的经典
+ * 脚本——所以它的用例没法直接写成 JUnit 断言。它们是一个 node 脚本
+ * （{@code src/test/js/markdown.test.mjs}），把渲染器自己的源码从发布出去的文件里抠出来，对着
+ * 一个小小的 DOM 运行。
  *
- * <p>This class runs that script when a node is installed, and always checks the two properties
- * that are about the page rather than the parser: the answer really is rendered as markdown, and
- * the renderer builds nodes instead of HTML strings. A machine without node skips the script
- * rather than failing — the front end has no build step and no npm dependency to install, and a
- * test that cannot run must not look like one that passed.
+ * <p>这个类在有 node 的时候运行那个脚本，并且总是检查两条关于页面（而不是关于解析器）的性质：
+ * 答案真的被渲染成 markdown，以及渲染器构建的是节点而不是 HTML 字符串。没有 node 的机器会跳过
+ * 这个脚本，而不是失败——前端没有构建步骤，也没有要装的 npm 依赖，而一个跑不了的测试绝不能看
+ * 起来像一个通过了的测试。
  */
 class WebMarkdownTest {
 
@@ -31,26 +30,25 @@ class WebMarkdownTest {
 
   @Test
   void theRendererScriptPasses() throws IOException, InterruptedException {
-    // The shared runner rather than a second copy of it: the copy this replaces read the child's
-    // output to the end *before* waiting, so the timeout was decoration — a case file that hung held
-    // the build — and it reported a missing node by printing a line and returning, which JUnit records
-    // as a pass. Both are fixed in one place now.
-    WebSessionRowTest.runNodeCases(SCRIPT, "the markdown renderer");
+    // 用共享的运行器，而不是它的第二份副本：被替换掉的那份在等待*之前*就把子进程的输出读到
+    // 末尾，于是超时只是装饰——一个卡住的用例文件会拖住整个构建——而且它用打印一行再返回的方式
+    // 来报告 node 缺失，而 JUnit 把这记成通过。现在两者都在一处修好了。
+    WebSessionRowTest.runNodeCases(SCRIPT, "markdown 渲染器");
   }
 
   @Test
   void aCaseFileThatCannotBeRunIsSkippedRatherThanPassed() {
-    // The bug this pins: the earlier version printed a line and returned, which JUnit records as a
-    // green test — a build machine without node showed every browser case as passing while not one of
-    // them ran. A missing script must therefore abort the case, not complete it.
+    // 这里钉住的 bug：更早的版本打印一行再返回，而 JUnit 把这记成一个绿色的测试——一台没有
+    // node 的构建机器会显示每一个浏览器用例都通过，而它们一个都没跑。所以缺失的脚本必须让用例
+    // 中止，而不是让它完成。
     //
-    // Asserted through the real entry point with a path that cannot exist, so this checks the runner
-    // rather than the machine it happens to be running on.
+    // 通过真正的入口点、用一个不可能存在的路径来断言，所以这检查的是运行器，而不是碰巧在跑它
+    // 的那台机器。
     Path missing = Path.of("src", "test", "js", "this-file-does-not-exist.test.mjs");
 
     assertThrows(
         org.opentest4j.TestAbortedException.class,
-        () -> WebSessionRowTest.runNodeCases(missing, "a case file that is not there"));
+        () -> WebSessionRowTest.runNodeCases(missing, "一个不存在的用例文件"));
   }
 
   @Test
@@ -58,9 +56,8 @@ class WebMarkdownTest {
     String script = appSource();
     if (script == null) { return; }
 
-    // The streamed answer goes through the markdown path, and the fallback the loop sends when
-    // nothing was streamed goes through the same one — otherwise a turn with no deltas would be
-    // the only answer on screen rendered as plain text.
+    // 流式答案走 markdown 那条路，而循环在什么都没流式传输时发的那份兜底也走同一条——否则一个
+    // 没有任何增量的回合，就会成为屏幕上唯一一个以纯文本渲染的答案。
     assertTrue(script.contains("queueMarkdown(assistantBlock()"), script);
     assertTrue(script.contains("queueMarkdown(block, finalText)"), script);
     assertTrue(script.contains("renderMarkdown(md, node)"), script);
@@ -73,17 +70,16 @@ class WebMarkdownTest {
     if (script == null) { return; }
     int from = script.indexOf("---- markdown: parse");
     int to = script.indexOf("---- transcript");
-    assertTrue(from > 0 && to > from, "the markdown section must be delimited by its banners");
+    assertTrue(from > 0 && to > from, "markdown 这一段必须由它的横幅界定出来");
     String renderer = script.substring(from, to);
 
-    // The page's contract, restated where it is easiest to break: model output becomes nodes, so
-    // there is no HTML source for a tag in an answer to be parsed as markup, and a link is only
-    // given an href after its scheme has been filtered.
-    assertFalse(renderer.contains("innerHTML"), "the renderer must not build HTML strings");
+    // 页面的契约，在最容易被破坏的地方再说一遍：模型输出变成节点，所以答案里的标签没有 HTML
+    // 源码可供被当成标记解析，而链接只有在它的协议被过滤之后才会被赋予 href。
+    assertFalse(renderer.contains("innerHTML"), "渲染器绝不能构建 HTML 字符串");
     assertFalse(renderer.contains("insertAdjacentHTML"), renderer);
     assertFalse(renderer.contains("createContextualFragment"), renderer);
     assertFalse(renderer.contains("document.write"), renderer);
-    assertTrue(renderer.contains("mdSafeUrl"), "link targets must be filtered");
+    assertTrue(renderer.contains("mdSafeUrl"), "链接目标必须被过滤");
   }
 
   private static String appSource() {
@@ -102,7 +98,7 @@ class WebMarkdownTest {
           return candidate;
         }
       } catch (IOException | InterruptedException err) {
-        // try the next name
+        // 试下一个名字
       }
     }
     return null;

@@ -20,18 +20,17 @@ import java.util.regex.Pattern;
 import java.util.Set;
 
 /**
- * Argument parsing, path display and text inspection shared by the bundled tools.
+ * 内置工具共用的参数解析、路径显示与文本检查。
  *
- * <p>Package-private on purpose: the tool ABI the rest of the harness talks to is the {@link
- * com.ccj.agent.core.Tool} interface, and duplicating these details in each tool would let them
- * drift apart (one tool accepting a blank path, another rejecting it, and so on).
+ * <p>刻意设为包内可见：harness 其余部分与之对话的工具 ABI 是 {@link com.ccj.agent.core.Tool}
+ * 接口，把这些细节在每个工具里各写一遍，只会让它们彼此漂移（一个工具接受空路径，另一个拒绝，诸如此类）。
  */
 final class ToolSupport {
 
-  /** Directories no coding session wants flooded into output; skipped by glob and grep. */
+  /** 编码会话不希望被灌进输出的目录；glob 与 grep 会跳过它们。 */
   static final Set<String> IGNORED_DIRS = Set.of("target", ".git", "node_modules", ".idea");
 
-  /** Bytes inspected when deciding whether a file is binary text. */
+  /** 判断一个文件是否为二进制文本时检查的字节数。 */
   static final int BINARY_PROBE_BYTES = 8 * 1024;
 
   private ToolSupport() {}
@@ -43,10 +42,10 @@ final class ToolSupport {
   static String requireText(JsonNode args, String field) {
     JsonNode node = args.get(field);
     if (node == null || node.isNull()) {
-      throw new IllegalArgumentException("missing required argument '" + field + "'");
+      throw new IllegalArgumentException("缺少必需参数 '" + field + "'");
     }
     if (!node.isTextual()) {
-      throw new IllegalArgumentException("argument '" + field + "' must be a string");
+      throw new IllegalArgumentException("参数 '" + field + "' 必须是字符串");
     }
     return node.asText();
   }
@@ -54,19 +53,19 @@ final class ToolSupport {
   static String requireNonBlank(JsonNode args, String field) {
     String value = requireText(args, field);
     if (value.isBlank()) {
-      throw new IllegalArgumentException("argument '" + field + "' must not be blank");
+      throw new IllegalArgumentException("参数 '" + field + "' 不能为空");
     }
     return value;
   }
 
-  /** Text argument or {@code null} when absent; blank counts as absent for path-like options. */
+  /** 文本参数，缺席时为 {@code null}；对路径类选项来说，空串也算缺席。 */
   static String optionalText(JsonNode args, String field) {
     JsonNode node = args.get(field);
     if (node == null || node.isNull()) {
       return null;
     }
     if (!node.isTextual()) {
-      throw new IllegalArgumentException("argument '" + field + "' must be a string");
+      throw new IllegalArgumentException("参数 '" + field + "' 必须是字符串");
     }
     return node.asText();
   }
@@ -77,7 +76,7 @@ final class ToolSupport {
       return fallback;
     }
     if (!node.isBoolean()) {
-      throw new IllegalArgumentException("argument '" + field + "' must be a boolean");
+      throw new IllegalArgumentException("参数 '" + field + "' 必须是布尔值");
     }
     return node.asBoolean();
   }
@@ -88,19 +87,18 @@ final class ToolSupport {
       return fallback;
     }
     if (!node.isIntegralNumber() || !node.canConvertToInt()) {
-      throw new IllegalArgumentException("argument '" + field + "' must be an integer");
+      throw new IllegalArgumentException("参数 '" + field + "' 必须是整数");
     }
     int value = node.asInt();
     if (value < min || value > max) {
       throw new IllegalArgumentException(
-          "argument '" + field + "' must be between " + min + " and " + max + ", got " + value);
+          "参数 '" + field + "' 必须在 " + min + " 与 " + max + " 之间，实际是 " + value);
     }
     return value;
   }
 
   /**
-   * Path as the model should see it: relative to the session cwd when it is inside, absolute
-   * otherwise, so output stays short but never ambiguous.
+   * 模型应当看到的路径形式：在工作目录之内时相对它，否则用绝对路径，这样输出既短又不会有歧义。
    */
   static String display(ToolContext ctx, Path path) {
     Path absolute = path.toAbsolutePath().normalize();
@@ -111,12 +109,12 @@ final class ToolSupport {
     return absolute.toString();
   }
 
-  /** Filesystem-independent form used for glob matching and for output that must be greppable. */
+  /** 与文件系统无关的形式，用于 glob 匹配，以及需要能被 grep 到的输出。 */
   static String slashed(Path path) {
     return path.toString().replace('\\', '/');
   }
 
-  /** UTF-8 byte length without allocating the encoded array. */
+  /** UTF-8 字节长度，且不分配编码后的数组。 */
   static int utf8Length(String text) {
     int bytes = 0;
     for (int i = 0; i < text.length(); i++) {
@@ -138,8 +136,8 @@ final class ToolSupport {
   }
 
   /**
-   * The longest prefix of {@code text} that fits in {@code maxBytes} UTF-8 bytes, cut only on a code
-   * point boundary so no half character is ever handed back.
+   * {@code text} 中能放进 {@code maxBytes} 个 UTF-8 字节的最长前缀，只在码点边界上截断，因此永远不会
+   * 交回半个字符。
    */
   static String truncateUtf8(String text, int maxBytes) {
     int bytes = 0;
@@ -172,7 +170,7 @@ final class ToolSupport {
     return text.substring(0, i);
   }
 
-  /** Lines as {@code wc -l} would disagree with: a trailing newline does not add a line. */
+  /** 与 {@code wc -l} 会数得不一样的行数：末尾的换行不额外算作一行。 */
   static int lineCount(String text) {
     if (text.isEmpty()) {
       return 0;
@@ -186,7 +184,7 @@ final class ToolSupport {
     return text.charAt(text.length() - 1) == '\n' ? lines : lines + 1;
   }
 
-  /** All non-overlapping occurrences of {@code needle}, as ascending {@code [start, end)} ranges. */
+  /** {@code needle} 全部不重叠的出现位置，以递增的 {@code [start, end)} 区间表示。 */
   static List<int[]> findAll(String text, String needle) {
     List<int[]> ranges = new ArrayList<>();
     if (needle.isEmpty()) {
@@ -204,9 +202,8 @@ final class ToolSupport {
   }
 
   /**
-   * How many times {@code needle} would match if runs of whitespace were collapsed. Used only to
-   * phrase the "no exact match" error, where the usual cause is indentation the model guessed
-   * wrong; a count is a cheap hint that the text exists at all.
+   * 把连续空白折叠之后，{@code needle} 会匹配多少次。只用于组织「no exact match」这条错误消息，其
+   * 常见成因是模型猜错了缩进；一个计数是「这段文本确实存在」的便宜提示。
    */
   static int countNormalisedMatches(String text, String needle) {
     String target = normaliseWhitespace(needle);
@@ -227,17 +224,16 @@ final class ToolSupport {
   }
 
   /**
-   * The lines around where a hunk was expected, numbered, for a match that failed.
+   * 匹配失败时，预期出现某个块的位置附近那几行，带行号。
    *
-   * <p>A failed `edit` is the most common thing a model has to recover from, and the error it used to
-   * get named a count and nothing else: "no exact match", or "1 region matches once whitespace is
-   * normalised". Both are true and neither lets the model fix it without reading the file again —
-   * which is a whole round trip for information this call already has in hand.
+   * <p>失败的 `edit` 是模型最常需要从中恢复的事情，而它过去得到的错误只说了一个计数，别的什么都没有：
+   * 「no exact match」，或者「1 region matches once whitespace is normalised」。两句都是真的，而两句
+   * 都无法让模型不必重读文件就把问题修好——对这次调用手里已经有的信息来说，那是一整个来回。
    */
   static String excerpt(String text, int aroundLine, int contextLines) {
     List<String> lines = List.of(text.split("\n", -1));
     if (lines.isEmpty()) {
-      return "(the file is empty)\n";
+      return "(文件为空)\n";
     }
     int centre =
         aroundLine < 1 ? 1 : Math.min(aroundLine, lines.size());
@@ -256,14 +252,12 @@ final class ToolSupport {
   }
 
   /**
-   * The 1-based line the needle starts at, or -1 when there is nothing to anchor to.
+   * needle 起始的行号（从 1 计），没有可供锚定的东西时为 -1。
    *
-   * <p>Anchored on the needle's first line, because that is the part a model usually gets right and
-   * the indentation below it is where the guess goes wrong. The comparison tolerates the difference
-   * that caused the failure in the first place: runs of whitespace are matched loosely, and if the
-   * whole line cannot be found — the model may have quoted it with different spacing throughout — the
-   * first word is tried before giving up. A neighbourly excerpt anchored slightly wrong is worth more
-   * than "no exact match" and nothing else.
+   * <p>锚在 needle 的第一行上，因为那通常是模型猜对的部分，而它下面的缩进才是猜错的地方。比较时容忍
+   * 一开始就导致失败的那种差异：连续空白按宽松方式匹配；如果整行找不到——模型可能引用它时每处的空格都
+   * 不一样——就先试第一个词再放弃。一段位置略有偏差但就在附近的摘录，比一句「no exact match」外加
+   * 什么都没有更有价值。
    */
   static int lineOfFirstLine(String text, String needle) {
     String first = null;
@@ -292,7 +286,7 @@ final class ToolSupport {
     return -1;
   }
 
-  /** Where the first {@code words} appear in order with any whitespace between them, or -1. */
+  /** 头 {@code words} 个词按顺序出现、其间允许任意空白的位置，找不到时为 -1。 */
   private static int indexOfWords(String text, List<String> words) {
     StringBuilder pattern = new StringBuilder();
     for (int i = 0; i < words.size(); i++) {
@@ -310,10 +304,9 @@ final class ToolSupport {
   }
 
   /**
-   * Strict UTF-8 decode of already-read bytes.
+   * 对已经读入的字节做严格的 UTF-8 解码。
    *
-   * @return the text, or {@code null} when the bytes are not text: a NUL byte or a sequence that is
-   *     not valid UTF-8
+   * @return 文本；这些字节不是文本时返回 {@code null}：出现 NUL 字节，或者存在不是合法 UTF-8 的序列
    */
   static String decodeText(byte[] bytes) {
     if (looksBinary(bytes)) {
@@ -340,7 +333,7 @@ final class ToolSupport {
     return false;
   }
 
-  /** NUL byte anywhere in the first {@link #BINARY_PROBE_BYTES} of the file. */
+  /** 文件开头 {@link #BINARY_PROBE_BYTES} 个字节中任意位置出现 NUL 字节。 */
   static boolean isBinaryFile(Path file) throws IOException {
     int probe = (int) Math.min(BINARY_PROBE_BYTES, Files.size(file));
     byte[] head = new byte[probe];
@@ -357,16 +350,15 @@ final class ToolSupport {
     return looksBinary(head);
   }
 
-  /** Callback for {@link #walkFiles}. */
+  /** {@link #walkFiles} 的回调。 */
   @FunctionalInterface
   interface FileSink {
     void accept(Path file, Path relative) throws IOException;
   }
 
   /**
-   * Visits every regular file under {@code base} in unspecified order, skipping {@link
-   * #IGNORED_DIRS} and never descending into symbolic links to directories - a glob that walks a
-   * link farm can run forever.
+   * 以未指定的顺序访问 {@code base} 下的每个普通文件，跳过 {@link #IGNORED_DIRS}，并且从不进入指向
+   * 目录的符号链接——一个走进链接农场的 glob 可能永远跑不完。
    */
   static void walkFiles(Path base, FileSink sink) throws IOException {
     IOException[] failure = new IOException[1];

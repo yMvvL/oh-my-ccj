@@ -1,25 +1,21 @@
-/* ccj --web — the component sheet. The tokens live in theme.css, copied from
- * the DeepSeek Harness; the theme is an attribute pair set before the first
- * paint: `data-theme` on <html>, `data-ds-dark-theme` on <body>.
+/* ccj --web —— 组件样式表。token 在 theme.css 里，拷贝自 DeepSeek Harness；主题是首次
+ * 绘制之前设置的一对属性：<html> 上的 `data-theme`、<body> 上的 `data-ds-dark-theme`。
  *
- * Nothing below defines a colour of its own: every surface, border, text tone
- * and shadow names a `--dsw-*` value, through the small table under this
- * comment rather than a second palette. The radius ladder and the spacing
- * scale stay local, because the harness writes those as literals per component
- * and a page with six components reads better with them named once. */
+ * 下面没有任何一处定义自己的颜色：每一个表面、边框、文字色调和阴影都通过这条注释下面
+ * 的那张小表命名一个 `--dsw-*` 值，而不是另起一套调色板。圆角阶梯和间距刻度留在本地，
+ * 因为工具架把它们按组件写成字面量，而这个页面只有六个组件，只命名一次更好读。 */
 
-/* The palette is the DeepSeek Harness's design-platform sheet: a cool-grey
- * surface scale, one blue for anything interactive, monochrome primary actions,
- * and a page that is *flat* — depth is a hairline plus one shadow level, not a
- * gradient. Names are kept as they were (--bg, --fg, --accent …) so every rule
- * below keeps working; the values are what changed. */
+/* 调色板是 DeepSeek Harness 的 design-platform 表：一套冷灰表面阶梯、一种只用于可交互
+ * 元素的蓝色、单色的主操作，以及一个*扁平*的页面 —— 层次感来自一条细线加一层阴影，
+ * 而不是渐变。名字保持原样（--bg、--fg、--accent …），这样下面每条规则都还能用；
+ * 变的是值。 */
 :root {
-  --radius: 12px;      /* cards, code blocks, tool output */
-  --radius-sm: 8px;    /* inputs, list rows, chips */
-  --radius-lg: 22px;   /* the composer card and a user bubble */
-  --radius-xl: 24px;   /* dialogs */
-  --content: 748px;    /* the harness's --dsh-chat-content-width */
-  --stack: 780px;      /* its composer card: content width + 2 x 16px */
+  --radius: 12px;      /* 卡片、代码块、工具输出 */
+  --radius-sm: 8px;    /* 输入框、列表行、小标签 */
+  --radius-lg: 22px;   /* 输入框卡片和用户气泡 */
+  --radius-xl: 24px;   /* 对话框 */
+  --content: 748px;    /* 工具架的 --dsh-chat-content-width */
+  --stack: 780px;      /* 它的输入框卡片：内容宽度 + 2 × 16px */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
@@ -37,20 +33,20 @@ body {
   margin: 0;
   background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
-  /* The harness's small size: 14/22, with 13/20 and 12/18 below it. */
+  /* 工具架的小号尺寸：14/22，其下是 13/20 和 12/18。 */
   font: 14px/1.57 var(--dsw-font-family);
   -webkit-text-size-adjust: 100%;
 }
 
-/* One focus treatment everywhere, so keyboard users can always see where
- * they are — buttons, inputs, list rows and the composer alike. */
+/* 全站只有一种焦点样式，这样键盘用户永远能看见自己在哪 —— 按钮、输入框、列表行和
+ * 输入框都一样。 */
 :focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
 
-/* Thin, tinted scrollbars: the panes here scroll a lot and the default
- * chrome-grey bars next to a dark surface look like a browser artifact. */
+/* 细的、带色调的滚动条：这里的面板滚动很多，而深色表面旁边默认的浏览器灰条看起来
+ * 就像浏览器自己的瑕疵。 */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--dsw-alias-border-l2) transparent;
@@ -79,7 +75,7 @@ body {
 
 #app {
   position: relative;
-  /* Above the wallpaper layer, which is painted behind everything. */
+  /* 在壁纸层之上，而壁纸层画在所有东西后面。 */
   z-index: 1;
   display: flex;
   flex-direction: column;
@@ -87,9 +83,8 @@ body {
   height: 100dvh;
 }
 
-/* The shell is the harness's AppFrame: three columns in one grid, the centre
- * one taking what is left. A collapsed column is `display: none`, so its track
- * collapses with it and leaves no gap behind. */
+/* 外壳就是工具架的 AppFrame：一个网格里的三列，中间那一列拿走剩下的宽度。折叠的列是
+ * `display: none`，所以它的轨道跟着塌掉，身后不留缝隙。 */
 .frame {
   flex: 1 1 auto;
   display: grid;
@@ -98,7 +93,7 @@ body {
   background: var(--dsw-alias-bg-base);
   overflow: hidden;
 }
-/* ---------------------------------------------------------------- topbar */
+/* ---------------------------------------------------------------- 顶栏 */
 
 #main {
   display: flex;
@@ -109,8 +104,7 @@ body {
   background: var(--dsw-alias-bg-base);
 }
 
-/* One row, a hairline under it, everything the page can do on the right — the
- * harness's conversation header. */
+/* 一行，下面一条细线，页面能做的一切都在右边 —— 工具架的对话头部。 */
 .header {
   flex: none;
   position: relative;
@@ -137,8 +131,7 @@ body {
 }
 .brand { display: flex; align-items: center; gap: var(--sp-2); }
 
-/* The wordmark sits in its own small tile: it is the one thing on the page that
- * is an identity rather than a control. */
+/* 字标待在自己的小方块里：它是这个页面上唯一一个代表身份而不是控件的东西。 */
 .brand-mark {
   font: 600 13px/1 var(--ds-font-family-code);
   letter-spacing: .08em;
@@ -182,8 +175,7 @@ body {
   text-overflow: ellipsis;
 }
 
-/* The session id is the one that gives way: a provider and a model name are
- * short and are the answer to "what am I talking to". */
+/* 让位的是会话 id：提供方和模型名都很短，而且它们才是「我在跟谁说话」的答案。 */
 #chip-provider, #chip-model { flex: none; }
 #chip-session { flex: 0 1 auto; }
 .chip-session { color: var(--dsw-alias-label-primary); font-weight: 500; }
@@ -204,7 +196,7 @@ body {
   flex: none;
   transition: background .2s ease;
 }
-/* State is a colour on the dot and nothing else: no pill, no second surface. */
+/* 状态只是圆点上的一个颜色，仅此而已：没有药丸、没有第二层面。 */
 .live[data-state="thinking"] .live-dot { background: var(--dsw-alias-state-business-primary); }
 .live[data-state="running"] .live-dot {
   background: var(--dsw-alias-state-business-primary);
@@ -219,14 +211,12 @@ body {
   50% { opacity: 1; transform: scale(1.15); }
 }
 
-/* The header utilities are the harness's icon buttons: a glyph that always
- * fits, with the word beside it while there is room for it. */
+/* 头部这些工具是工具架的图标按钮：一个永远合身的字形，有地方时就把词放在它旁边。 */
 .btn-glyph { font-size: 13px; line-height: 1; }
 
-/* The header is as wide as the three columns leave it, which has nothing to do
- * with how wide the window is — so the words give way to the glyphs when the
- * row itself runs out of room, not when the viewport does. Every control keeps
- * its title and aria-label either way. */
+/* 头部有多宽由三列剩下多少决定，跟窗口多宽无关 —— 所以让位给字形的是这一行自己
+ * 没地方的时候，而不是视口不够的时候。无论哪种情况，每个控件都保留自己的 title 和
+ * aria-label。 */
 .title-row { container-type: inline-size; }
 
 @container (max-width: 720px) {
@@ -242,17 +232,16 @@ body {
   gap: 8px;
   flex-wrap: wrap;
 }
-/* The two panel toggles are one segmented control: they change what the page
- * shows, not what the agent does, and the shared rail says so. The active half
- * is tinted with the accent rather than merely un-dimmed — on the light theme a
- * subtler difference is invisible at a glance. */
+/* 两个面板切换钮是一段分段控件：它们改变页面显示什么，不改变代理做什么，共用的那条
+ * 轨道就是这么说的。激活的那一半用强调色着色，而不只是去掉变暗 —— 在浅色主题上更细微
+ * 的差别一眼看不出来。 */
 .view-toggles {
   display: inline-flex;
   align-items: center;
   gap: 2px;
 }
-.view-toggles /* The harness's buttons: a hairline, the elevated fill, 18px of radius and no
- * lift — a hover is a surface change and nothing else. */
+.view-toggles /* 工具架的按钮：一条细线、抬起的填充、18px 圆角，没有上浮 —— 悬停只是一次
+ * 表面变化，别无其他。 */
 .btn {
   font: 500 13px/20px var(--dsw-font-family);
   color: var(--dsw-alias-label-primary);
@@ -275,9 +264,8 @@ body {
   box-shadow: none;
 }
 
-/* The harness marks the active tab with a colour and a 2px rule under it, not
- * with a filled pill: two of these three controls are panels, and the third is
- * plain text on purpose. */
+/* 工具架用颜色和下面一条 2px 的线标记激活的标签页，而不是填充的药丸：这三个控件里有
+ * 两个是面板，第三个有意就是纯文本。 */
 .view-toggles .btn[aria-expanded="true"] {
   background: none;
   border-color: transparent;
@@ -285,10 +273,9 @@ body {
   font-weight: 500;
   box-shadow: inset 0 -2px 0 0 var(--dsw-alias-state-business-primary);
 }
-/* Three weights, told apart by surface rather than by dimming: primary is the
- * monochrome fill, secondary is a transparent control with a hairline, ghost
- * keeps even that until hover. Nothing here lifts or glows — a hover is a
- * surface change and a border change, the way the harness does it. */
+/* 三种权重靠表面区分，而不是靠变暗：primary 是单色填充，secondary 是带细线的透明
+ * 控件，ghost 连细线都留到悬停时才有。这里没有任何东西上浮或发光 —— 悬停是一次表面
+ * 变化加一次边框变化，工具架就是这么做的。 */
 .btn {
   font: 13px/1 var(--dsw-font-family);
   font-weight: 500;
@@ -343,12 +330,11 @@ body {
   box-shadow: none;
 }
 
-/* A compact button for places where a full-size one would outweigh its row:
- * the session list and a dialog header. */
+/* 用在那些用全尺寸按钮会压过整行的地方的紧凑按钮：会话列表和对话框头部。 */
 .btn.sm { padding: 5px 10px; font-size: 12px; border-radius: 14px; }
 
-/* The theme control reads as a control, not as a label: a glyph, the state in
- * words, and the same radius and hover as every other header button. */
+/* 主题控件读起来是控件，不是标签：一个字形、用词写出的状态，以及和其他头部按钮
+ * 一样的圆角和悬停。 */
 .theme-btn { display: inline-flex; align-items: center; gap: 6px; }
 .theme-icon { color: var(--dsw-alias-state-business-primary); font-size: 13px; line-height: 1; }
 .theme-label { font-size: 12px; }
@@ -386,16 +372,15 @@ body {
 .toggle.on .switch::after { transform: translateX(11px); background: var(--dsw-alias-state-warn-primary); }
 .toggle.on .toggle-state { color: var(--dsw-static-neutral-1000); }
 
-/* ---------------------------------------------------------------- layout */
+/* ---------------------------------------------------------------- 布局 */
 
 #layout { flex: 1 1 auto; display: flex; min-height: 0; }
 
-/* --------------------------------------------------------------- sidebar */
+/* -------------------------------------------------------------- 侧边栏 */
 
-/* The workspace tree, a region of its own on the left of the transcript. It is
- * a flex item, so collapsing it with `display: none` leaves no gap behind —
- * exactly how the right-hand `.side` panel collapses, so the pair reads as
- * two halves of the same gesture. */
+/* 工作区树，转录左侧一个独立区域。它是一个 flex 项，所以用 `display: none` 折叠它
+ * 身后不留缝隙 —— 右侧的 `.side` 面板正是这样折叠的，于是这一对读起来是同一个手势的
+ * 两半。 */
 .sidebar {
   flex: none;
   width: 280px;
@@ -422,7 +407,7 @@ body {
 
 .side-logo-row .brand-mark { flex: 1 1 auto; min-width: 0; }
 
-/* The harness's 28px circular icon button, for anything that is a glyph. */
+/* 工具架那个 28px 的圆形图标按钮，给所有以字形表示的东西用。 */
 .icon-btn {
   flex: none;
   width: 28px;
@@ -442,8 +427,8 @@ body {
 
 .icon-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }
 
-/* New session, at the harness's size for it: 38px of 14/22 at 500, a hairline,
- * the elevated fill and a 12px radius. */
+/* 新建会话，用工具架为它定的尺寸：38px、14/22、500，一条细线、抬起的填充和 12px
+ * 圆角。 */
 .new-session {
   flex: none;
   height: 38px;
@@ -463,8 +448,7 @@ body {
 }
 
 .new-session:hover { background: var(--dsw-alias-button-floating-hover); }
-/* The tree scrolls inside itself: a workspace with fifty sessions must not
- * stretch the page, and the header above it stays put. */
+/* 树在自身内部滚动：一个有五十个会话的工作区不能把页面撑长，而它上面的头部原地不动。 */
 .sidebar-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -474,8 +458,8 @@ body {
   flex-direction: column;
   padding-bottom: 8px;
 }
-/* The outcome of the last action, and why something was refused: both live
- * inside the sidebar, next to the control that produced them. */
+/* 上一个动作的结果，以及某件事为什么被拒绝：两者都待在侧边栏里面，紧挨产生它们的
+ * 那个控件。 */
 .sidebar-note {
   margin: 0;
   font: 12px/1.45 var(--dsw-font-family);
@@ -486,12 +470,11 @@ body {
 
 .ws-tree { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .ws-node { position: relative; border: none; background: none; border-radius: 8px; }
-/* Selection is where the keyboard and the actions point; the accent border is
- * reserved for the workspace the page is actually working in. */
+/* 选择是键盘和那些动作指向的地方；强调色边框留给页面真正在其中工作的那个工作区。 */
 .ws-node.selected { background: var(--dsw-alias-interactive-bg-hover); }
 .ws-node.active { background: none; }
-.ws-node.active > .ws-row > /* A workspace row is the harness's project row: 34px, 8px of radius, the folder
- * glyph in a 16px slot and the name as the row. */
+.ws-node.active > .ws-row > /* 工作区行是工具架的项目行：34px、8px 圆角，文件夹字形占
+ * 16px 的槽位，名字就是这一行。 */
 .ws-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -511,10 +494,10 @@ body {
   overflow: hidden;
 }
 .ws-row { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px; }
-/* State on the left, the row's actions on the right — a second line of the
- * card, so the workspace name above it is never squeezed to make room. */
-/* The row's own actions appear when the row is pointed at, like the harness's
- * hover-only row actions; keyboard focus opens them too. */
+/* 左边是状态，右边是这一行自己的动作 —— 卡片的一行，这样上面的工作区名永远不会被
+ * 挤着让位。 */
+/* 这一行自己的动作在行被指向时出现，就像工具架那些只在悬停时出现的行内动作；
+ * 键盘焦点也会打开它们。 */
 .ws-foot {
   display: flex;
   align-items: center;
@@ -527,9 +510,8 @@ body {
 .ws-node:hover > .ws-foot,
 .ws-node.selected > .ws-foot,
 .ws-foot:focus-within { opacity: 1; }
-/* A folder is one control: it selects the node and folds its sessions open.
- * Switching stays a separate, explicit action (`Use`), so browsing the tree
- * can never move the conversation by accident. */
+/* 文件夹是一个控件：它选中节点并展开它的会话。切换仍然是分开的、显式的动作
+ * （`Use`），所以浏览树永远不会意外移动对话。 */
 .ws-name {
   flex: 1 1 auto;
   min-width: 0;
@@ -553,10 +535,9 @@ body {
 .ws-folder { flex: none; color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 1; }
 .ws-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-count { flex: none; color: var(--dsw-alias-label-tertiary); font: 400 12px/20px var(--dsw-font-family); }
-/* The active workspace's count is a fact about where you are, so it is the
- * one on the panel that is not dimmed. */
+/* 当前工作区的计数是关于「你在哪」的事实，所以它是面板上唯一没有变暗的那个。 */
 .ws-node.active .ws-count { color: var(--dsw-alias-label-secondary); }
-/* A count and a state word are the same quiet thing on a row. */
+/* 一个计数和一个状态词在同一行上是同一种安静的东西。 */
 .ws-badge {
   color: var(--dsw-alias-label-tertiary);
   font: 500 11px/16px var(--dsw-font-family);
@@ -567,8 +548,7 @@ body {
 .ws-use, .ws-remove { flex: 0 0 auto; }
 .ws-foot .confirm-row { flex: 0 0 auto; }
 
-/* The sessions of one node, indented under a hairline that carries the eye
- * from the folder to its contents. */
+/* 一个节点的会话，缩进在一条细线下面，这条线把视线从文件夹引到它的内容。 */
 .ws-sessions {
   list-style: none;
   margin: 0 0 4px;
@@ -578,9 +558,8 @@ body {
   flex-direction: column;
   gap: 2px;
 }
-/* A session row keeps the shape it has everywhere else — content on the left,
- * the two-step delete on the right — at the sidebar's width, and one step
- * tighter, because a long history is a list to read down, not to scroll. */
+/* 会话行保持它在别处的形状 —— 内容在左、两步删除在右 —— 在侧边栏的宽度上再紧一档，
+ * 因为一长串历史是要顺着读的列表，不是拿来滚的。 */
 .ws-sessions .session-row {
   display: flex;
   align-items: center;
@@ -607,8 +586,8 @@ body {
 .session-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .session-row.current { background: var(--dsw-alias-interactive-bg-hover); }
 
-/* The current row is marked by a dot in the leading slot, the way the harness
- * marks a row's state — not by a word squeezed in beside the title. */
+/* 当前行由开头槽位里的一个点标记，工具架就是这样标记一行状态的 —— 而不是在标题旁边
+ * 挤进一个词。 */
 .session-row.current .session-item::before {
   content: "";
   flex: none;
@@ -660,9 +639,8 @@ body {
 .session-row.current .session-actions,
 .session-actions:focus-within { opacity: 1; }
 
-/* A conversation working somewhere else. The mark is a pulsing dot, and the
- * row keeps its stop control visible: the point of the marker is that the user
- * can find — and stop — a turn they are not looking at. */
+/* 在别处工作的一个对话。标记是一个跳动的点，而这一行让它的停止控件保持可见：这个
+ * 标记的意义就在于用户能找到 —— 并停止 —— 一个自己没在看的回合。 */
 .session-running {
   flex: none;
   width: 6px;
@@ -719,9 +697,8 @@ body {
   min-height: 0;
 }
 
-/* The conversation is one centred column: across a 1750px window a line of
- * prose is a head movement, not a sentence. Everything the transcript holds
- * (turns, cards, notices) inherits the column, so nothing stretches. */
+/* 对话是一列居中的窄栏：在一个 1750px 宽的窗口里，一行正文是一次扭头，而不是一句话。
+ * 转录持有的一切（回合、卡片、通知）都继承这个窄栏，所以什么都不会被拉宽。 */
 .transcript {
   flex: 1 1 auto;
   min-height: 0;
@@ -738,10 +715,8 @@ body {
   max-width: var(--content);
   margin: 0 auto;
 }
-/* The empty transcript is a state, not a blank: a quiet card waiting in the
- * middle of the pane. The auto vertical margins keep it centred, and the
- * narrower selector still wins over `.transcript > *` without touching the
- * column's horizontal centring. */
+/* 空转录是一种状态，不是一片空白：一张安静地等在面板中央的卡片。自动的上下外边距
+ * 让它居中，而更窄的选择器仍然压过 `.transcript > *`，同时不动窄栏的水平居中。 */
 .transcript > .placeholder {
   margin: auto;
   padding: 0;
@@ -752,15 +727,13 @@ body {
   text-align: center;
   font: 400 15px/24px var(--dsw-font-family);
 }
-/* ------------------------------------------------------------ transcript */
+/* ---------------------------------------------------------------- 转录 */
 
-/* A conversation restored from disk is deliberately a little quieter than the
- * turn happening live right now. */
+/* 从磁盘恢复的对话有意比此刻正在发生的回合安静一点。 */
 .ev.replay { opacity: .82; }
 
-/* Live items rise a few pixels into place — enough to show that something
- * arrived, never enough to move text you are already reading. Replayed history
- * is exempt: a restored conversation appears, it does not cascade. */
+/* 实时条目会上升几个像素就位 —— 足以说明有东西到了，但绝不会让你正在读的文字移动。
+ * 重放的历史豁免：恢复出来的对话是出现，不是层层落下。 */
 .ev:not(.replay) { animation: rise .18s ease-out both; }
 
 @keyframes rise {
@@ -789,8 +762,7 @@ body {
 }
 .ev-assistant { max-width: var(--content); }
 
-/* The harness's reasoning body: quiet text, indented under a text row, with no
- * box of its own. */
+/* 工具架的推理正文：安静的文字，缩进在一行文本下面，没有自己的框。 */
 .msg-reasoning {
   padding: 4px 0 4px 22px;
   margin-bottom: 4px;
@@ -803,22 +775,21 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-family: var(--dsw-font-family);
-  /* The markdown body measure: 16/28. */
+  /* markdown 正文的栏宽：16/28。 */
   font-size: 16px;
   line-height: 1.75;
 }
 
-/* ------------------------------------------------------------- markdown */
+/* ------------------------------------------------------------ markdown */
 
-/* The answer is rendered markdown, so the plain-text pre-wrap above is switched
- * off inside it and every gap is owned by the elements below. Nothing here uses
- * a fixed colour: the palette is the theme's, so both themes are styled once. */
+/* 答案渲染的是 markdown，所以上面的纯文本 pre-wrap 在里面被关掉，每一处间距都归下面
+ * 那些元素所有。这里没有任何地方用固定颜色：调色板是主题的，所以两个主题只写一次。 */
 .md { white-space: normal; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 
-/* Keep to the tags: a heading level is what tells a reader the shape of the
- * answer, so the sizes step down instead of flattening to one style. */
+/* 按标签分级：标题级别正是告诉读者答案结构的东西，所以字号逐级变小，而不是压成一
+ * 种样式。 */
 .md-h {
   margin: var(--sp-4) 0 var(--sp-2);
   font-size: 20px;
@@ -838,8 +809,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .md-li { margin: 2px 0; }
 .md-li > .md-p { margin: 0 0 var(--sp-2); }
 
-/* A task box is a record of what the model did, not a control to click: it is
- * rendered disabled, and the row still reads as a list item. */
+/* 任务框是模型做过什么的记录，不是一个可以点的控件：它渲染为禁用，而这一行读起来
+ * 仍然是列表项。 */
 .md-task { margin: 0 .45em 0 0; vertical-align: -1px; accent-color: var(--dsw-alias-state-business-primary); }
 
 .md-hr {
@@ -867,8 +838,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   overflow-wrap: anywhere;
 }
 
-/* A code block scrolls inside itself, exactly like a tool card's output: an
- * answer that pastes a file must not stretch the column. */
+/* 代码块在自身内部滚动，与工具卡片的输出完全一样：一个粘贴了文件的答案不能把窄栏
+ * 撑宽。 */
 .md-code-wrap { margin: 0 0 var(--sp-3); }
 .md-code-lang {
   font: 10px/1.6 var(--ds-font-family-code);
@@ -888,7 +859,7 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   overscroll-behavior: contain;
 }
 .md-pre .md-code { font: 400 13px/22px var(--ds-font-family-code); white-space: pre; color: var(--dsw-alias-label-primary); }
-/* Wide tables scroll rather than stretch, for the same reason. */
+/* 宽表格滚动而不是撑宽，理由相同。 */
 .md-table-wrap {
   margin: 0 0 var(--sp-3);
   overflow: auto;
@@ -904,14 +875,14 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 .md-table th { background: var(--dsw-specific-sidebar-fill); font-weight: 600; white-space: nowrap; }
 .md-table tr:last-child td { border-bottom: 0; }
-/* A cell's own alignment outranks the row's default without !important. */
+/* 单元格自己的对齐优先于行的默认值，而且不用 !important。 */
 .md-table th.md-align-right, .md-table td.md-align-right { text-align: right; }
 .md-table th.md-align-center, .md-table td.md-align-center { text-align: center; }
 
-/* tool cards */
+/* 工具卡片 */
 
-/* A tool call is a row, not a card: 24px of leading, the tool name, a dot and a
- * one-line summary — the harness's ToolRow. The output below it is the card. */
+/* 一次工具调用是一行，不是一张卡片：24px 行高、工具名、一个点、一行摘要 —— 工具架的
+ * ToolRow。它下面的输出才是卡片。 */
 .ev-tool {
   position: relative;
   border: none;
@@ -934,8 +905,7 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .tool-mark.ok { color: var(--dsw-alias-state-success-primary); }
 .tool-mark.fail { color: var(--dsw-alias-state-error-primary); }
 .tool-name { flex: none; color: var(--dsw-alias-label-primary); font: 400 14px/24px var(--dsw-font-family); }
-/* The summary follows the name after a 2px separator dot, exactly where the
- * harness puts it. */
+/* 摘要跟在名字后面，中间隔一个 2px 的分隔点，正是工具架放它的位置。 */
 .tool-summary {
   display: flex;
   align-items: center;
@@ -963,8 +933,7 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 .ev-tool.ok { border: none; }
 .ev-tool.failed { border: none; }
-/* While a call is running, a band of light sweeps the row — the harness's own
- * running-state animation, at its 2.6s. */
+/* 调用运行期间，一带光扫过这一行 —— 工具架自己的运行态动画，用它的 2.6s。 */
 .ev-tool.running .tool-head {
   position: relative;
   overflow: hidden;
@@ -985,8 +954,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   0% { left: -300px; }
   90%, 100% { left: 100%; }
 }
-/* Monospace output sits on its own slightly darker surface and scrolls inside
- * itself: a long tool dump never stretches the page. */
+/* 等宽输出待在自己略深一点的表面上，并在自身内部滚动：一长串工具输出永远不会撑宽
+ * 页面。 */
 .tool-output {
   margin: 4px 0 4px 4px;
   padding: 12px 16px;
@@ -1018,10 +987,9 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   text-decoration: underline;
 }
 
-/* approval */
+/* 审批 */
 
-/* The harness's approval card: 20px of radius, the warning hairline, the input
- * surface, and a state strip across the top. */
+/* 工具架的审批卡片：20px 圆角、警示色细线、输入框表面，以及顶端一条状态带。 */
 .ev-approval {
   border: 1px solid var(--dsw-alias-state-warn-secondary);
   border-radius: 20px;
@@ -1086,14 +1054,13 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .approval-state.ok { color: var(--dsw-alias-state-success-primary); }
 .approval-state.bad { color: var(--dsw-alias-state-error-primary); }
 
-/* small lines */
+/* 小字行 */
 
 .ev-notice { color: var(--dsw-alias-label-tertiary); font-size: 12px; }
 
-/* The summary a compaction left in place of the earlier turns. Collapsed by
- * default — it is long, and it is rarely what the reader is looking for — but
- * the head is a real control, because opening it is how you check what it kept.
- * Muted rather than loud: it is a fold in the conversation, not a message. */
+/* 一次压缩留在原处、替代较早那些回合的摘要。默认折叠 —— 它很长，而且很少是读者在找
+ * 的东西 —— 但头部是一个真正的控件，因为打开它正是检查它留下了什么的方式。用安静而
+ * 不是响亮的样式：它是对话里的一道折痕，不是一条消息。 */
 .ev-summary {
   border: 1px solid var(--dsw-alias-border-secondary);
   border-radius: 8px;
@@ -1134,8 +1101,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 .ev-error { color: var(--dsw-alias-state-error-primary); white-space: pre-wrap; overflow-wrap: anywhere; }
 
-/* A short label between two hairlines — a paragraph break, not a chapter
- * break. The transcript's own gap supplies the space around it. */
+/* 两条细线之间的短标签 —— 是段落分隔，不是章节分隔。周围的间距由转录自己的间隔
+ * 提供。 */
 .ev-done {
   display: inline-flex;
   align-items: center;
@@ -1144,7 +1111,7 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   font: 400 13px/20px var(--dsw-font-family);
 }
 .ev-done::before, .ev-done::after { content: none; }
-/* ------------------------------------------------------------- composer */
+/* -------------------------------------------------------------- 输入框 */
 
 .composer {
   flex: none;
@@ -1155,12 +1122,11 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   padding: 0 var(--sp-4) 8px;
   background: var(--dsw-alias-bg-base);
 }
-/* The composer is one card: the model picker, the writing surface and the
- * send row share a border, so the thing you type into is visibly one object
- * rather than three stacked bands. Focus anywhere inside lights the whole
- * card, which is what makes the boundary honest. */
-/* The harness's composer card: 22px of radius, the input surface, one shadow
- * level, a hairline that is thinner in the dark theme, and 16/24 text. */
+/* 输入框是一张卡片：模型选择器、书写区和发送行共用一条边框，所以你打字的那个东西
+ * 明显是一个对象，而不是三条堆叠的带子。里面任何地方获得焦点都会点亮整张卡片，
+ * 这才让这条边界诚实。 */
+/* 工具架的输入框卡片：22px 圆角、输入框表面、一层阴影、一条在深色主题里更细的细线，
+ * 以及 16/24 的文字。 */
 .composer-card {
   position: relative;
   display: flex;
@@ -1182,8 +1148,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 #input {
   width: 100%;
-  /* Grows with what is written instead of showing a resize grip inside the
-   * card; browsers without field-sizing keep the minimum height. */
+  /* 随书写内容增长，而不是在卡片里显示一个缩放抓手；不支持 field-sizing 的浏览器
+   * 保留最小高度。 */
   field-sizing: content;
   resize: none;
   min-height: 52px;
@@ -1196,11 +1162,9 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   outline: none;
 }
 #input::placeholder { color: var(--dsw-alias-label-caption); }
-/* The ring belongs to the card while it holds focus; the field itself never
- * draws a second box inside it. */
+/* 焦点在卡片上时，那圈描边属于卡片；字段本身绝不在它里面再画一个框。 */
 #input:focus { outline: none; box-shadow: none; }
-/* The action row is separated by a hairline: it belongs to the card, not to
- * the sentence being written. */
+/* 动作行由一条细线分隔：它属于卡片，不属于正在写的那句话。 */
 .composer-row {
   display: flex;
   align-items: center;
@@ -1209,11 +1173,10 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   min-height: 40px;
 }
 .hint { font-size: 12px; color: var(--dsw-alias-label-tertiary); flex: 1 1 auto; }
-/* The one blue fill in the interface: the composer's send is a 34px circle,
- * everything else that is "primary" is monochrome. */
-/* The one blue fill on the page: a 34px circle, lifted 2px, the way the
- * harness draws its send control. The label is a word, so it is replaced by the
- * glyph the harness uses rather than squeezed into the circle. */
+/* 界面里唯一一处蓝色填充：输入框的发送是一个 34px 的圆，其他所有「主操作」都是
+ * 单色的。 */
+/* 页面上唯一一处蓝色填充：一个 34px 的圆，上浮 2px，正是工具架画它发送控件的样子。
+ * 标签是一个词，所以用工具架用的那个字形替换它，而不是硬塞进圆里。 */
 #send {
   flex: none;
   width: 34px;
@@ -1278,7 +1241,7 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   font-weight: 600;
 }
 
-/* ------------------------------------------------------------ side panel */
+/* ------------------------------------------------------------ 侧边面板 */
 
 .side {
   flex: none;
@@ -1290,10 +1253,9 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 .side.collapsed { display: none; }
 
-/* Each section is a card on the panel: the panel holds three unrelated
- * readings, and a card is what keeps them from reading as one long list. */
-/* The details pane is sections separated by hairlines, not cards: the harness
- * keeps surfaces for things you act on. */
+/* 每个分区都是面板上的一张卡片：面板持有三项互不相干的读数，而卡片正是让它们读起来
+ * 不像一长条列表的东西。 */
+/* 详情面板是由细线分开的分区，不是卡片：工具架把表面留给你要动手操作的东西。 */
 .side-sec {
   padding: 0 0 16px;
   margin: 0 0 16px;
@@ -1308,8 +1270,7 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   color: var(--dsw-alias-label-primary);
   font: 500 14px/20px var(--dsw-font-family);
 }
-/* A legend, one line per tool: the name plus the first line of its
- * description, clipped by CSS. The full sentence is the row's tooltip. */
+/* 图例，每个工具一行：名字加上描述的第一行，由 CSS 裁切。完整句子在这一行的提示里。 */
 .tool-list { list-style: none; margin: 0; padding: 0; }
 .tool-list li {
   display: flex;
@@ -1323,8 +1284,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 
 .tool-list li:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .tool-list .name { font: 600 12px var(--ds-font-family-code); color: var(--dsw-alias-state-business-primary); flex: 0 0 auto; }
-/* Two lines instead of one clipped line: a legend that cuts "return num…" is
- * harder to read than one that wraps, and the panel has the room. */
+/* 两行而不是裁成一行：一份把「return num…」切掉的图例比会折行的更难读，而面板有
+ * 这个空间。 */
 .tool-list .desc {
   font-size: 11px;
   line-height: 1.45;
@@ -1356,22 +1317,22 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .usage-hero-value { color: var(--dsw-alias-label-primary); font: 600 24px/32px var(--ds-font-family-code); }
 .usage-hero-value.na { color: var(--dsw-alias-label-tertiary); font-weight: 400; font-size: 18px; }
 
-/* The same percentage as a shape. A reported 0% is an empty filled bar (the
- * number still reads 0.0%); an unreported rate is an empty *track* plus the
- * hint under it — never a filled-at-zero bar pretending to be a measurement. */
+/* 同一个百分比的形状表示。报告上来的 0% 是一条空的已填充条（数字仍然读作 0.0%）；
+ * 未报告的命中率则是一条空*轨道*加上它下面的提示 —— 永远不是一条填到零、假装自己
+ * 是测量结果的条。 */
 .hit-bar {
   margin-top: var(--sp-3);
   height: 6px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 999px;
-  /* A track dark enough to see the remainder: at 75% the unfilled quarter is
-   * still legible, which is the whole point of drawing the number twice. */
+  /* 一条深到能看见剩余部分的轨道：75% 时没填的那四分之一仍然可辨，而把同一个数字画
+   * 两遍的全部意义就在这里。 */
   background: var(--dsw-specific-sidebar-fill);
   overflow: hidden;
 }
 
-/* Nothing was reported, so there is nothing to fill and no scale to read: the
- * track goes dashed instead of pretending to be a 0% measurement. */
+/* 什么都没报告，所以没有东西可填、也没有刻度可读：轨道改成虚线，而不是假装自己是
+ * 一个 0% 的测量值。 */
 .hit-bar.na { background: transparent; border-style: dashed; box-shadow: none; }
 
 .hit-bar-fill {
@@ -1414,7 +1375,7 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .usage-table td.bad { color: var(--dsw-alias-state-error-primary); font-weight: 600; }
 .usage-table tr.bad th { color: var(--dsw-alias-state-error-primary); }
 
-/* --------------------------------------------------------------- overlay */
+/* ---------------------------------------------------------------- 遮罩 */
 
 .overlay {
   position: fixed;
@@ -1454,13 +1415,13 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .overlay-head h2 { margin: 0; font-size: 16px; font-weight: 500; line-height: 1.5; }
 
 .overlay-body { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 0 24px 24px; }
-/* The armed question sits exactly where its button was, so the pointer does not
- * have to chase a moving target to finish the gesture. */
+/* 已武装的那句提问正好待在它按钮原来的位置，所以指针不必追着一个移动的目标才能
+ * 完成这个手势。 */
 .confirm-row { display: inline-flex; align-items: center; gap: var(--sp-1); }
 .delete-control { display: inline-flex; align-items: center; gap: var(--sp-1); }
 
-/* The disclosure is a button, not an empty field: it hugs its label instead of
- * stretching the width of the form it opens. */
+/* 展开项是一个按钮，不是一个空字段：它贴合自己的标签，而不是撑开它所打开的表单的
+ * 宽度。 */
 #workspace-add { align-self: flex-start; }
 
 .workspace-add-form { display: flex; flex-direction: column; gap: var(--sp-3); }
@@ -1469,14 +1430,13 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .err { color: var(--dsw-alias-state-error-primary); white-space: pre-wrap; }
 .noscript { color: var(--dsw-alias-state-error-primary); padding: 20px; font-family: var(--dsw-font-family); }
 
-/* -------------------------------------------------------------- settings */
+/* ---------------------------------------------------------------- 设置 */
 
 .chip-warn { color: var(--dsw-alias-state-warn-primary); border-color: var(--dsw-alias-state-warn-primary); }
 
 .settings-card { width: min(560px, 100%); }
-/* The scrolling body is a plain container: the settings form and the providers
- * section are siblings, because a form nested in a form is not something the
- * HTML parser can hold. */
+/* 滚动的 body 是一个普通容器：设置表单和提供方分区是兄弟，因为嵌在表单里的表单不是
+ * HTML 解析器能托住的东西。 */
 .settings-body { display: flex; flex-direction: column; gap: var(--sp-4); }
 .settings-form { display: flex; flex-direction: column; gap: var(--sp-3); }
 
@@ -1504,8 +1464,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .field-row { display: flex; gap: var(--sp-3); }
 .field-row .field { flex: 1 1 0; }
 
-/* A field with its own button (Browse…) keeps the button outside the input's
- * width, so the input still fills the column and the pair wraps nothing. */
+/* 带自己按钮的字段（「浏览…」）让按钮待在输入框宽度之外，所以输入框仍然填满这一列，
+ * 而这一对不会换行。 */
 .field-with-action { display: flex; align-items: stretch; gap: var(--sp-2); }
 .field-with-action > input { flex: 1 1 auto; min-width: 0; }
 .field-with-action > .btn { flex: 0 0 auto; }
@@ -1539,7 +1499,7 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   overflow-wrap: anywhere;
 }
 
-/* ------------------------------------------- settings: your providers */
+/* ------------------------------------- 设置：你的提供方 */
 
 .settings-subhead {
   margin: 0;
@@ -1568,8 +1528,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   gap: var(--sp-1);
 }
 
-/* A provider is a row that can carry a question in place of its button, so it
- * is a column of lines rather than a button — the same shape a session row has. */
+/* 提供方是一行可以用一句提问取代按钮的东西，所以它是一列行，而不是一个按钮 ——
+ * 和会话行同一个形状。 */
 .provider-item {
   display: flex;
   flex-direction: column;
@@ -1618,19 +1578,17 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 
 .provider-form-actions { display: flex; justify-content: flex-end; }
 
-/* "(optional)" is a note on the label, not part of its name. */
+/* 「（可选）」是标签上的注记，不是它名字的一部分。 */
 .field-optional { color: var(--dsw-alias-label-tertiary); font-weight: 400; }
 
-/* ------------------------------------------- provider / model / effort picker */
+/* --------------------------------- 提供方 / 模型 / 思考强度选择器 */
 
-/* The trigger is the composer's first line: a compact control that belongs to
- * the writing column, not the header. It is a button because opening a menu is
- * a button's job, and it carries aria-expanded like the other disclosures. */
+/* 触发器是输入框的第一行：一个属于书写窄栏、而不是头部的紧凑控件。它是按钮，因为
+ * 打开菜单是按钮的职责，而它像其他展开项一样带着 aria-expanded。 */
 .picker { position: static; display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
 .picker-settings { align-items: flex-start; gap: var(--sp-2); }
 
-/* The model control is the harness's select: 28px tall, 13/20 at 500, in the
- * secondary tone, with the value as the only text. */
+/* 模型控件是工具架的 select：28px 高、13/20、500、次级色调，值本身是唯一的文字。 */
 .picker-trigger {
   display: inline-flex;
   align-items: center;
@@ -1653,11 +1611,9 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .picker-value-warn { color: var(--dsw-alias-state-warn-primary); }
 .picker-caret { color: var(--dsw-alias-label-tertiary); font-size: 10px; }
 
-/* The composer's panel opens above the trigger and never covers the message
- * box it belongs to: the offset clears the composer's own top padding and the
- * panel's gap, so its bottom edge lands just above the composer. Anchoring to
- * `.picker` keeps it aligned with the input column on any window width, and
- * the width is capped by the viewport, never by the content. */
+/* 输入框的面板在触发器上方打开，而且永远不遮住它所属的消息框：这个偏移正好让过
+ * 输入框自己的顶部内边距和面板的间隙，所以它的下边缘落在输入框正上方。锚定到
+ * `.picker` 让它在任何窗口宽度下都与输入列对齐，而宽度由视口封顶，绝不由内容决定。 */
 .picker-panel {
   position: absolute;
   left: 0;
@@ -1678,9 +1634,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   border-radius: 12px;
   box-shadow: var(--dsw-shadow-lv3);
 }
-/* Inside the settings form the panel is part of the dialog, not a popover: the
- * dialog's body already scrolls, so a floating panel would be clipped by it.
- * The markup is the same — only where it sits changes. */
+/* 在设置表单里，这个面板是对话框的一部分，不是浮层：对话框的 body 本来就会滚动，
+ * 所以浮动的面板会被它裁掉。标记是同一份 —— 变的只是它待在哪里。 */
 .picker-settings .picker-panel {
   position: static;
   width: auto;
@@ -1691,7 +1646,7 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   background: var(--dsw-specific-sidebar-fill);
 }
 
-/* Two columns: providers on the left, that provider's models on the right. */
+/* 两列：左边提供方，右边该提供方的模型。 */
 .picker-cols { display: flex; gap: var(--sp-3); align-items: flex-start; }
 .picker-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 
@@ -1752,13 +1707,11 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .picker-option-meta { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-left: auto; }
 
 .picker-empty { font-size: 12px; line-height: 1.4; color: var(--dsw-alias-label-tertiary); padding: 4px 2px; overflow-wrap: anywhere; }
-/* A failed fetch says so in the list it could not fill, next to the stale
- * rows rather than instead of them. */
+/* 抓取失败就在它没能填满的那个列表里说明，与陈旧的行并排，而不是替换它们。 */
 .picker-empty.picker-warn { color: var(--dsw-alias-state-warn-primary); }
 
-/* The hand-typed model: a provider with no listed models (or a model the
- * catalogue does not know) is still usable, exactly as the flat field was.
- * Use and Remember can wrap under the field in the narrow column. */
+/* 手输的模型：一个没有列出模型的提供方（或者一个目录不认识的模型）仍然可用，和
+ * 过去那个扁平字段完全一样。Use 和 Remember 可以在窄列里折到字段下面。 */
 .picker-manual { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-top: 2px; }
 .picker-manual input,
 .field .picker-manual input {
@@ -1781,16 +1734,15 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 .picker-manual .btn { flex: 0 0 auto; }
 
-/* A model row is a row, not a button: the option and its two-step Remove are
- * siblings, because a destructive control cannot live inside the button that
- * chooses. The option still takes the width that is left. */
+/* 模型行是一行，不是一个按钮：选项和它的两步「移除」是兄弟，因为破坏性的控件不能
+ * 待在负责选择的按钮里面。选项仍然拿走剩下的宽度。 */
 .picker-model { display: flex; align-items: flex-start; gap: 2px; }
 .picker-model > .picker-option { width: auto; flex: 1 1 0; min-width: 0; }
 .picker-option-actions { display: inline-flex; align-items: center; flex: 0 0 auto; }
 .picker-option-actions .confirm-row { flex-wrap: wrap; justify-content: flex-end; }
 
-/* The foot of a column: the Add provider… entry under the provider list, and
- * the one line that says what the hand-typed model's two actions do. */
+/* 一列的页脚：提供方列表下面的「添加提供方…」入口，以及说明手输模型那两个动作
+ * 各做什么的那一行。 */
 .picker-foot { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); margin-top: 2px; }
 .picker-foot-hint { margin: 0; font-size: 11px; line-height: 1.35; color: var(--dsw-alias-label-tertiary); }
 
@@ -1823,12 +1775,11 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   .picker-cols { flex-direction: column; }
 }
 
-/* ------------------------------------------------------------- responsive */
+/* ---------------------------------------------------------------- 响应式 */
 
-/* The scrim belongs to the sheets: a panel opened over the transcript is
- * plainly a panel, and a tap that lands anywhere else puts it away. Under the
- * panels (z 40 and 41) and under every dialog (50), so a dialog opened from a
- * sheet is still on top of the sheet that opened it. */
+/* 遮罩属于抽贴面板：盖在转录上的面板明显是一个面板，而落在别处的点击会把它收走。
+ * 它在面板（z 40 和 41）之下、在所有对话框（50）之下，所以从抽贴面板打开的对话框仍然
+ * 在那个打开它的面板之上。 */
 .scrim {
   position: fixed;
   inset: 0;
@@ -1854,21 +1805,18 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   .transcript { padding: var(--sp-3) var(--sp-3) var(--sp-2); }
   .ev-user .bubble { max-width: 90%; }
   .field-row { flex-direction: column; gap: var(--sp-3); }
-  /* The tree keeps its width and the transcript gives up the space: a narrow
-   * window scrolls the page never, it shrinks the column instead. */
+  /* 树保留自己的宽度，让出空间的是转录：窄窗口永远不滚动页面，它缩小的是这一列。 */
   .sidebar { flex-basis: 240px; width: 240px; }
   .ws-remove { padding: 6px var(--sp-2); }
-  /* The dialogs give their width back to the list on a narrow screen. */
+  /* 窄屏上对话框把宽度还给列表。 */
   .overlay { padding: var(--sp-3); }
   .overlay-head, .overlay-body { padding-left: var(--sp-3); padding-right: var(--sp-3); }
   .session-actions { padding-right: 0; }
 }
 
-/* A phone shows one thing at a time, and the transcript is the thing. Below
- * 720px the sidebar stops being a column and becomes a sheet as well — 280px of
- * tree beside the conversation leaves neither of them readable on a 390px
- * screen — and both sheets are dismissed by tapping away from them, which is
- * what the scrim above is for. */
+/* 手机一次只显示一样东西，而那样东西就是转录。低于 720px 时侧边栏不再是列，也变成
+ * 一个抽贴面板 —— 在 390px 的屏幕上看，对话旁边放 280px 的树会让两者都读不了 —— 而
+ * 两个抽贴面板都靠点外面收起，上面那个遮罩就是为这个存在的。 */
 @media (max-width: 720px) {
   .sidebar {
     position: fixed;
@@ -1880,33 +1828,31 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   }
   .sidebar.open { display: flex; }
 
-  /* Sizes for a fingertip rather than a pointer: the harness's 28px rows and 12px
-   * labels are a mouse's measurements, and every one of these is a real control. */
+  /* 为指尖而不是指针定的尺寸：工具架的 28px 行和 12px 标签是鼠标的度量，而这里的
+   * 每一个都是真正的控件。 */
   .btn.sm { padding: 8px 12px; font-size: 13px; border-radius: 16px; }
   .icon-btn { width: 34px; height: 34px; font-size: 17px; }
-  /* 16px, or Safari zooms the whole page the moment one of these takes focus —
-   * the same rules as the desktop sheet, at the one size that stops it. */
+  /* 16px，否则 Safari 会在其中一个获得焦点的瞬间放大整个页面 —— 与桌面抽贴面板同一批
+   * 规则，只是用那个能止住它的尺寸。 */
   .field input[type="text"],
   .field input[type="password"],
   .field input[type="number"],
   .field select { font-size: 16px; }
   .picker-manual input, .field .picker-manual input { font-size: 16px; }
 
-  /* There is no hover on a phone, so anything that appears under the pointer has
-   * to simply be there — a delete button nobody can find is not a control. */
+  /* 手机上不存在悬停，所以任何在指针下才出现的东西必须直接就在那里 —— 一个没人能
+   * 找到的删除按钮不算控件。 */
   .session-actions, .ws-foot { opacity: 1; }
 
-  /* Rows a thumb can hit: 32px is a pointer's row, and these two are the list
-   * the sheet exists to offer. Named as `.sidebar …` rather than bare, because
-   * the existing rules are `.ws-sessions .session-row` and two `.ws-name`s — a
-   * media query adds no weight, so the selector has to carry it. The buttons
-   * inside them are `.btn.sm`, which the rule above has already grown. */
+  /* 拇指点得到的行：32px 是指针的行高，而这两者是这个抽贴面板存在的意义所在的那个
+   * 列表。写成 `.sidebar …` 而不是裸选择器，因为现有规则是 `.ws-sessions .session-row`
+   * 和两个 `.ws-name` —— 媒体查询不增加权重，所以权重必须由选择器自己带着。它们里面的
+   * 按钮是 `.btn.sm`，上面的规则已经把它放大了。 */
   .sidebar .ws-sessions .session-row { min-height: 44px; }
-  /* `height: 34px` is fixed in the base rule, so this one has to undo it rather
-   * than add to it. */
+  /* `height: 34px` 在基础规则里是写死的，所以这一条必须撤销它，而不是在它之上再加。 */
   .sidebar .ws-name { height: auto; min-height: 44px; padding: 11px var(--sp-2); }
-  /* The rows' own controls — `Delete`, `Use`, `Remove` — are the ones a thumb
-   * aims at in this list, and two-step delete only excuses so much. */
+  /* 这些行自己的控件 —— `Delete`、`Use`、`Remove` —— 才是这个列表里拇指瞄准的东西，
+   * 而两步删除只能免除这么多。 */
   .sidebar .btn.sm { padding: 10px 12px; }
 
   .header { padding: 10px 14px 0 12px; }
@@ -1915,27 +1861,23 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   .ev-user .bubble { max-width: 100%; }
   .overlay { padding: var(--sp-3); }
 
-  /* `show all` is a 12px underlined word with no padding, which is a mouse's
-   * target: here it gets a fingertip's, without moving off the code it belongs
-   * to — the negative margin keeps the row the same height. */
+  /* `show all` 是一个 12px、带下划线、没有内边距的词，那是鼠标的目标：这里给它指尖
+   * 的目标，同时不离开它所属的代码 —— 负外边距让这一行保持同样高度。 */
   .tool-output-more .link { padding: 7px 8px; margin: -7px 0; }
 
-  /* The keyboard and the home bar both live at the bottom edge of the screen,
-   * and the composer is what they cover. */
+  /* 键盘和 Home 条都待在屏幕底边，而它们盖住的正是输入框。 */
   .composer { padding: 0 12px max(10px, env(safe-area-inset-bottom)); }
   .composer-row { gap: 8px; }
-  /* At 390px the picker, the picture, compact and send do not fit with their
-   * words attached. The glyphs stay and the words go — and each of those buttons
-   * carries its own `aria-label`, so the name a screen reader reads is not the
-   * label that was hidden. If the picture is refused for want of a vision model,
-   * the notice in the transcript says so; the button does not have to. */
+  /* 在 390px 下，选择器、图片、压缩和发送带着自己的文字是挤不下的。字形留下，文字
+   * 走开 —— 而这些按钮每一个都带着自己的 `aria-label`，所以屏幕阅读器读到的名字不是
+   * 被隐藏的那个标签。如果因为缺视觉模型而拒绝图片，转录里的通知会说明；按钮不必说。 */
   .composer-row .btn-label { display: none; }
   .composer-row .btn.sm { padding: 8px 10px; }
   #photo-hint { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
-/* Motion is decoration here: the pulse, the tool spinner, the arrival rise and
- * the bar's growth all stop, and every state stays readable without them. */
+/* 动效在这里是装饰：脉冲、工具转圈、到达时的上浮和进度条的增长都停下，而没有它们
+   * 每个状态仍然可读。 */
 @media (prefers-reduced-motion: reduce) {
   .live-dot, .tool-spinner, .ev-approval.pending { animation: none !important; }
   .ev:not(.replay), .overlay, .overlay-card { animation: none !important; }
@@ -1944,8 +1886,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   .btn:active:not(:disabled) { transform: none; }
 }
 
-/* Built-ins that are not in the list right now: offered as a choice inside the
- * add form, not announced as something that is missing. */
+/* 当前不在列表里的内置提供方：作为「添加」表单里的一个选项提供，而不是被宣告为
+ * 缺失的东西。 */
 .provider-builtins {
   display: flex;
   flex-wrap: wrap;
@@ -1957,20 +1899,16 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 .provider-builtins-list { display: flex; flex-wrap: wrap; gap: 6px; }
 
-/* ------------------------------------------------------------- wallpaper */
+/* ---------------------------------------------------------------- 壁纸 */
 
-/* The picture is one fixed layer behind the page. The transcript is where it is
- * meant to be seen: the chat column keeps it sharp behind a light wash, the way
- * a messenger puts a photograph behind a conversation, while the chrome around
- * it — sidebar, details, composer — is frosted, so the picture reads as depth
- * instead of noise. Tool output, code cards, menus and dialogs stay opaque:
- * those are read line by line, and a photograph behind a stack trace is
- * decoration fighting content.
+/* 图片是页面背后的一整层固定图层。转录才是它该被看见的地方：聊天窄栏让它在一层浅色
+ * 蒙版后保持清晰，就像聊天软件把照片垫在对话后面，而它周围的界面（侧边栏、详情、输入
+ * 框）是磨砂的，于是图片读起来是纵深，而不是噪点。工具输出、代码卡片、菜单和对话框
+ * 保持不透明：那些是要一行行读的东西，而堆栈信息后面的照片是装饰在跟内容打架。
  *
- * These are the only rules in this file that write a colour instead of naming
- * one, and they have to: they are the token sheet's own values, restated as
- * translucent versions for the two themes it defines. Loading after `theme.css`
- * is what makes them win. */
+ * 这是本文件里唯一写颜色而不是命名颜色的规则，而且它们必须这样：它们是 token 表自己的
+ * 值，为它定义的两个主题重述为半透明版本。在 `theme.css` 之后加载，正是它们生效的
+ * 原因。 */
 body.wallpaper::before {
   content: "";
   position: fixed;
@@ -1984,8 +1922,8 @@ body.wallpaper {
   --dsw-alias-bg-base: rgb(255 255 255 / 55%);
   --dsw-specific-sidebar-fill: rgb(249 250 251 / 58%);
   --dsw-specific-input-major: rgb(255 255 255 / 72%);
-  /* A hairline that reads on white disappears over a photograph, so the borders
-   * step up while a picture is behind them. Nothing else about them changes. */
+  /* 一条在白底上好看的细线放到照片上会消失，所以图片在后面时边框加深一档。除此之外
+   * 它们没有任何变化。 */
   --dsw-alias-border-l1: rgba(0, 0, 0, .16);
   --dsw-alias-border-l2: rgba(0, 0, 0, .24);
 }
@@ -1998,17 +1936,15 @@ body.wallpaper[data-ds-dark-theme] {
   --dsw-alias-border-l2: rgba(255, 255, 255, .22);
 }
 
-/* Chrome is frosted; the conversation is not. One is a place you pass through,
- * the other is the thing you are reading. */
+/* 界面是磨砂的，对话不是。一个是你要穿过的地方，另一个是你正在读的东西。 */
 body.wallpaper .sidebar,
 body.wallpaper .side,
 body.wallpaper .composer-card {
   backdrop-filter: blur(22px) saturate(1.15);
 }
 
-/* The transcript needs its own wash: the column above it is transparent the
- * moment there is a picture to show, and 16/28 text over a photograph is only
- * readable if something holds it apart from the image. */
+/* 转录需要自己的一层蒙版：只要有图片要显示，它上面的窄栏就是透明的，而 16/28 的文字
+ * 放在照片上，只有让什么东西把它和图像分开才读得了。 */
 body.wallpaper .transcript {
   background: rgb(255 255 255 / 26%);
 }
@@ -2017,6 +1953,6 @@ body.wallpaper[data-ds-dark-theme] .transcript {
   background: rgb(21 21 23 / 14%);
 }
 
-/* On is the same mark the active panel toggle uses: the accent, not a fill. */
+/* 开启时用的是与激活面板切换钮相同的标记：强调色，而不是填充。 */
 #btn-wallpaper[aria-pressed="true"] { color: var(--dsw-alias-state-business-primary); }
 

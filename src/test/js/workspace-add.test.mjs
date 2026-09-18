@@ -1,19 +1,15 @@
-/* "Add workspace" without the name field, run without a browser.
+/* 没有名称字段的「添加工作区」，不靠浏览器运行。
  *
- * The behaviour lives in web/app.js, a classic script with no exports, so the
- * section that owns it is lifted out of the shipped file (between the two banner
- * comments below) and run against a small node stub. The assertions are
- * therefore about the code that ships, not about a copy of it — the same trick
- * the markdown and session-row cases use.
+ * 这段行为在 web/app.js 里，那是一个没有导出的经典脚本，所以拥有它的那一节是从发布的
+ * 文件里（下面那两条横幅注释之间）抽出来、跑在一个小小的 node 桩上的。因此这些断言针对的
+ * 是随包发布的代码，而不是它的副本 —— markdown 和 session-row 那些用例用的是同一个手法。
  *
- * What it pins down is the gesture: the click opens the desktop's chooser, a
- * chosen folder is added in one request, and that request carries a path and no
- * name — the name is the folder's and the server derives it. A dismissed
- * chooser adds nothing, and a chooser that cannot run at all leaves the form
- * open so a typed path still works.
+ * 它钉住的是那个手势：一次点击打开桌面的选择器，选中的文件夹在一次请求里被添加，而那个
+ * 请求只带路径、不带名字 —— 名字是文件夹的，由服务器推导。被取消的选择器什么都不添加，
+ * 而一个根本跑不起来的选择器会让表单打开着，好让手输路径照样能用。
  *
- * `node src/test/js/workspace-add.test.mjs` — also run, when a node is installed,
- * by com.ccj.agent.web.WebWorkspaceAddTest, so `mvn test` covers it too. */
+ * `node src/test/js/workspace-add.test.mjs` —— 装了 node 时也会由
+ * com.ccj.agent.web.WebWorkspaceAddTest 运行，所以 `mvn test` 也覆盖它。 */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -22,8 +18,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const APP = join(here, '..', '..', 'main', 'resources', 'web', 'app.js');
 const src = readFileSync(APP, 'utf8');
 
-// A classic script with no build step: parsing the whole thing is the only lint
-// it gets, and it is the cheapest way to catch a stray brace.
+// 没有构建步骤的经典脚本：整体解析一遍是它唯一能得到的 lint，也是抓多余花括号最便宜的
+// 办法。
 new Function(src);
 
 const START = '  // ------------------------------------------- sidebar: adding a workspace';
@@ -33,7 +29,7 @@ const to = src.indexOf(END);
 if (from < 0 || to < 0 || to < from) { throw new Error('could not locate the add-workspace section'); }
 const code = src.slice(from, to);
 
-// --------------------------------------------------------------- node stub
+// ------------------------------------------------------------------ node 桩
 
 function field(hidden) {
   return { value: '', textContent: '', hidden: hidden === true, disabled: false, focused: false, focus() { this.focused = true; } };
@@ -52,7 +48,7 @@ function newDom() {
   };
 }
 
-// The harness: one request queue, one set of messages, one tree payload.
+// 测试脚手架：一个请求队列、一套消息、一份树载荷。
 let replies = [];
 let requests = [];
 let notes = [];
@@ -91,7 +87,7 @@ const api = new Function(
   workspaceItemsOf
 );
 
-// -------------------------------------------------------------------- cases
+// -------------------------------------------------------------------- 用例
 
 let pass = 0;
 const failures = [];
@@ -105,7 +101,7 @@ function ok(name, cond, detail) {
 }
 
 function reset() {
-  // Mutated in place: the lifted section was handed this exact object.
+  // 就地修改：被抽出来的那一节拿到的就是这个确切的对象。
   const fresh = newDom();
   Object.keys(fresh).forEach((key) => { dom[key] = fresh[key]; });
   replies = [];
@@ -124,7 +120,7 @@ const payloadFor = (name, path) => ({
   ]
 });
 
-// 1. The click is the chooser: a chosen folder is added with a path and no name.
+// 1. 那次点击就是选择器：选中的文件夹带着路径添加，不带名字。
 {
   reset();
   replies = [
@@ -133,20 +129,20 @@ const payloadFor = (name, path) => ({
   ];
   await api.addWorkspaceByPicking();
 
-  ok('the click asks the server for a chooser', requests.length >= 1 && requests[0].url === '/api/workspaces/browse',
+  ok('这次点击向服务器要一个选择器', requests.length >= 1 && requests[0].url === '/api/workspaces/browse',
     JSON.stringify(requests));
-  eq('the add request carries the path', requests[1].body.path, '/home/you/projects/api');
-  eq('and no name at all — the folder names it', 'name' in requests[1].body, false);
-  eq('the form is put away', dom.workspaceAddForm.hidden, true);
-  eq('the trigger says it is closed', dom.workspaceAdd.attrs['aria-expanded'], 'false');
-  eq('the outcome is reported', notes.length, 1);
-  ok('the note names the workspace the server chose', notes[0].indexOf('api') >= 0, notes[0]);
-  ok('the new node is opened', expanded.indexOf('api') >= 0, JSON.stringify(expanded));
-  eq('the sidebar is pointed at it', accepted[0] && accepted[0].selected, 'api');
+  eq('添加请求带着路径', requests[1].body.path, '/home/you/projects/api');
+  eq('而且完全没有名字 —— 名字由文件夹给', 'name' in requests[1].body, false);
+  eq('表单被收起', dom.workspaceAddForm.hidden, true);
+  eq('触发器说明它是关的', dom.workspaceAdd.attrs['aria-expanded'], 'false');
+  eq('结果被报告出来', notes.length, 1);
+  ok('通知点名了服务器选的工作区', notes[0].indexOf('api') >= 0, notes[0]);
+  ok('新节点被展开', expanded.indexOf('api') >= 0, JSON.stringify(expanded));
+  eq('侧边栏指向它', accepted[0] && accepted[0].selected, 'api');
 }
 
-// 2. Two folders with the same last segment: the name the server chose is what
-//    the page believes, not the last segment it could have guessed.
+// 2. 两个最后一段相同的文件夹：页面相信的是服务器选的名字，而不是它本可以猜的那个
+//    最后一段。
 {
   reset();
   replies = [
@@ -155,88 +151,87 @@ const payloadFor = (name, path) => ({
   ];
   await api.addWorkspaceByPicking();
 
-  ok('the suffixed name is used', notes[0].indexOf('api-2') >= 0, notes[0]);
-  eq('and it is the node that opens', expanded.indexOf('api-2') >= 0, true);
+  ok('用了带后缀的名字', notes[0].indexOf('api-2') >= 0, notes[0]);
+  eq('而且展开的就是那个节点', expanded.indexOf('api-2') >= 0, true);
 }
 
-// 3. Dismissing the chooser is not an add and not an error.
+// 3. 取消选择器既不是添加，也不是错误。
 {
   reset();
   replies = [{ cancelled: true }];
   await api.addWorkspaceByPicking();
 
-  eq('nothing was added', requests.length, 1);
-  eq('an empty answer is not a failure', errors.length, 0);
-  ok('the hint says the chooser was dismissed', dom.wsBrowseHint.textContent.indexOf('dismissed') >= 0,
+  eq('什么都没添加', requests.length, 1);
+  eq('空答复不是失败', errors.length, 0);
+  ok('提示说明了选择器被取消', dom.wsBrowseHint.textContent.indexOf('取消') >= 0,
     dom.wsBrowseHint.textContent);
-  eq('and the form stayed out of the way', dom.workspaceAddForm.hidden, true);
+  eq('而且表单没有挡路', dom.workspaceAddForm.hidden, true);
 }
 
-// 4. A machine with no chooser: the refusal is shown and the form opens, so a
-//    typed path is one click away rather than hidden behind the failure.
+// 4. 一台没有选择器的机器：拒绝被显示出来，表单也打开，所以手输路径只差一次点击，
+//    而不是藏在一次失败后面。
 {
   reset();
   replies = [new Error('no desktop session available, so ccj cannot open a folder chooser')];
   await api.addWorkspaceByPicking();
 
-  ok('the refusal is shown under the path field', dom.wsPathError.hidden === false, JSON.stringify(dom.wsPathError));
-  ok('it is the chooser that could not run', dom.wsPathError.textContent.indexOf('desktop') >= 0,
+  ok('拒绝显示在路径字段下面', dom.wsPathError.hidden === false, JSON.stringify(dom.wsPathError));
+  ok('跑不起来的是那个选择器', dom.wsPathError.textContent.indexOf('desktop') >= 0,
     dom.wsPathError.textContent);
-  eq('the form opens so the path can be typed', dom.workspaceAddForm.hidden, false);
-  eq('the trigger says so', dom.workspaceAdd.attrs['aria-expanded'], 'true');
-  eq('nothing was added', requests.length, 1);
+  eq('表单打开，好让路径能手输', dom.workspaceAddForm.hidden, false);
+  eq('触发器说明了这一点', dom.workspaceAdd.attrs['aria-expanded'], 'true');
+  eq('什么都没添加', requests.length, 1);
 }
 
-// 5. Typing a path and submitting is the same request; the name is still the
-//    server's to derive, and the directory is trimmed.
+// 5. 手输路径并提交是同一个请求；名字仍然由服务器推导，而目录会去掉首尾空白。
 {
   reset();
   replies = [{ active: 'ws', workspaces: [{ name: 'scratch', path: '/home/you/scratch' }] }];
   await api.addWorkspace('  /home/you/scratch  ');
 
-  eq('the trimmed path is what is sent', requests[0].body.path, '/home/you/scratch');
-  eq('no name is invented by the page', 'name' in requests[0].body, false);
-  eq('a path with no entry to point at is still reported', notes.length, 1);
-  ok('without naming a node it does not claim one', notes[0].indexOf('press Use') >= 0, notes[0]);
+  eq('送出的是去掉首尾空白的路径', requests[0].body.path, '/home/you/scratch');
+  eq('页面不编造名字', 'name' in requests[0].body, false);
+  eq('一个没有对应条目可指的路径仍然被报告', notes.length, 1);
+  ok('没有点出节点，它就不声称有', notes[0].indexOf('使用') >= 0, notes[0]);
 }
 
-// 6. An empty field and a refused add both land under the path field — but only
-//    while the form is open, because that is when a field is on screen at all.
+// 6. 空字段和被拒绝的添加都落在路径字段下面 —— 但只在表单打开时，因为那时屏幕上才
+//    真的有字段。
 {
   reset();
   dom.workspaceAddForm.hidden = false;
   await api.addWorkspace('   ');
-  eq('an empty path sends nothing', requests.length, 0);
-  ok('and says what is missing', dom.wsPathError.textContent.indexOf('directory') >= 0, dom.wsPathError.textContent);
+  eq('空路径什么都不发', requests.length, 0);
+  ok('而且说明缺了什么', dom.wsPathError.textContent.indexOf('目录') >= 0, dom.wsPathError.textContent);
 
   reset();
   dom.workspaceAddForm.hidden = false;
   replies = [new Error('not a directory: /home/you/ws.txt')];
   await api.addWorkspace('/home/you/ws.txt');
-  ok('a refusal is shown on the field', dom.wsPathError.hidden === false, JSON.stringify(dom.wsPathError));
-  eq('and not as a sidebar alert', errors.length, 0);
+  ok('拒绝显示在字段上', dom.wsPathError.hidden === false, JSON.stringify(dom.wsPathError));
+  eq('而且不是作为侧边栏提示', errors.length, 0);
 }
 
-// 7. A refused pick has no form on screen, so its message goes above the tree
-//    instead of onto a field nobody can see.
+// 7. 被拒绝的一次选择屏幕上没有表单，所以它的消息走到树上方，而不是落在一个没人看得见
+//    的字段上。
 {
   reset();
   replies = [new Error('that directory is already the workspace \'ws\'')];
   await api.addWorkspace('/home/you/ws');
 
-  eq('nothing is written to a hidden field', dom.wsPathError.hidden, true);
-  ok('the refusal is a sidebar alert instead', errors.length === 1, JSON.stringify(errors));
-  ok('and it says which entry owns the directory', errors[0].indexOf('ws') >= 0, errors[0]);
+  eq('什么都没写进隐藏的字段', dom.wsPathError.hidden, true);
+  ok('拒绝改为作为侧边栏提示出现', errors.length === 1, JSON.stringify(errors));
+  ok('而且它说明那个目录归哪一项所有', errors[0].indexOf('ws') >= 0, errors[0]);
 }
 
-// 8. Reading the added entry back: the last path segment is not the answer.
+// 8. 把添加的那一项读回来：答案不是路径的最后一段。
 {
   const payload = payloadFor('api-2', '/home/you/work/api');
-  eq('the entry is found by its directory', api.addedWorkspace(payload, '/home/you/work/api/'), 'api-2');
-  eq('an unknown directory names nothing', api.addedWorkspace(payload, '/home/you/elsewhere'), '');
+  eq('按目录找到那一项', api.addedWorkspace(payload, '/home/you/work/api/'), 'api-2');
+  eq('未知的目录不点名任何东西', api.addedWorkspace(payload, '/home/you/elsewhere'), '');
 }
 
-// ------------------------------------------------------------------- result
+// -------------------------------------------------------------------- 结果
 
 if (failures.length) {
   console.error('workspace-add: ' + failures.length + ' failed, ' + pass + ' passed');

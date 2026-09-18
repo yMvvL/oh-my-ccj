@@ -4,11 +4,10 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * A model backend.
+ * 一个模型后端。
  *
- * <p>Implementations translate {@link Request} into their vendor wire format, stream {@link Event}s
- * to the caller while the response arrives, and return the assembled assistant turn. Streaming is
- * mandatory rather than optional: the listener is how the UI stays responsive on long turns.
+ * <p>实现负责把 {@link Request} 翻译成自家厂商的线路格式，在响应到达的同时把 {@link Event} 流式推给调用
+ * 方，并返回组装完成的助手回合。流式是必须的，不是可选项：监听器正是界面在长回合里保持响应的方式。
  */
 public interface Provider extends AutoCloseable {
 
@@ -20,10 +19,10 @@ public interface Provider extends AutoCloseable {
   default void close() {}
 
   /**
-   * One model turn.
+   * 一个模型回合。
    *
-   * @param system system prompt, or null when none
-   * @param tools tools advertised for this turn; may be empty
+   * @param system 系统提示词，没有则为 null
+   * @param tools 本回合展示给模型的工具；可以为空
    */
   record Request(
       String model,
@@ -49,14 +48,12 @@ public interface Provider extends AutoCloseable {
     record ToolCallStart(String id, String name) implements Event {}
 
     /**
-     * Token accounting for one turn.
+     * 一个回合的 token 记账。
      *
-     * @param inputTokens prompt tokens as billed; for Anthropic that is the sum of the plain,
-     *     cache-read and cache-creation counts, which is the only figure comparable across
-     *     providers
-     * @param cachedInputTokens how much of the prompt was served from the provider's cache, or null
-     *     when the provider reports nothing — "no information" and "nothing cached" are different
-     *     facts and must not both render as 0%
+     * @param inputTokens 按计费口径的提示词 token；对 Anthropic 来说，它是普通、缓存读取和缓存创建三项
+     *     计数之和，也是唯一能在提供方之间比较的数字
+     * @param cachedInputTokens 提示词中有多少来自提供方的缓存；提供方没有报告时为 null——「没有信息」和
+     *     「没有命中缓存」是两个不同的事实，不能都渲染成 0%
      */
     record Usage(int inputTokens, int outputTokens, Integer cachedInputTokens) implements Event {
       public Usage(int inputTokens, int outputTokens) {
@@ -64,7 +61,7 @@ public interface Provider extends AutoCloseable {
       }
     }
 
-    /** Emitted when a transient transport failure is about to be retried. */
+    /** 即将对一次瞬时传输故障重试时发出。 */
     record Retry(int attempt, String reason, long delayMillis) implements Event {}
   }
 }

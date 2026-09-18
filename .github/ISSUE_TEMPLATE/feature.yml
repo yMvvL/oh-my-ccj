@@ -1,36 +1,35 @@
-name: Feature request
-description: Something ccj should do and does not.
+name: 功能请求
+description: ccj 应该做而没做的事。
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        Please read [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md) first — MCP, plugins, sandboxing
-        and multi-user accounts are deliberately out of scope, and the reasons are there.
+        请先读 [CONTRIBUTING.md](../../blob/main/CONTRIBUTING.md)——MCP、插件、沙箱和多用户账号是刻意
+        不在范围内的，原因都写在那里。
 
   - type: textarea
     id: problem
     attributes:
-      label: The problem
+      label: 问题
       description: |
-        What you were trying to do, and where it went wrong. A concrete situation is much easier to
-        act on than an abstract capability: "I wanted X and had to do Y by hand" says more than
-        "please add an X tool".
+        你想做什么，在哪里出了问题。一个具体的情境比一个抽象的能力好处理得多：「我想要 X，结果得手动
+        做 Y」比「请加一个 X 工具」说明了更多。
     validations:
       required: true
 
   - type: textarea
     id: idea
     attributes:
-      label: What you have in mind
-      description: Optional. If you have a shape in mind, say it — but the problem above matters more.
+      label: 你心里想的样子
+      description: 可选。如果你心里有个形状，说出来——但上面的问题更重要。
     validations:
       required: false
 
   - type: textarea
     id: alternatives
     attributes:
-      label: What you tried instead
-      description: Existing flags, config, or doing it another way. Sometimes the answer is already there.
+      label: 你试过的替代办法
+      description: 现有的 flag、配置，或者换个做法。有时候答案本来就在那儿。
     validations:
       required: false

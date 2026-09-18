@@ -21,7 +21,7 @@ class OpenAiProviderTest {
       "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}";
   private static final String TOOL_ARGUMENTS = "{\"path\":\"a\"}";
 
-  /** Chunks are cut every 19 characters, so frames and the JSON inside them split mid-token. */
+  /** 每 19 个字符切一刀，所以帧和帧里的 JSON 都会从 token 中间断开。 */
   private static final String STREAM =
       """
       data: {"id":"1","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}
@@ -114,8 +114,8 @@ class OpenAiProviderTest {
 
   @Test
   void fragmentsWithoutAnIndexStaySeparateCalls() throws Exception {
-    // Several OpenAI-compatible servers leave `index` out. Defaulting it to 0 folded every parallel
-    // call into the first one: an unknown tool whose arguments were both calls, concatenated.
+    // 好几个 OpenAI 兼容服务器会省掉 `index`。把它默认成 0，会把每次并行调用都折进第一次里：一个未知工
+    // 具，参数是两次调用拼起来的。
     String stream =
         """
         data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","function":{"name":"read","arguments":"{\\\"path\\\":\\\"a\\\"}"}}]}}]}
@@ -145,13 +145,11 @@ class OpenAiProviderTest {
 
   @Test
   void aHugeErrorPageIsNotHeldInMemoryToBeTruncated() throws Exception {
-    // The bug: the error body was collected in full and cut when formatting, so the memory the display
-    // limit was meant to protect was already spent. A gateway returning a large HTML error page — a
-    // proxy splash screen, a misconfigured nginx — was read entirely before being thrown away.
+    // 那个 bug：错误响应体被完整收下来、格式化时才截断，于是那道显示上限本想省下的内存早就花掉了。一个返回
+    // 大 HTML 错误页的网关——代理的启动画面、配置错误的 nginx——在被丢掉之前被整段读完了。
     //
-    // Asserted on what reaches the caller rather than on heap size, because the message is the part a
-    // test can see: a bounded read produces a body that is truncated and says so, where an unbounded
-    // one would have produced the whole page.
+    // 断言的是到达调用方的东西，而不是堆大小，因为消息才是测试看得见的那部分：有界读取产出的响应体会被截断并且
+    // 明说，而无界读取本会产出整页。
     String enormous = "x".repeat(2_000_000);
     try (FakeServer server = FakeServer.start(FakeServer.Reply.json(500, enormous))) {
       OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
@@ -167,17 +165,16 @@ class OpenAiProviderTest {
                       event -> {}));
 
       String message = failure.getMessage();
-      assertTrue(message.contains("truncated"), "the cut is announced: " + message.length());
+      assertTrue(message.contains("已截断"), "截断有明确告知：" + message.length());
       assertTrue(
           message.length() < 4_000,
-          "the message carries a bounded body, not two megabytes: " + message.length());
+          "消息里是一段有界的响应体，而不是两兆字节：" + message.length());
     }
   }
 
   void aRepeatedIdWithoutAnIndexContinuesTheCallInsteadOfStartingANewOne() throws Exception {
-    // A server that omits `index` and forwards the whole call object it built repeats the id on
-    // every fragment. Reading that as a second call split one call in two: the real one kept
-    // truncated arguments, and a call with no name at all was invoked beside it.
+    // 一个省掉 `index`、转发它构建出的整个调用对象的服务器，会在每个片段上重复这个 id。把它读成第二次调
+    // 用，会把一次调用拆成两个：真的那个拿着被截断的参数，旁边还有一个连名字都没有的调用被唤起。
     String stream =
         """
         data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","function":{"name":"read","arguments":"{\\\"path\\\":"}}]}}]}
@@ -205,8 +202,8 @@ class OpenAiProviderTest {
 
   @Test
   void aTwoHundredThatIsNotAnEventStreamIsNotAnEmptyAnswer() throws Exception {
-    // A relay that fails upstream answers 200 with JSON. The frame decoder finds nothing in it, so
-    // without a word about what arrived the run ended "successfully" with an empty answer.
+    // 上游失败的中继会用 JSON 回一个 200。帧解码器在其中找不到任何东西，所以如果不说一句收到的是什么，这
+    // 次运行就会带着一个空回答「成功」结束。
     try (FakeServer server =
         FakeServer.start(FakeServer.Reply.json(200, "{\"error\":{\"message\":\"upstream exploded\"}}"))) {
       OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
@@ -215,7 +212,7 @@ class OpenAiProviderTest {
           assertThrows(
               IllegalStateException.class, () -> provider.complete(request(), event -> {}));
 
-      assertTrue(failure.getMessage().contains("no events"), failure.getMessage());
+      assertTrue(failure.getMessage().contains("没有返回任何事件"), failure.getMessage());
       assertTrue(failure.getMessage().contains("upstream exploded"), failure.getMessage());
       provider.close();
     }
@@ -238,7 +235,7 @@ class OpenAiProviderTest {
 
       assertTrue(
           events.stream().noneMatch(Provider.Event.Usage.class::isInstance),
-          "an explicitly null count is not a measurement: " + events);
+          "显式为 null 的计数不是一次测量：" + events);
       provider.close();
     }
   }
@@ -295,7 +292,7 @@ class OpenAiProviderTest {
 
   @Test
   void aThrottledEndpointDecidesHowLongToWait() throws Exception {
-    // A server that says how long to wait means it: retrying sooner is how a 429 becomes a ban.
+    // 一个说明该等多久的服务器是认真的：更早重试，正是 429 变成封禁的原因。
     try (FakeServer server =
         FakeServer.start(
             FakeServer.Reply.json(429, "{}", java.util.Map.of("Retry-After", "1")),
@@ -311,7 +308,7 @@ class OpenAiProviderTest {
               .map(Provider.Event.Retry.class::cast)
               .toList();
       assertEquals(1, retries.size());
-      assertEquals(1000, retries.get(0).delayMillis(), "the header beats the backoff curve");
+      assertEquals(1000, retries.get(0).delayMillis(), "首部胜过退避曲线");
       assertEquals(2, server.count());
       provider.close();
     }
@@ -427,7 +424,7 @@ class OpenAiProviderTest {
               events.stream().filter(Provider.Event.Usage.class::isInstance).findFirst().orElseThrow();
       assertNull(
           usage.cachedInputTokens(),
-          "no cache fields means unknown, which must not be rendered as 0%");
+          "没有缓存字段就意味着未知，绝不能渲染成 0%");
       provider.close();
     }
   }
@@ -447,9 +444,9 @@ class OpenAiProviderTest {
 
       provider.complete(reasoningRequest("max"), event -> {});
       JsonNode max = Json.parse(server.body(2));
-      assertEquals("high", max.path("reasoning_effort").asText(), "the protocol tops out at high");
-      assertEquals(32768, max.path("max_completion_tokens").asInt(), "max also buys room to think");
-      assertFalse(max.has("max_tokens"), "the two caps are not sent together");
+      assertEquals("high", max.path("reasoning_effort").asText(), "协议最高只到 high");
+      assertEquals(32768, max.path("max_completion_tokens").asInt(), "max 还买来了思考的空间");
+      assertFalse(max.has("max_tokens"), "两个上限不会一起发");
 
       provider.close();
     }
@@ -464,7 +461,7 @@ class OpenAiProviderTest {
 
       JsonNode body = Json.parse(server.body(0));
       assertFalse(body.has("reasoning_effort"), body.toString());
-      assertEquals(128, body.path("max_tokens").asInt(), "the plain cap stays as before");
+      assertEquals(128, body.path("max_tokens").asInt(), "普通的上限保持原样");
       provider.close();
     }
   }

@@ -1,119 +1,111 @@
-# Compaction plan
+# 压缩方案
 
-`/compact` — the user asks for it, the model summarises the older part of a conversation, and the
-session continues from the summary instead of from raw history.
+`/compact`——用户主动提出，模型把对话中较旧的部分总结成一段摘要，会话就从这个摘要继续，
+而不是从原始历史继续。
 
-## Why it exists next to ContextBudget
+## 为什么它和 ContextBudget 并存
 
-They answer the same question and must not be confused:
+两者回答的是同一个问题，绝不能混为一谈：
 
 | | `ContextBudget` | `/compact` |
 |---|---|---|
-| Who triggers | automatic, silent | the user |
-| What happens to old content | **dropped** (elided, or whole exchanges removed) | **summarised** by the model |
-| Does the model know what it lost | no | yes — the summary says so |
-| Cost | free | one request |
-| Changes the file | no, only this request's projection | yes, permanently |
+| 谁触发 | 自动、静默 | 用户 |
+| 旧内容会怎样 | **丢弃**（抹掉，或整段交换被移除） | 由模型**总结成摘要** |
+| 模型知道自己丢了什么吗 | 不知道 | 知道——摘要里会说明 |
+| 代价 | 免费 | 一次请求 |
+| 会改动文件吗 | 不会，只改本次请求的投影 | 会，而且是永久的 |
 
-`ContextBudget` projects one request and leaves the file alone — "The session keeps everything; this
-only decides what one request carries". Compaction is the first thing in this project that genuinely
-rewrites conversation content, which is why it has to be explicit, reversible and honest.
+`ContextBudget` 只对一次请求做投影，不碰文件——「会话保留一切；它只决定一次请求携带什么」。
+压缩是本项目里第一个真正重写对话内容的东西，所以它必须显式、可逆、诚实。
 
-## Reversible by construction: generational files
-
-```
-sessions/<id>.jsonl        generation 0 — the original, never rewritten
-sessions/<id>.g1.jsonl     generation 1 — summary + the last few exchanges, verbatim
-sessions/<id>.g2.jsonl     generation 2 — ...
-```
-
-- The session **id does not change**, so nothing that keys off an id moves: the sidebar, `--resume`,
-  `openForDisplay`, `ResumePoint`, the workspace registry.
-- `list()` and `open()` read the **newest** generation.
-- Older generations stay on disk untouched, so what was compacted away is still there — that is a
-  property of the layout, not a naming convention somebody has to trust.
-- A compaction writes a *new* file rather than truncating one, so the append-only durability story
-  survives: a compaction killed halfway leaves the old generation complete.
-
-## The prompt is recoverable
-
-The summary names the file holding the full history. `read` is read-only and needs no approval, so a
-model that needs the exact error text or a file path it lost can go and read it. That turns
-compaction from lossy into lossy-but-recoverable, and it is only possible because this project hands
-its session files to the model as ordinary files.
-
-## When it is refused
-
-Compaction is a trade, and the trade is not automatically favourable: a summary carries a preamble,
-names the file it came from, and is written to be complete — so a conversation whose early exchanges
-were mostly tool-call *plumbing* summarises into something longer than the text it removed. Measured on
-a real session of six short exchanges: 4239 → 4236 estimated tokens, i.e. nothing freed, while the
-summary itself was 2225 characters against the 809 characters of actual content it replaced.
-
-So the result is measured before it is written, against the messages the cut would consume rather than
-against the whole conversation, and a summary that is not smaller is **refused** rather than saved:
+## 从结构上就可逆：分代文件
 
 ```
-POST /api/compact  ->  409  "nothing to gain: the summary is 70 tokens against the 39 it would
-                             replace ... the conversation is not long enough for a summary to save
-                             anything yet"
+sessions/<id>.jsonl        第 0 代 —— 原始文件，永不被重写
+sessions/<id>.g1.jsonl     第 1 代 —— 摘要 + 最后几段交换，逐字保留
+sessions/<id>.g2.jsonl     第 2 代 —— ...
 ```
 
-The same session, once it had grown to six substantial exchanges (a 53-line file read, tests written,
-edge cases found and fixed), compacted at **30088 → 27885 tokens with 61% of the replaced part saved** —
-and the summary kept the exact error strings, the line numbers, and the `take(-5)` bug the model had
-found several turns earlier.
+- 会话 **id 不变**，所以任何以 id 为键的东西都不会挪动：侧栏、`--resume`、`openForDisplay`、
+  `ResumePoint`、工作区注册表。
+- `list()` 和 `open()` 读取**最新**的一代。
+- 更旧的分代原封不动地留在磁盘上，所以被压缩掉的内容还在——这是布局本身的属性，而不是某种
+  需要谁去相信的命名约定。
+- 一次压缩写的是*新*文件，而不是截断旧文件，所以「只追加」这套持久性说法依然成立：压缩做到
+  一半被杀掉，旧的那一代仍然完整。
 
-## What the summary must contain
+## 提示词是可以找回来的
 
-Structure, not narrative — the point is to preserve the facts a model would otherwise have to
-rediscover:
+摘要里会点名保存完整历史的那个文件。`read` 是只读的、不需要审批，所以模型如果需要精确的
+错误文本或某个它丢掉的路径，可以直接去读。这让压缩从「有损」变成「有损但可恢复」，而之所以
+能做到，是因为本项目把会话文件当作普通文件交给模型。
 
-1. the original goal and any constraint stated up front
-2. decisions made and why
-3. every file touched, and what changed in it
-4. what was verified, and how; what was tried and did not work
-5. what is still open
-6. verbatim technical facts: error messages, paths, commands, API shapes
+## 什么时候会被拒绝
 
-## Keeping the model honest about it
+压缩是一笔交易，而这笔交易并不自动划算：摘要要带一段开场、要点名它出自哪个文件、还要写得
+完整——于是一段早期交换基本都是工具调用*管道*的对话，总结出来的东西会比它删掉的文本还长。在
+一个真实的六段短交换会话上实测：估算 token 4239 → 4236，也就是什么都没省出来，而摘要本身有
+2225 个字符，它替换掉的实际内容只有 809 个字符。
 
-`Message.Summary` is a distinct message kind, not a `User` message pretending to be history. It maps
-onto the wire as one user turn with an explicit marker, so the model reads "this is a summary of
-earlier work" rather than mistaking it for something it said. `Message` is sealed, so every place
-that must handle it is a compile error until it does.
+所以结果在写出之前就会被测量，比较的对象是这次切分将要消耗掉的那些消息，而不是整个对话；
+摘要如果没有变小，就会被**拒绝**，而不是保存下来：
 
-## What is kept verbatim
+```
+POST /api/compact  ->  409  "没有收益：摘要为 70 token，而它要替换的是 39 token，压缩腾不出任何空间
+                             —— 这个对话还不够长，摘要还省不下任何东西"
+```
 
-The most recent **5 user exchanges**, whole: the user turn, the assistant turns, and every
-tool_result. Kept at exchange granularity because a `tool_result` without the assistant turn that
-asked for it is a request both wire formats reject.
+同一个会话长到六段有实质内容的交换之后（读了一个 53 行的文件、写了测试、发现并修掉了边界
+情况），压缩结果是 **30088 → 27885 tokens，被替换的部分省下 61%**——而摘要保住了精确的错误
+字符串、行号，以及模型在几个回合前发现的那个 `take(-5)` 缺陷。
 
-## Accounting
+## 摘要必须包含什么
 
-A compaction is a real request and costs real tokens, but it is not a model turn of the
-conversation. It gets its own counter so the usage panel keeps meaning what it says.
+要结构，不要叙事——关键在于保住那些模型否则必须重新发现的事实：
 
-## What you see when it happens
+1. 最初的目标，以及一开始就说明的任何约束
+2. 做过的决定，以及理由
+3. 碰过的每一个文件，以及里面改了什么
+4. 验证了什么、怎么验证的；试过什么但没有成功
+5. 还有什么没解决
+6. 逐字保留的技术事实：错误消息、路径、命令、API 形状
 
-A compaction is visible in three places, and each answers a different question:
+## 让模型对此保持诚实
 
-| Where | What it says |
+`Message.Summary` 是一种独立的 message 类型，而不是一个假装成历史的 `User` message。它在
+wire 上映射为一个带显式标记的 user 回合，所以模型读到的是「这是之前工作的摘要」，而不会误以为
+是自己说过的话。`Message` 是 sealed 的，所以每个必须处理它的地方，在处理之前都会是编译错误。
+
+## 逐字保留的是什么
+
+最近的 **5 段用户交换**，整段保留：user 回合、assistant 回合，以及每一个 tool_result。按
+交换粒度保留，是因为一个 `tool_result` 如果没有提出请求的那个 assistant 回合，就是两种 wire
+格式都会拒绝的请求。
+
+## 计账
+
+一次压缩是一次真实请求，花掉真实的 token，但它不是这个对话的一次模型回合。它有自己独立的
+计数器，这样用量面板说的话才一直算数。
+
+## 发生的时候你会看到什么
+
+一次压缩会在三个地方露面，每一处回答一个不同的问题：
+
+| 位置 | 它说什么 |
 |---|---|
-| The transcript | A notice: how many messages became a summary, how many were kept verbatim, the token change, and the path of the file holding the full conversation |
-| Below that notice | A **collapsed card** — `⤓ Compacted conversation · 13 messages summarised`. It opens to the summary itself, because "did it keep what mattered" is a question only the text can answer |
-| The usage panel | A `compactions` row, shown only once there has been one. Its own row rather than folded into `steps`: it cost real tokens and it is not a turn |
+| 转录 | 一条通知：多少条消息变成了摘要、多少条被逐字保留、token 的变化，以及保存完整对话的那个文件的路径 |
+| 那条通知下面 | 一张**折叠卡片**——`⤓ 已压缩的会话 · 13 条消息已摘要`。展开就是摘要本身，因为「它有没有保住重要的东西」这个问题只有文本本身能回答 |
+| 用量面板 | 一行 `compactions`，只有在发生过之后才显示。它自成一行而不是并入 `steps`：它花掉了真实 token，而且它不是一次回合 |
 
-The transcript is rebuilt from the server rather than patched: the conversation really has changed, and
-guessing at the splice is how a page ends up showing history that never existed. Reopening the session
-later — or reloading the page — shows the same card, because the summary is part of the conversation now
-and is replayed like anything else.
+转录是从服务器重建的，而不是打补丁改的：对话确实变了，靠猜去拼接，页面就会显示出从未存在过
+的历史。之后重新打开会话——或者刷新页面——看到的还是同一张卡片，因为摘要现在已经是对话的一部分，
+会像别的东西一样被重放。
 
-## Where it can be triggered
+## 可以在哪里触发
 
-- REPL: `/compact`
-- Browser: a button, not a `/`-prefix intercepted in the composer — stealing a leading slash would
-  break sending a message that legitimately begins with one.
+- REPL：`/compact`
+- 浏览器：一个按钮，而不是在输入框里拦截 `/` 前缀——抢走一个开头的斜杠，会破坏发送一条
+  本来就以斜杠开头的消息。
 
-Refused while a turn is running in that conversation: two writers on one transcript is the thing the
-per-conversation turn flag exists to prevent.
+该对话里正有回合在跑时会被拒绝：同一份转录上出现两个写者，正是「每对话一个回合标志」存在的
+意义。

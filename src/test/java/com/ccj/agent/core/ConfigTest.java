@@ -69,7 +69,7 @@ class ConfigTest {
     Config config = Config.fromFile(file).resolved();
 
     assertEquals("gpt-4o-mini", config.model());
-    assertEquals(0.1, config.temperature().doubleValue(), "the fields around it are still read");
+    assertEquals(0.1, config.temperature().doubleValue(), "它周围的字段仍被读取");
   }
 
   @Test
@@ -141,7 +141,7 @@ class ConfigTest {
 
     assertEquals("openai", layered.provider());
     assertEquals("env-model", layered.model());
-    assertEquals(4, layered.maxTokens().intValue(), "the caller's override wins over the file");
+    assertEquals(4, layered.maxTokens().intValue(), "调用方的覆盖胜过文件");
   }
 
   @Test
@@ -177,7 +177,7 @@ class ConfigTest {
                 null, null, "https://relay.example.com/v1", null, null, null, null, null, null,
                 null, null)
             .resolved();
-    assertNull(relay.model(), "relays name models freely; guessing one would hide the real error");
+    assertNull(relay.model(), "中转服务可以自由命名模型；替它猜一个只会掩盖真正的错误");
 
     assertEquals(
         "my-model",
@@ -207,7 +207,7 @@ class ConfigTest {
 
     String shown = config.describe(Map.of()).get("apiKey");
     assertEquals("***1234", shown);
-    assertEquals("(unset)", Config.empty().resolved().describe(Map.of()).get("apiKey"));
+    assertEquals("（未设置）", Config.empty().resolved().describe(Map.of()).get("apiKey"));
   }
 
   @Test
@@ -241,7 +241,7 @@ class ConfigTest {
     assertEquals(
         "rw-------",
         PosixFilePermissions.toString(Files.getPosixFilePermissions(file)),
-        "the file may hold a key");
+        "这个文件里可能有密钥");
   }
 
   @Test
@@ -256,7 +256,7 @@ class ConfigTest {
     assertEquals("keep me", merged.systemPrompt());
     assertEquals(4096, merged.outputLimitBytes().intValue());
     assertEquals("new-model", merged.model());
-    assertNull(merged.provider(), "provider was not managed by this call, so nothing was added");
+    assertNull(merged.provider(), "这次调用不管理 provider，所以什么都没加上");
   }
 
   @Test
@@ -282,16 +282,16 @@ class ConfigTest {
             .scopedTo("myrelay"));
 
     assertEquals("myrelay", Config.fromFile(file).settingsFor());
-    assertTrue(Config.fromFile(file).settingsBelongTo("MyRelay"), "names are matched case-insensitively");
+    assertTrue(Config.fromFile(file).settingsBelongTo("MyRelay"), "名字匹配不区分大小写");
     assertFalse(
         Config.fromFile(file).settingsBelongTo("other"),
-        "a mark for another provider is not a yes");
+        "给另一个提供方做的标记不是肯定答复");
   }
 
   @Test
   void anUnownedEndpointBelongsToNobody() {
-    // A file written by hand, or by a build that did not record the owner: unknown must never read
-    // as "yes, this key is for that endpoint".
+    // 一个手写的文件，或由一次没有记录归属者的构建写出的文件：未知绝不能读成「是的，这个密钥就是
+    // 给那个端点的」。
     Config unowned =
         new Config("myrelay", "m", "https://left.behind/v1", "sk-x", null, null, null, null, null,
                 null, null)
@@ -300,9 +300,9 @@ class ConfigTest {
     assertNull(unowned.settingsFor());
     assertFalse(unowned.settingsBelongTo("myrelay"));
     assertFalse(unowned.forgetProviderSettings().settingsBelongTo("myrelay"));
-    assertNull(unowned.forgetProviderSettings().baseUrl(), "and it drops what it cannot attribute");
+    assertNull(unowned.forgetProviderSettings().baseUrl(), "并且它会丢弃自己无法归属的东西");
     assertNull(unowned.forgetProviderSettings().apiKey());
-    assertEquals("myrelay", unowned.forgetProviderSettings().provider(), "the provider stays");
+    assertEquals("myrelay", unowned.forgetProviderSettings().provider(), "提供方本身留下");
     assertEquals("m", unowned.forgetProviderSettings().model());
   }
 
@@ -316,21 +316,21 @@ class ConfigTest {
     Config switched = openai.changedBy(new Config("myrelay", "m", null, null, null, null, null, null, null, null, null));
 
     assertEquals("myrelay", switched.provider());
-    assertNull(switched.apiKey(), "the pair being left is not the new provider's: " + switched);
+    assertNull(switched.apiKey(), "被离开的那一对不是新提供方的：" + switched);
     assertEquals("sk-openai", switched.rememberedFor("openai").apiKey(), switched.toString());
     assertEquals(
-        "sk-openai", switched.rememberedFor("OPENAI").apiKey(), "names match case-insensitively");
+        "sk-openai", switched.rememberedFor("OPENAI").apiKey(), "名字匹配不区分大小写");
 
     Config back = switched.changedBy(new Config("openai", "gpt-x", null, null, null, null, null, null, null, null, null));
 
-    assertEquals("sk-openai", back.apiKey(), "switching back restores it without pasting again");
+    assertEquals("sk-openai", back.apiKey(), "切回来即可恢复，无需重新粘贴");
     assertEquals("https://api.openai.com/v1", back.baseUrl());
     assertTrue(back.settingsBelongTo("openai"));
     assertFalse(
         back.rememberedNames().contains("openai"),
-        "the active pair is kept in the flat fields, not in two places: " + back.rememberedNames());
+        "当前生效的那一对保存在扁平字段里，而不是两处都有：" + back.rememberedNames());
     assertEquals(
-        "sk-openai", switched.rememberedFor("openai").apiKey(), "and it was kept on the way out");
+        "sk-openai", switched.rememberedFor("openai").apiKey(), "而且它在离开时就被留下来了");
   }
 
   @Test
@@ -340,8 +340,8 @@ class ConfigTest {
                 null, null, null, null)
             .scopedTo("openai");
 
-    // Naming a provider *and* a key means the key is the new provider's — and the old pair is still
-    // remembered, because switching away is not the same as throwing the old key away.
+    // 同时给出提供方*和*密钥，意味着这个密钥属于新提供方 —— 而旧的那一对仍被记着，因为切换走
+    // 并不等于把旧密钥扔掉。
     Config switched =
         openai.changedBy(
             new Config("myrelay", "m", "https://relay.invalid/v1", "sk-relay", null, null, null,
@@ -368,8 +368,8 @@ class ConfigTest {
     assertNull(cleared.apiKey());
     assertTrue(
         cleared.rememberedFor("myrelay") == null,
-        "a key the user asked to forget must not come back on the next switch: " + cleared);
-    assertEquals("sk-openai", cleared.rememberedFor("openai").apiKey(), "the other one is untouched");
+        "用户要求忘掉的密钥，不得在下次切换时冒出来：" + cleared);
+    assertEquals("sk-openai", cleared.rememberedFor("openai").apiKey(), "另一个没有被动过");
   }
 
   @Test
@@ -382,14 +382,14 @@ class ConfigTest {
     Config saved = config.changedBy(new Config(null, null, null, null, null, null, null, null, null, null, "high"));
 
     assertEquals("high", saved.reasoning());
-    assertEquals("sk-openai", saved.apiKey(), "a tier change must not touch a credential");
+    assertEquals("sk-openai", saved.apiKey(), "改动推理档位绝不能碰凭据");
     assertEquals("sk-relay", saved.rememberedFor("myrelay").apiKey());
   }
 
   @Test
   void layeredUsesThePairRememberedForTheProviderTheRunIsOn() {
     Path file = tmp.resolve("config.json");
-    // The active pair in the file belongs to openai; myrelay's is the one remembered.
+    // 文件里当前生效的那一对属于 openai；myrelay 的那一对是被记住的。
     Config.writeInto(
         file,
         new Config("openai", "gpt-x", null, "sk-openai", null, null, null, null, null, null, null)
@@ -400,11 +400,11 @@ class ConfigTest {
         Config.layered(file, Map.of(), new Config("myrelay", "m", null, null, null, null, null, null, null, null, null));
 
     assertEquals("myrelay", onRelay.provider());
-    assertEquals("sk-relay", onRelay.apiKey(), "recalled, not pasted again: " + onRelay);
+    assertEquals("sk-relay", onRelay.apiKey(), "被回忆起来，而不是重新粘贴：" + onRelay);
     assertEquals("https://relay.invalid/v1", onRelay.baseUrl());
     assertTrue(onRelay.settingsBelongTo("myrelay"));
 
-    // A flag naming an endpoint still wins outright: it is an act for this run's provider.
+    // 点名了某个端点的命令行标志仍然直接胜出：它是为本次运行的提供方而做的动作。
     Config onFlag =
         Config.layered(
             file,
@@ -417,9 +417,8 @@ class ConfigTest {
 
   @Test
   void theFileRecordsChoicesNotDefaults() throws IOException {
-    // resolved() fills in the provider's endpoint and key variable for whoever needs a complete
-    // configuration. Writing that back would put an address nobody chose into the file, where the
-    // next reader would treat it as a deliberate one.
+    // resolved() 会为需要完整配置的人补上提供方的端点和密钥变量名。把它写回去，就会把一个没人
+    // 选过的地址放进文件，而下一个读者会把它当作有意为之。
     Path file = tmp.resolve("config.json");
 
     Config.writeInto(
@@ -431,15 +430,15 @@ class ConfigTest {
                 "myrelay", new ProviderSettings(Config.defaultBaseUrl("myrelay"), "sk-relay", null)));
 
     JsonNode written = Json.parse(Files.readString(file));
-    assertFalse(written.has("baseUrl"), "a defaulted endpoint is not a choice: " + written);
+    assertFalse(written.has("baseUrl"), "被套用默认值的端点不是一个选择：" + written);
     assertFalse(
         written.has("apiKeyEnv"),
-        "nor is the protocol's default variable: " + written);
+        "协议默认的变量名也不是：" + written);
     assertEquals("sk-relay", written.path("apiKey").asText());
 
     Config reread = Config.fromFile(file);
-    assertNull(reread.baseUrl(), "still nothing stored");
-    assertEquals(Config.defaultBaseUrl("myrelay"), reread.resolved().baseUrl(), "re-derived on load");
+    assertNull(reread.baseUrl(), "仍然什么都没存");
+    assertEquals(Config.defaultBaseUrl("myrelay"), reread.resolved().baseUrl(), "加载时重新推导");
     assertEquals("OPENAI_API_KEY", reread.resolved().apiKeyEnv());
   }
 
@@ -460,11 +459,11 @@ class ConfigTest {
     assertEquals(
         "https://openai-relay.invalid/v1",
         reread.rememberedFor("openai").baseUrl(),
-        "endpoint and key travel together, or neither of them means anything");
+        "端点和密钥要么一起走，要么两个都没有意义");
     assertEquals(
         "rw-------",
         PosixFilePermissions.toString(Files.getPosixFilePermissions(file)),
-        "a file that may hold several keys is still owner-only");
+        "一个可能存着多个密钥的文件，仍然只有属主可读");
 
     Config empty = Config.fromFile(tmp.resolve("nothing.json"));
     assertTrue(empty.rememberedNames().isEmpty());
@@ -474,22 +473,22 @@ class ConfigTest {
   void layeredMarksSettingsThatCameFromAFlagOrTheEnvironment() throws IOException {
     Path file = tmp.resolve("config.json");
 
-    // From the command line: an explicit act for whatever provider this run ends up using.
+    // 来自命令行：无论本次运行最终用哪个提供方，这都是一个明确的动作。
     Config fromFlag =
         Config.layered(
             file,
             Map.of(),
             new Config(null, null, "https://flag.example.com/v1", null, null, null, null, null, null,
                 null, null));
-    assertTrue(fromFlag.settingsBelongTo("openai"), "the default provider owns what the flag named");
+    assertTrue(fromFlag.settingsBelongTo("openai"), "默认提供方拥有那个标志所点名的东西");
 
-    // From the environment: the same kind of act.
+    // 来自环境变量：同一类动作。
     Config fromEnvironment =
         Config.layered(file, Map.of("CCJ_BASE_URL", "https://env.example.com/v1"), null);
     assertTrue(fromEnvironment.settingsBelongTo("openai"));
 
-    // From the file: unmarked, because it may have been written for a provider this run is not
-    // using — which is the whole reason the mark exists.
+    // 来自文件：没有标记，因为它是为某个本次运行并未使用的提供方写的也说不定 —— 这正是标记存在的
+    // 全部理由。
     Config.writeInto(
         file,
         new Config(null, null, "https://file.example.com/v1", null, null, null, null, null, null,
@@ -499,10 +498,9 @@ class ConfigTest {
 
   @Test
   void aSwitchDoesNotInheritAPairMarkedForAnotherProvider() throws IOException {
-    // The mark in the file says whose endpoint and key these are. Naming a different provider is not
-    // a licence to send the previous vendor's credential to a new address, so a marked pair is
-    // dropped rather than inherited — while a hand-written file with no mark keeps its pair, because
-    // "nobody recorded who entered it" is not "somebody else's".
+    // 文件里的标记说明这些端点和密钥是谁的。点名另一个提供方，并不是可以把上一个厂商的凭据发往
+    // 新地址的许可，所以带标记的那一对会被丢弃而不是继承 —— 而一个没有标记的手写文件仍保留它的
+    // 那一对，因为「没人记录是谁输入的」不等于「这是别人的」。
     Path file = tmp.resolve("config.json");
     Config.writeInto(
         file,
@@ -527,14 +525,14 @@ class ConfigTest {
             new Config("anthropic", "claude-x", null, null, null, null, null, null, null, null, null));
 
     assertEquals("anthropic", switched.provider());
-    assertNull(switched.apiKey(), "one vendor's key must not travel to another: " + switched);
+    assertNull(switched.apiKey(), "一个厂商的密钥绝不能跑到另一个厂商那里去：" + switched);
     assertEquals(
         Config.defaultBaseUrl("anthropic"),
         switched.baseUrl(),
-        "nor its endpoint: " + switched);
+        "它的端点也不行：" + switched);
     assertFalse(switched.settingsBelongTo("openai"));
 
-    // A pair nobody claimed is still used: there is nothing to say it belongs elsewhere.
+    // 一对没人认领的仍会被使用：没有任何东西表明它属于别处。
     Path handWritten = tmp.resolve("hand-written.json");
     Files.writeString(
         handWritten,
@@ -542,7 +540,7 @@ class ConfigTest {
         {"provider":"openai","model":"gpt-x","baseUrl":"https://mine.invalid/v1","apiKey":"sk-mine"}
         """);
     Config kept = Config.layered(handWritten, Map.of(), null);
-    assertEquals("sk-mine", kept.apiKey(), "a hand-written file keeps what it says: " + kept);
+    assertEquals("sk-mine", kept.apiKey(), "手写的文件保留它写的内容：" + kept);
     assertEquals("https://mine.invalid/v1", kept.baseUrl());
   }
 
@@ -563,7 +561,7 @@ class ConfigTest {
     assertEquals("high", Config.fromFile(file).reasoning());
 
     assertEquals("low", Config.empty().merge(reasoning("LOW")).resolved().reasoning());
-    assertNull(Config.empty().resolved().reasoning(), "absent means the provider decides");
+    assertNull(Config.empty().resolved().reasoning(), "缺省意味着由提供方决定");
     assertEquals("max", Config.fromEnv(Map.of("CCJ_REASONING", "max")).reasoning());
 
     IllegalArgumentException bad =
@@ -597,23 +595,23 @@ class ConfigTest {
     assertEquals("llava", read.vision().model());
     assertTrue(read.vision().isConfigured());
 
-    assertEquals(4096, read.vision().maxTokens().intValue(), "the budget is part of the block");
+    assertEquals(4096, read.vision().maxTokens().intValue(), "预算也是这个块的一部分");
     Config.writeInto(file, read);
-    assertEquals("llava", Config.fromFile(file).vision().model(), "a save keeps the block it was given");
+    assertEquals("llava", Config.fromFile(file).vision().model(), "一次保存会保留它收到的块");
     assertEquals(
         4096,
         Config.fromFile(file).vision().maxTokens().intValue(),
-        "and the budget with it: 1500 came back empty on a real screenshot");
+        "预算也随之保留：1500 在真实截图上曾经返回空值");
 
-    // No block, and a block that names nothing, both mean one thing: the feature is off.
+    // 没有块，以及一个什么都没写的块，都只意味着同一件事：这个特性关着。
     Path none = tmp.resolve("none.json");
     assertNull(Config.fromFile(none).vision());
-    assertEquals("(off)", Config.fromFile(none).resolved().describe(Map.of()).get("vision"));
+    assertEquals("（关闭）", Config.fromFile(none).resolved().describe(Map.of()).get("vision"));
     Path emptyBlock = tmp.resolve("empty-vision.json");
     Files.writeString(emptyBlock, "{\"vision\": {}}");
     assertNull(Config.fromFile(emptyBlock).vision());
 
-    // The picture-describer's key is reported the way every other key is: never in full.
+    // 图片描述器的密钥按其他每个密钥的方式报告：从不给出完整内容。
     String reported = read.describe(Map.of()).get("vision");
     assertTrue(reported.contains("***sion"), reported);
     assertFalse(reported.contains("sk-vision"), reported);
@@ -631,18 +629,17 @@ class ConfigTest {
     assertEquals("http://127.0.0.1:9000/v1", env.vision().baseUrl());
     assertEquals("llava", env.vision().model());
     assertEquals("k-1234", env.vision().resolvedApiKey(Map.of("MY_VISION_KEY", "k-1234")));
-    assertNull(env.vision().maxTokens(), "absent means the default the client applies");
+    assertNull(env.vision().maxTokens(), "缺省意味着采用客户端套用的默认值");
     assertEquals(
         6000,
         Config.fromEnv(Map.of("CCJ_VISION_MAX_TOKENS", "6000")).vision().maxTokens().intValue());
-    assertNull(env.vision().resolvedApiKey(Map.of()), "an unset variable is no key");
-    assertNull(Config.fromEnv(Map.of()).vision(), "no variables, no vision");
+    assertNull(env.vision().resolvedApiKey(Map.of()), "未设置的变量不是密钥");
+    assertNull(Config.fromEnv(Map.of()).vision(), "没有变量，就没有视觉能力");
   }
 
   @Test
   void aLaterSourceOverridesOneVisionFieldWithoutLosingTheRest() throws IOException {
-    // A layer that names only the model must not erase the endpoint and the key underneath it:
-    // "use this model instead" is not "forget where the endpoint is".
+    // 一个只点名模型的分层绝不能抹掉它下面的端点和密钥：「改用这个模型」不是「忘了端点在哪」。
     Path file = tmp.resolve("config.json");
     Files.writeString(
         file,
@@ -656,7 +653,7 @@ class ConfigTest {
     assertEquals("http://127.0.0.1:8080/v1", layered.vision().baseUrl());
     assertEquals("sk-vision", layered.vision().apiKey());
 
-    // And a layer that names only the budget leaves the rest alone too.
+    // 而一个只点名预算的分层也照样不动其余部分。
     Config budgeted =
         Config.layered(file, Map.of("CCJ_VISION_MAX_TOKENS", "16384", "CCJ_VISION_MODEL", "internvl"), null);
     assertEquals(16384, budgeted.vision().maxTokens().intValue());

@@ -25,11 +25,10 @@ class CliOptionsTest {
 
   @Test
   void everyFlagAdvancesPastItself() {
-    // A flag whose branch forgets to move the cursor turns parse() into an infinite loop that burns a
-    // core and prints nothing — the process starts, never binds, and never says why. That happened:
-    // `--subagents` was added without its increment, and nothing caught it because no test ran the
-    // flag through a real parse. Each case here puts the flag in front of another one, so a
-    // non-advancing branch hangs the test instead of shipping.
+    // 一个分支忘了移动游标的 flag，会把 parse() 变成一个无限循环：烧掉一个核，什么都不打印
+    // ——进程启动了、永远不绑定端口、也不说为什么。这事发生过：`--subagents` 加进来时漏了自增，
+    // 而没有任何东西发现它，因为没有测试让这个 flag 走过一次真正的解析。这里的每个用例都把这个
+    // flag 放在另一个 flag 前面，因此不前进的分支会让测试挂住，而不是被发出去。
     CliOptions all =
         CliOptions.parse(
             new String[] {
@@ -56,8 +55,8 @@ class CliOptionsTest {
               "--vision-max-tokens", "6000",
             });
 
-    assertTrue(all.subAgents(), "--subagents is a switch, and the one that was broken");
-    assertEquals("m", all.model(), "and the flag after it was still reached");
+    assertTrue(all.subAgents(), "--subagents 是个开关，也正是曾经坏掉的那个");
+    assertEquals("m", all.model(), "而且它后面的 flag 仍然被走到了");
     assertEquals("p", all.provider());
     assertEquals("w", all.workspace());
     assertEquals(1234, all.port());
@@ -66,7 +65,7 @@ class CliOptionsTest {
     assertEquals(10, all.maxTokens());
     assertEquals(100, all.maxContextTokens());
     assertEquals("http://x", all.visionBaseUrl());
-    assertEquals("vm", all.visionModel(), "the last one still gets its value");
+    assertEquals("vm", all.visionModel(), "最后一个也仍然拿到了它的值");
     assertEquals("vk", all.visionApiKey());
     assertEquals(6000, all.visionMaxTokens());
   }
@@ -88,28 +87,28 @@ class CliOptionsTest {
     assertEquals("sk-vision", overrides.vision().apiKey());
     assertEquals("MY_VISION_KEY", overrides.vision().apiKeyEnv());
 
-    assertNull(CliOptions.parse(new String[0]).overrides().vision(), "no flags, no block");
-    // One flag is a block naming one field, so the endpoint in the file underneath it survives the
-    // merge rather than being cleared by a flag that never mentioned it.
+    assertNull(CliOptions.parse(new String[0]).overrides().vision(), "没有 flag，就没有块");
+    // 一个 flag 就是一个只点名某个字段的块，因此它下面文件里的端点会在合并中存活下来，而不是
+    // 被一个从未提到它的 flag 清掉。
     Config modelOnly = CliOptions.parse(new String[] {"--vision-model", "internvl"}).overrides();
     assertEquals("internvl", modelOnly.vision().model());
     assertNull(modelOnly.vision().baseUrl());
 
-    // The budget on its own, which is the flag somebody reaches for when a screenshot comes back
-    // empty: 1500 was not enough for a reasoning model to finish thinking and start describing.
+    // 单独的预算 flag，正是截图回来是空的时候有人会去抓的那个：1500 不够一个推理模型想完并
+    // 开始描述。
     Config budgeted =
         CliOptions.parse(new String[] {"--vision-max-tokens", "16384"}).overrides();
     assertEquals(16384, budgeted.vision().maxTokens().intValue());
-    assertNull(budgeted.vision().baseUrl(), "the flag named the budget and nothing else");
-    assertNull(budgeted.vision().model(), "the endpoint in the file underneath it is untouched");
+    assertNull(budgeted.vision().baseUrl(), "那个 flag 只点了预算，别无所指");
+    assertNull(budgeted.vision().model(), "它下面文件里的端点没有被动过");
     assertTrue(
         CliOptions.usage().contains("--vision-max-tokens"),
-        "a flag nobody can find is a flag nobody has");
+        "没人找得到的 flag，就是没人有的 flag");
   }
 
   @Test
   void subAgentsAreOffUnlessAskedFor() {
-    // It spends tokens on a conversation the user did not type a message for, so it is opt-in.
+    // 它会把 token 花在一段用户没有输入过任何消息的对话上，所以是选入式的。
     assertFalse(CliOptions.parse(new String[] {}).subAgents());
     assertTrue(CliOptions.parse(new String[] {"--subagents"}).subAgents());
   }
@@ -131,9 +130,8 @@ class CliOptionsTest {
 
   @Test
   void theWebTokenComesFromTheFlagOrTheEnvironment() {
-    // The flag wins, so a one-off run can use a different token without unsetting anything; the
-    // environment is what makes a phone-to-laptop setup possible without pasting a secret into a
-    // command line, which is a thing `ps` and shell history both read back.
+    // flag 优先，因此一次性运行可以换个 token 而无需先取消什么；环境变量则让「手机连笔记本」
+    // 的配置成为可能，而不用把秘密粘到命令行上——那是 `ps` 和 shell 历史都会读回去的东西。
     assertEquals("flag", Cli.webToken(CliOptions.parse(new String[] {"--web-token", "flag"}), Map.of()));
     assertEquals(
         "env", Cli.webToken(CliOptions.parse(new String[0]), Map.of(Cli.ENV_WEB_TOKEN, "env")));
@@ -142,14 +140,14 @@ class CliOptionsTest {
         Cli.webToken(
             CliOptions.parse(new String[] {"--web-token=flag"}), Map.of(Cli.ENV_WEB_TOKEN, "env")));
 
-    // Blank is "not set" from either source, not an empty password: serving a network bind with a
-    // token nobody can mistype is the same as serving it with none, and that is refused.
+    // 空值来自任一来源都表示「未设置」，不是空密码：用一个没人会打错的 token 去服务一个网络
+    // 绑定，等同于不设 token 地服务它，而那是被拒绝的。
     assertNull(Cli.webToken(CliOptions.parse(new String[0]), Map.of()));
     assertNull(Cli.webToken(CliOptions.parse(new String[0]), Map.of(Cli.ENV_WEB_TOKEN, "   ")));
     assertNull(Cli.webToken(CliOptions.parse(new String[] {"--web-token", "  "}), Map.of()));
     assertNull(Cli.webToken(CliOptions.parse(new String[0]), null));
 
-    // Surrounding space from a shell (`export CCJ_WEB_TOKEN="$(cat token)"`) is not part of it.
+    // 来自 shell 的首尾空白（`export CCJ_WEB_TOKEN="$(cat token)"`）不是它的一部分。
     assertEquals(
         "env", Cli.webToken(CliOptions.parse(new String[0]), Map.of(Cli.ENV_WEB_TOKEN, " env\n")));
   }
@@ -170,7 +168,7 @@ class CliOptionsTest {
     assertEquals("high", options.reasoning());
     assertEquals(120000, options.maxContextTokens());
 
-    // The web picker is not the only way to set them: both reach the configuration layer.
+    // web 里的选择器不是设置它们的唯一途径：两者都会到达配置层。
     Config overrides = options.overrides();
     assertEquals("high", overrides.reasoning());
     assertEquals(120000, overrides.maxContextTokens());
@@ -250,7 +248,7 @@ class CliOptionsTest {
   void frontEndFlagsAndTheirDefaults() {
     CliOptions bare = CliOptions.parse(new String[] {});
 
-    assertFalse(bare.web(), "the web UI is the default, so --web is only ever explicit");
+    assertFalse(bare.web(), "web UI 是默认值，所以 --web 永远只是显式写出来的");
     assertFalse(bare.repl());
     assertFalse(bare.noOpen());
 
@@ -273,7 +271,7 @@ class CliOptionsTest {
     CliOptions demo = CliOptions.parse(new String[] {"--demo"});
 
     assertTrue(demo.demo());
-    assertFalse(demo.repl(), "the front end still comes from the mode flags");
+    assertFalse(demo.repl(), "前端仍然由模式 flag 决定");
     assertNull(demo.print());
   }
 }

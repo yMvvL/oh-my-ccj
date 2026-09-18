@@ -9,21 +9,20 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
- * A stand-in for a model that does not exist.
+ * 一个不存在的模型的替身。
  *
- * <p>It routes the prompt straight to a tool call — {@code read <path>}, {@code run <command>},
- * {@code list [glob]}, {@code search <regex>} — and answers anything else with that vocabulary. Once
- * a tool result comes back it always replies in prose, which is what ends the loop.
+ * <p>它把提示直接路由成工具调用——{@code read <path>}、{@code run <command>}、{@code list [glob]}、
+ * {@code search <regex>}——别的一律用这套词汇作答。工具结果一回来，它总是用散文作答，这正是结束循环的
+ * 方式。
  *
- * <p>It is not a model and never pretends to be one. It exists so {@code ccj --demo} can show the
- * real loop, the real tools, the real approval prompts and the real web UI in one command, with no
- * key, no network and no second process.
+ * <p>它不是模型，也从不假装是。它存在的意义是让 {@code ccj --demo} 用一条命令展示真实的循环、真实的
+ * 工具、真实的审批提示和真实的 web UI，不需要密钥、不需要网络、也不需要第二个进程。
  */
 public final class DemoProvider implements Provider {
 
   private static final String HELP =
-      "(demo model) there is no model here, only a tool router. Try:"
-          + " read <path> | run <command> | list [glob] | search <regex>. You said: \"";
+      "（demo 模型）这里没有模型，只有一个工具路由。试试："
+          + " read <path> | run <command> | list [glob] | search <regex>。你说的是：\"";
 
   private final AtomicInteger nextCallId = new AtomicInteger();
 
@@ -44,16 +43,16 @@ public final class DemoProvider implements Provider {
     return reply;
   }
 
-  /** What this turn does. Public so it can be pinned by tests without a transport in the way. */
+  /** 这个回合做什么。公开是为了让测试能在中间没有传输层的情况下钉住它。 */
   public Message.Assistant decide(List<Message> messages) {
     Message last = messages == null || messages.isEmpty() ? null : messages.get(messages.size() - 1);
 
     if (last instanceof Message.ToolResult result) {
       String content = result.content();
       long lines = content.lines().count();
-      String first = content.lines().findFirst().orElse("(no output)");
+      String first = content.lines().findFirst().orElse("（无输出）");
       return Message.Assistant.text(
-          "tool said: " + first + (lines > 1 ? " … (" + lines + " lines)" : ""));
+          "工具说：" + first + (lines > 1 ? " …（共 " + lines + " 行）" : ""));
     }
 
     String text = last instanceof Message.User user ? user.text().strip() : "";

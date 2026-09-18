@@ -7,10 +7,10 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Name-addressable set of tools plus the single place where tool failures become results.
+ * 可按名字寻址的工具集合，同时也是把工具失败变成结果的唯一场所。
  *
- * <p>A model that hallucinates a tool name, passes invalid JSON, or triggers an exception must not
- * kill the session: each of those turns into an error result the model gets to read and react to.
+ * <p>模型幻觉出一个工具名、传了无效 JSON、或触发了异常，都不该把会话搞死：每一种都会变成一条错误结果，
+ * 模型能读到它并作出反应。
  */
 public final class ToolRegistry {
 
@@ -41,7 +41,7 @@ public final class ToolRegistry {
     Tool tool = tools.get(call.name());
     if (tool == null) {
       return ToolResult.error(
-          "unknown tool '" + call.name() + "'; available tools: " + String.join(", ", names()));
+          "未知工具 '" + call.name() + "'；可用工具：" + String.join(", ", names()));
     }
     String arguments = call.arguments();
     if (arguments.isBlank()) {
@@ -50,10 +50,10 @@ public final class ToolRegistry {
     try {
       return tool.execute(arguments, ctx);
     } catch (IllegalArgumentException e) {
-      return ToolResult.error("invalid arguments for " + call.name() + ": " + e.getMessage());
+      return ToolResult.error(call.name() + " 的参数无效：" + e.getMessage());
     } catch (Exception e) {
       String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-      return ToolResult.error(call.name() + " failed: " + message);
+      return ToolResult.error(call.name() + " 执行失败：" + message);
     }
   }
 

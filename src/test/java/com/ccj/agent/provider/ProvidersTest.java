@@ -86,8 +86,8 @@ class ProvidersTest {
     assertTrue(failure.getMessage().contains("--model"), failure.getMessage());
     assertTrue(failure.getMessage().contains("CCJ_MODEL"), failure.getMessage());
     assertTrue(
-        failure.getMessage().contains("custom"),
-        "the message must explain why no default applies: " + failure.getMessage());
+        failure.getMessage().contains("自定义"),
+        "消息必须解释为什么没有默认值可用：" + failure.getMessage());
   }
 
   @Test
@@ -120,9 +120,9 @@ class ProvidersTest {
       Provider provider = Providers.create(config, Map.of("MY_KEY", "sk-from-env"), store);
       provider.complete(ping("claude-x"), event -> {});
 
-      assertEquals("/v1/messages", server.path(0), "an anthropic-kind definition speaks that API");
+      assertEquals("/v1/messages", server.path(0), "anthropic 类型的定义说的就是这个 API");
       assertEquals("sk-from-env", server.header(0, "x-api-key"));
-      assertEquals("myrelay", config.provider(), "and the name stays the user's");
+      assertEquals("myrelay", config.provider(), "而名字仍归用户所有");
       provider.close();
     }
   }
@@ -134,8 +134,8 @@ class ProvidersTest {
       store.save(
           new ProviderDefinition(
               "myrelay", ProviderDefinition.OPENAI, "https://ignored.invalid/v1", null, List.of("m")));
-      // `settingsFor` is what says the URL was entered for myrelay — a --base-url flag, a
-      // CCJ_BASE_URL, or the settings form while myrelay was selected.
+      // `settingsFor` 才是说明这个 URL 是为 myrelay 填的东西——一个 --base-url 参数、一个
+      // CCJ_BASE_URL，或者在选中 myrelay 时的设置表单。
       Config config =
           new Config("myrelay", "m", override.url(), null, null, null, null, null, null, null, null)
               .resolved()
@@ -144,7 +144,7 @@ class ProvidersTest {
       Provider provider = Providers.create(config, Map.of("OPENAI_API_KEY", "sk"), store);
       provider.complete(ping("m"), event -> {});
 
-      assertEquals(1, override.count(), "the explicitly configured URL must be the one used");
+      assertEquals(1, override.count(), "显式配置的 URL 必须就是被用到的那个");
       provider.close();
     }
   }
@@ -164,8 +164,8 @@ class ProvidersTest {
 
     assertFalse(
         failure.getMessage().contains("sk-previous-provider"),
-        "the key must not be echoed back: " + failure.getMessage());
-    assertTrue(failure.getMessage().contains("another provider"), failure.getMessage());
+        "密钥绝不能回显出来：" + failure.getMessage());
+    assertTrue(failure.getMessage().contains("另一个提供方"), failure.getMessage());
     assertTrue(failure.getMessage().contains("MY_KEY"), failure.getMessage());
   }
 
@@ -181,17 +181,17 @@ class ProvidersTest {
 
     assertFalse(
         Providers.usesStoredSettings(unowned, store, "myrelay"),
-        "a custom provider uses its definition, so a stored pair entered elsewhere is not its own");
+        "自定义提供方用自己的定义，所以在别处填的那一对不是它的");
     assertTrue(Providers.usesStoredSettings(unowned.scopedTo("myrelay"), store, "myrelay"));
     assertTrue(
         Providers.usesStoredSettings(unowned, store, "openai"),
-        "a built-in has no definition to fall back on, so whatever is stored is its own");
+        "内置项没有定义可以回退，所以存下的是什么就是它的");
   }
 
   @Test
   void aBaseUrlLeftBehindByAnotherProviderIsNotUsed() throws Exception {
-    // The bug this rule exists for: the provider was switched, the stored endpoint was not, and the
-    // traffic went to the previous provider — with the previous provider's key, on its bill.
+    // 这条规则之所以存在，是为了这个 bug：提供方换了，存下的端点没换，流量于是去了上一个提供方——用着上一
+    // 个提供方的密钥，记在它的账上。
     ProviderStore store = ProviderStore.open(tmp);
     try (FakeServer relay = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
       store.save(
@@ -214,11 +214,11 @@ class ProvidersTest {
       Provider provider = Providers.create(config, Map.of("MY_KEY", "sk-mine"), store);
       provider.complete(ping("m"), event -> {});
 
-      assertEquals(1, relay.count(), "the definition's endpoint must be the one used");
+      assertEquals(1, relay.count(), "被用到的必须是定义里的端点");
       assertEquals(
           "Bearer sk-mine",
           relay.header(0, "authorization"),
-          "the definition's key variable is the one this provider reads");
+          "这个提供方读的就是定义里的那个密钥变量");
       provider.close();
     }
   }
@@ -235,7 +235,7 @@ class ProvidersTest {
             () -> Providers.create(config("nope", "m", "sk"), Map.of(), store));
 
     assertTrue(failure.getMessage().contains("myrelay"), failure.getMessage());
-    assertTrue(Providers.supported(store).contains("myrelay"), "the picker must offer it");
+    assertTrue(Providers.supported(store).contains("myrelay"), "选择器必须给出它");
   }
 
   @Test
@@ -267,17 +267,16 @@ class ProvidersTest {
       assertEquals(
           "/v1/chat/completions",
           server.path(0),
-          "the endpoint must appear once, not twice: " + server.path(0));
+          "端点必须只出现一次，而不是两次：" + server.path(0));
       provider.close();
     }
   }
 
   @Test
   void aCustomProvidersOwnKeyVariableBeatsTheConfigsDefault() throws Exception {
-    // The bug: the key *value* was resolved against the config's apiKeyEnv, which `resolved()` fills
-    // with the provider-kind default — OPENAI_API_KEY for any name that is not "anthropic". A
-    // globally exported OpenAI key was therefore sent to somebody else's endpoint, and the variable
-    // the user tied to that provider was never consulted.
+    // 那个 bug：密钥的*值*是照着配置里的 apiKeyEnv 解析的，而 `resolved()` 会用提供方类型的默认值填上
+    // 它——任何不叫 "anthropic" 的名字都得到 OPENAI_API_KEY。于是全局导出的 OpenAI 密钥被发去了别人的
+    // 端点，而用户绑给那个提供方的变量从未被看过。
     ProviderStore store = ProviderStore.open(tmp);
     try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
       store.save(
@@ -311,14 +310,14 @@ class ProvidersTest {
 
     assertTrue(
         failure.getMessage().contains("MY_KEY"),
-        "the message must name the definition's variable: " + failure.getMessage());
+        "消息必须点名定义里的那个变量：" + failure.getMessage());
   }
 
   @Test
   void anAnthropicKindRelayIsNotAskedForOpenAIsKeyVariable() {
-    // `resolved()` fills apiKeyEnv with the default the provider's *name* gives, and only the literal
-    // name "anthropic" maps to ANTHROPIC_API_KEY — so a relay with the Anthropic kind called anything
-    // else was asked for OPENAI_API_KEY, and a globally exported OpenAI key was sent to it.
+    // `resolved()` 会用提供方*名字*给出的默认值填上 apiKeyEnv，而只有字面上的名字 "anthropic" 才映射
+    // 到 ANTHROPIC_API_KEY——于是一个叫别的名字、类型却是 Anthropic 的中继被要求提供 OPENAI_API_KEY，而
+    // 全局导出的 OpenAI 密钥被打发给了它。
     ProviderStore store = ProviderStore.open(tmp);
     store.save(
         new ProviderDefinition(
@@ -335,12 +334,12 @@ class ProvidersTest {
 
     assertTrue(
         failure.getMessage().contains("ANTHROPIC_API_KEY"),
-        "the variable must match the kind: " + failure.getMessage());
+        "变量必须与类型相配：" + failure.getMessage());
     assertFalse(
         failure.getMessage().contains("OPENAI_API_KEY"),
-        "an Anthropic-kind relay must not be told to set OpenAI's variable: " + failure.getMessage());
+        "不能叫一个 Anthropic 类型的中继去设置 OpenAI 的变量：" + failure.getMessage());
 
-    // And the exported OpenAI key is not quietly used instead.
+    // 而导出的 OpenAI 密钥也不会被悄悄拿去顶替。
     IllegalArgumentException withOpenAiExported =
         assertThrows(
             IllegalArgumentException.class,
@@ -351,13 +350,13 @@ class ProvidersTest {
                     store));
     assertFalse(
         withOpenAiExported.getMessage().contains("sk-openai-secret"),
-        "a credential must never be echoed: " + withOpenAiExported.getMessage());
+        "凭据绝不能回显：" + withOpenAiExported.getMessage());
   }
 
   @Test
   void aBaseUrlWithATrailingSlashAfterTheEndpointIsStillNormalised() throws Exception {
-    // The bug: the endpoint suffix was stripped before the trailing slash, so ".../chat/completions/"
-    // kept the path and the provider appended its own to it — a 404 that looked random.
+    // 那个 bug：端点后缀在结尾斜杠之前就被剥掉，于是 ".../chat/completions/" 把路径留了下来，提供方又
+    // 往后面追加自己的路径——一个看起来毫无规律的 404。
     ProviderStore store = ProviderStore.open(tmp);
     try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
       store.save(
@@ -396,8 +395,9 @@ class ProvidersTest {
     IllegalArgumentException failure =
         assertThrows(IllegalArgumentException.class, () -> Providers.create(config, Map.of(), store));
 
-    assertTrue(failure.getMessage().contains("looks like an API key"), failure.getMessage());
-    assertTrue(failure.getMessage().contains("API key field"), failure.getMessage());
-    assertFalse(failure.getMessage().contains("abcdefghij"), "the key itself must not be echoed");
+    assertTrue(
+        failure.getMessage().contains("看起来就是 API 密钥本身"), failure.getMessage());
+    assertTrue(failure.getMessage().contains("API key 字段"), failure.getMessage());
+    assertFalse(failure.getMessage().contains("abcdefghij"), "密钥本身绝不能回显");
   }
 }

@@ -14,9 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The registry decides where sessions live, so its rules are pinned here: the workspace you started
- * in keeps the top-level sessions directory, added ones get their own, and nothing that could lose
- * history happens by accident.
+ * 登记表决定会话住在哪里，所以它的规则钉在这里：你启动时所在的工作区保留顶层的会话目录，后来添加的拿到
+ * 自己的目录，而任何可能弄丢历史的事都不会偶然发生。
  */
 class WorkspaceStoreTest {
 
@@ -37,8 +36,8 @@ class WorkspaceStoreTest {
     assertEquals(
         tmp.resolve("sessions"),
         store.active().sessionsDir(),
-        "a workspace that existed before the registry keeps its conversations where they were");
-    assertTrue(Files.isRegularFile(tmp.resolve("workspaces.json")), "the registry is written down");
+        "登记表存在之前就有工作区，它的会话留在原地");
+    assertTrue(Files.isRegularFile(tmp.resolve("workspaces.json")), "登记表被写下来了");
   }
 
   @Test
@@ -48,10 +47,10 @@ class WorkspaceStoreTest {
 
     Workspace added = store.add("other", project);
 
-    assertTrue(Files.isDirectory(project), "adding a workspace creates the directory");
+    assertTrue(Files.isDirectory(project), "添加一个工作区会创建它的目录");
     assertEquals(tmp.resolve("workspaces/other/sessions"), added.sessionsDir());
-    assertFalse(Files.exists(added.sessionsDir()), "the sessions directory appears with the first message");
-    assertEquals("proj", store.activeName(), "adding does not switch");
+    assertFalse(Files.exists(added.sessionsDir()), "会话目录随第一条消息出现");
+    assertEquals("proj", store.activeName(), "添加不会切换");
   }
 
   @Test
@@ -67,7 +66,7 @@ class WorkspaceStoreTest {
     assertEquals(List.of("proj", "other"), reopened.names());
     assertEquals(
         reopened.find("proj").orElseThrow().sessionsDir(), tmp.resolve("sessions"),
-        "the legacy mapping survives a round trip through the file");
+        "旧的映射经得起在文件里转一趟");
   }
 
   @Test
@@ -77,10 +76,10 @@ class WorkspaceStoreTest {
 
     Workspace added = store.add(project);
 
-    assertEquals("my-project", added.name(), "the folder names the workspace");
+    assertEquals("my-project", added.name(), "文件夹给工作区命名");
     assertEquals(project, added.path());
     assertEquals(tmp.resolve("workspaces/my-project/sessions"), added.sessionsDir());
-    assertEquals("proj", store.activeName(), "adding a picked folder does not switch");
+    assertEquals("proj", store.activeName(), "添加一个挑出来的文件夹不会切换");
   }
 
   @Test
@@ -90,10 +89,10 @@ class WorkspaceStoreTest {
     Path two = Files.createDirectories(tmp.resolve("two/api"));
 
     assertEquals("api", store.add(one).name());
-    assertEquals("api-2", store.add(two).name(), "the second api is not refused, it is suffixed");
+    assertEquals("api-2", store.add(two).name(), "第二个 api 没有被拒绝，只是加了后缀");
     assertEquals(List.of("proj", "api", "api-2"), store.names());
 
-    // The suffix keeps names inside the 40-character ceiling rather than pushing past it.
+    // 后缀让名字留在这个 40 字符的天花板之内，而不是顶出去。
     Path longPath = Files.createDirectories(tmp.resolve("three/" + "n".repeat(40)));
     assertEquals(40, store.add(longPath).name().length());
     Path longPathTwo = Files.createDirectories(tmp.resolve("four/" + "n".repeat(40)));
@@ -106,9 +105,8 @@ class WorkspaceStoreTest {
   void aFolderIsNamedWhateverTheUserCalledIt() throws IOException {
     WorkspaceStore store = WorkspaceStore.open(tmp, startDir());
 
-    // A chosen folder is a real folder, and real folders have spaces and CJK names. Refusing them
-    // would make the chooser useless for those people, so what stays out is only what would change
-    // what the name means as a path.
+    // 挑中的文件夹是真实的文件夹，而真实文件夹有空格和 CJK 名字。拒绝它们会让选择器对这些人毫无用处，
+    // 所以挡在外面的只有会改变名字作为路径的含义的那些。
     assertEquals("my project", store.add(Files.createDirectories(tmp.resolve("my project"))).name());
     assertEquals(".config", store.add(Files.createDirectories(tmp.resolve(".config"))).name());
     assertEquals("数学", store.add(Files.createDirectories(tmp.resolve("数学"))).name());
@@ -120,20 +118,19 @@ class WorkspaceStoreTest {
   void aNameThatWouldChangeWhatThePathMeansIsRefused() throws IOException {
     WorkspaceStore store = WorkspaceStore.open(tmp, startDir());
 
-    // A name is a directory name and an argument: a leading dash reads as a flag, and the separators
-    // and the dot entries are the ones that would move where the sessions land. A name that only
-    // starts with a dot is a workspace like any other — it is a real folder, with a real name.
+    // 名字既是一个目录名也是一个参数：开头的短横会被读成开关，而分隔符和点目录正是会把会话落点挪走的
+    // 那些。只以点开头的名字和别的工作区一样——它是一个真实的文件夹，有一个真实的名字。
     for (String odd : List.of("-dashed", "..", ".", "a/b")) {
       IllegalArgumentException refused =
           assertThrows(
               IllegalArgumentException.class,
               () -> store.add(odd, tmp.resolve("x")),
-              "must refuse " + odd);
-      assertTrue(refused.getMessage().contains("path separator"), refused.getMessage());
+              "必须拒绝 " + odd);
+      assertTrue(refused.getMessage().contains("路径分隔符"), refused.getMessage());
     }
     IllegalArgumentException empty =
         assertThrows(IllegalArgumentException.class, () -> store.add("   ", tmp.resolve("x")));
-    assertTrue(empty.getMessage().contains("path separator"), empty.getMessage());
+    assertTrue(empty.getMessage().contains("路径分隔符"), empty.getMessage());
   }
 
   @Test
@@ -165,7 +162,7 @@ class WorkspaceStoreTest {
     assertEquals(List.of("proj"), store.names());
     assertTrue(
         Files.isRegularFile(api.sessionsDir().resolve("20260912-000000-abcd.jsonl")),
-        "forgetting a workspace must not delete history");
+        "忘掉一个工作区不能删掉历史");
   }
 
   @Test
@@ -186,7 +183,7 @@ class WorkspaceStoreTest {
 
     WorkspaceStore reopened = WorkspaceStore.open(tmp, start);
 
-    assertEquals(List.of("proj"), reopened.names(), "a usable entry survives, the rest are ignored");
+    assertEquals(List.of("proj"), reopened.names(), "可用的条目活了下来，其余的被忽略");
   }
 
   @Test

@@ -4,44 +4,37 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * What older turns of a conversation come to, in the model's own words.
+ * 一段对话较早的回合最终压缩成了什么，用模型自己的话写。
  *
- * <p>This is the one thing in the project that replaces conversation content rather than projecting
- * it, so the rules it follows are deliberately conservative:
+ * <p>这是项目里唯一会替换（而不是投影）对话内容的东西，所以它遵循的规则刻意保守：
  *
  * <ul>
- *   <li><b>The newest exchanges stay verbatim.</b> A summary of the last thing that happened is worse
- *       than no summary, because the model is about to act on it. Cutting happens at an exchange
- *       boundary — a {@link Message.User} — so a tool result never loses the assistant turn that asked
- *       for it, which is the same invariant {@link ContextBudget} and {@link SessionRepair} protect
- *       for their own reasons.
- *   <li><b>What is kept is quoted, not compressed.</b> The tail is copied as-is; only the older part
- *       is summarised. Nothing here paraphrases something the model can still read for itself.
- *   <li><b>The summary is asked for as a set of facts.</b> {@link #INSTRUCTIONS} names the categories
- *       that a model resuming the work actually needs — including the exact error text and paths it
- *       would otherwise have to rediscover — because "summarise this" produces a narrative, and a
- *       narrative is exactly what loses the detail the next step depends on.
+ *   <li><b>最新的若干轮对话保持原样。</b>对刚发生的事做摘要比不摘要更糟，因为模型马上要据它行动。切割发生在
+ *       一轮对话的边界——一条 {@link Message.User}——这样工具结果永远不会失去提出它的助手回合，这同时也是
+ *       {@link ContextBudget} 与 {@link SessionRepair} 各自出于自己的理由所维护的同一条不变式。
+ *   <li><b>保留下来的部分是被引用的，不是被压缩的。</b>尾部原样复制；只有较早的部分被摘要。这里不会把模型
+ *       自己仍能读到的东西改写成另一种说法。
+ *   <li><b>摘要按一组事实来索取。</b>{@link #INSTRUCTIONS} 点名了「接下这项工作的模型」真正需要的几类
+ *       信息——包括它否则得重新发现的准确错误文本和路径——因为「总结一下」产出的是一篇叙述，而叙述恰恰会
+ *       丢掉下一步所依赖的细节。
  * </ul>
  */
 public final class Compaction {
 
   /**
-   * How many of the most recent exchanges stay verbatim.
+   * 最近的多少轮对话保持原样。
    *
-   * <p>Five is a judgement, not a constant of nature: it is about as far back as a person scrolls when
-   * they are picking up work, and it is the window the model needs when the user's next message refers
-   * to "that error" or "the file you just changed". The cost of a larger tail is a smaller saving; the
-   * cost of a smaller one is a model that has to be told things it should already know.
+   * <p>五是个判断，不是自然常数：一个人重新拾起工作往回翻，差不多也就翻到这里；而当用户的下一条消息说到
+   * 「那个错误」或「你刚改的文件」时，模型需要的也正是这个窗口。尾巴留得越大，省下的越少；留得越小，代价
+   * 是模型不得不被重新告知它本该已经知道的事。
    */
   public static final int KEEP_EXCHANGES = 5;
 
   /**
-   * The instruction that turns a conversation into a summary.
+   * 把一段对话变成摘要的指令。
    *
-   * <p>Written as a list because the failure mode of prose summarisation is well known and specific:
-   * the model produces a fluent account of what happened and drops every identifier it needs. Naming
-   * the categories is what keeps the file paths, the commands that worked and the error text that did
-   * not.
+   * <p>写成清单，是因为散文式摘要的失败形态众所周知且非常具体：模型写出一篇流畅的始末，却把每个它需要的
+   * 标识符都丢掉了。点名这些类别，才能留住文件路径、管用的命令，以及报错的原文。
    */
   public static final String INSTRUCTIONS =
       """
@@ -62,12 +55,12 @@ public final class Compaction {
       the conversation, and do not claim work was finished when it was not. Write the summary itself; \
       no preamble, no headings other than the numbered ones above.""".strip();
 
-  /** The marker put in front of a summary wherever a model reads it. */
+  /** 放在摘要前面的标记，模型在哪里读到摘要都会看到它。 */
   private static final String PREAMBLE =
       "[Summary of earlier work in this session, written by the model when the conversation was "
           + "compacted]";
 
-  /** What a summary says about where the real conversation still is. */
+  /** 摘要里说明真实对话仍在何处的那些话。 */
   private static final String SOURCE_NOTE =
       "[The full conversation, verbatim, is in %s — read it if you need a detail this summary does "
           + "not have.]";
@@ -75,36 +68,34 @@ public final class Compaction {
   private Compaction() {}
 
   /**
-   * The conversation an older part was replaced with.
+   * 较早部分被替换成的那段对话。
    *
-   * @param messages the summary followed by the exchanges that were kept
-   * @param summarised how many messages were replaced by the summary
-   * @param kept how many messages were kept verbatim
-   * @param summaryTokens estimate of the summary that replaced them
-   * @param replacedTokens estimate of the messages it replaced, which it is smaller than by definition
+   * @param messages 摘要在前，随后是保留下来的若干轮对话
+   * @param summarised 有多少条消息被摘要替换掉
+   * @param kept 有多少条消息原样保留
+   * @param summaryTokens 替换它们的摘要的估算值
+   * @param replacedTokens 被它替换掉的消息的估算值；按定义摘要比它小
    */
   public record Result(
       List<Message> messages, int summarised, int kept, int summaryTokens, int replacedTokens) {
 
-    /** How much of the replaced part the summary gave back, as a percentage. */
+    /** 摘要让被替换部分省下了多少，以百分比计。 */
     public int savedPercent() {
       return replacedTokens <= 0 ? 0 : 100 - Math.round(summaryTokens * 100f / replacedTokens);
     }
   }
 
-  /** True when there is an older part worth compacting: something to summarise, and a tail to keep. */
+  /** 存在值得压缩的较早部分时为 true：有东西可摘要，也有尾巴要保留。 */
   public static boolean possible(List<Message> messages) {
     return cutPoint(messages) > 0;
   }
 
   /**
-   * The index the summary replaces everything before.
+   * 摘要会替换掉它之前一切的那个下标。
    *
-   * <p>The tail must begin at the start of an exchange, so this returns the position of the
-   * {@code KEEP_EXCHANGES}-th exchange from the end — counting from the newest, not stopping after
-   * passing that many, which would land one message late and split an exchange. Zero means there is
-   * nothing to do: fewer exchanges than the tail keeps, so compacting would replace nothing and lose
-   * the detail for no saving at all.
+   * <p>尾巴必须从一轮对话的开头开始，所以这里返回从末尾数第 {@code KEEP_EXCHANGES} 轮对话的位置——从最新
+   * 的往前数，而不是数过那么多就停下，那样会晚一条消息，把一轮对话劈开。返回 0 表示无事可做：对话轮数还不
+   * 够尾巴保留的，压缩什么都替换不了，白白丢掉细节却一点也没省下。
    */
   public static int cutPoint(List<Message> messages) {
     if (messages == null || messages.isEmpty()) {
@@ -112,8 +103,8 @@ public final class Compaction {
     }
     List<Integer> starts = new ArrayList<>();
     for (int i = 0; i < messages.size(); i++) {
-      // A summary counts as the start of an exchange: compacting twice must not summarise a summary
-      // as if it were raw history, or the second pass would compress the first pass's compression.
+      // 摘要也算一轮对话的开头：第二次压缩不能把摘要当成原始历史去摘要，否则第二遍会在第一遍的压缩上再压
+      // 一遍。
       if (messages.get(i) instanceof Message.User || messages.get(i) instanceof Message.Summary) {
         starts.add(i);
       }
@@ -125,25 +116,23 @@ public final class Compaction {
   }
 
   /**
-   * Compacts a conversation, or reports that compacting it would not be worth it.
+   * 压缩一段对话，或者报告压缩它并不划算。
    *
-   * <p>Compaction is only a saving when the summary is smaller than what it replaces, and that is not
-   * automatic: a summary has a preamble, names the file it came from, and is written to be complete —
-   * so a conversation whose early exchanges were mostly tool-call plumbing can summarise into
-   * something <em>longer</em> than the text it removed. The check is made against the messages the cut
-   * would actually consume, not against the whole conversation, because that is the part being traded.
+   * <p>只有摘要比它替换掉的东西更小时，压缩才是省；而这一点不是自动成立的：摘要有一个前言、会点名它来自
+   * 哪个文件，而且按「完整」来写——所以一段早期回合大多是工具调用管道的对话，摘要出来可能比被它移除的文本
+   * <em>更长</em>。这项检查针对的是这次切割实际会吃掉的那些消息，而不是整段对话，因为被交易的就是那一部分。
    *
-   * @param messages the conversation as it stands
-   * @param summary what the model wrote
-   * @param source the file the summarised messages are still in
-   * @param cwd used to show the source as a readable relative path
-   * @throws NotWorthIt when the result would not be smaller than the conversation it replaces
+   * @param messages 当下的对话
+   * @param summary 模型写下的内容
+   * @param source 被摘要的那些消息仍在其中的文件
+   * @param cwd 用来把来源显示为可读的相对路径
+   * @throws NotWorthIt 当结果不会比它所替换的对话更小时
    */
   public static Result apply(
       List<Message> messages, String summary, String source, java.nio.file.Path cwd) {
     int cut = cutPoint(messages);
     if (cut <= 0) {
-      throw new IllegalArgumentException("this conversation has nothing to compact");
+      throw new IllegalArgumentException("这段对话没有可压缩的内容");
     }
     List<Message> replaced = messages.subList(0, cut);
     List<Message> kept = new ArrayList<>(messages.subList(cut, messages.size()));
@@ -155,8 +144,8 @@ public final class Compaction {
     text.append('\n').append(summary == null ? "" : summary.strip());
     Message.Summary head = new Message.Summary(text.toString(), cut, label);
 
-    // Measured, not assumed: an estimate of the summary is not available before it is written, so the
-    // comparison happens now and a losing trade is refused rather than written down.
+    // 实测，而不是假设：摘要写好之前拿不到它的估算值，所以比较放在此刻进行，亏本的交易会被拒绝，而不是被
+    // 写下来。
     int replacedTokens = TokenEstimate.of(replaced);
     int summaryTokens = TokenEstimate.of(head);
     if (summaryTokens >= replacedTokens) {
@@ -170,10 +159,10 @@ public final class Compaction {
   }
 
   /**
-   * Refused because the summary did not come out smaller than what it would replace.
+   * 被拒绝：摘要没能比它要替换的内容更小。
    *
-   * <p>Carries both numbers, because the honest answer to "why not" is the comparison itself: the
-   * caller can say the conversation is not long enough yet rather than reporting a failure.
+   * <p>两个数字都带着，因为对「为什么不」最诚实的回答就是这次比较本身：调用方可以说对话还不够长，而不是
+   * 报告一次失败。
    */
   public static final class NotWorthIt extends RuntimeException {
     private static final long serialVersionUID = 1L;
@@ -183,11 +172,11 @@ public final class Compaction {
 
     NotWorthIt(int replacedTokens, int summaryTokens) {
       super(
-          "the summary is "
+          "摘要为 "
               + summaryTokens
-              + " tokens against the "
+              + " token，而它要替换的是 "
               + replacedTokens
-              + " it would replace, so compacting would not free anything");
+              + " token，压缩腾不出任何空间");
       this.replacedTokens = replacedTokens;
       this.summaryTokens = summaryTokens;
     }
@@ -202,11 +191,10 @@ public final class Compaction {
   }
 
   /**
-   * The summarised part, as plain text, in the shape the request that summarises it should carry.
+   * 被摘要的那部分，以纯文本、按「请求它写摘要的那次请求」应当携带的形状呈现。
    *
-   * <p>Deliberately rendered from the same messages the wire formats would send — roles named, tool
-   * calls and their results shown together — rather than the raw JSONL, because the summary has to be
-   * readable by the model that has to write it.
+   * <p>刻意从线路格式本来会发送的那些消息渲染而来——角色点名、工具调用与它们的结果并排展示——而不是用原始
+   * JSONL，因为摘要必须能被要写它的那个模型读懂。
    */
   public static String transcript(List<Message> messages) {
     int cut = cutPoint(messages);
@@ -241,7 +229,7 @@ public final class Compaction {
     text.append("\n### ").append(role).append('\n').append(body == null ? "" : body.strip()).append('\n');
   }
 
-  /** The source path as it should appear in the prompt: relative to the cwd when it is inside it. */
+  /** 来源路径在提示词里应有的样子：位于 cwd 之内时用相对路径。 */
   private static String display(String source, java.nio.file.Path cwd) {
     if (source == null || source.isBlank()) {
       return "";
@@ -257,8 +245,7 @@ public final class Compaction {
       }
       return path.toString();
     } catch (RuntimeException e) {
-      // Not a usable path: better to leave the note out than to print something a model would try to
-      // open and fail on. The summary itself is unaffected.
+      // 不是一个可用的路径：与其打印出模型会去尝试打开然后失败的东西，不如把这条注记省掉。摘要本身不受影响。
       return "";
     }
   }

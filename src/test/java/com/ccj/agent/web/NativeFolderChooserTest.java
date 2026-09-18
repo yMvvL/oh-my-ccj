@@ -14,9 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The chooser shells out to a desktop dialog, so the subprocess plumbing is exercised against
- * {@code /bin/sh} stand-ins: a real dialog needs a human click, but everything around it — parsing
- * the answer, rejecting a non-directory, and dismissing a dialog nobody answers — does not.
+ * 选择器要外调一个桌面对话框，所以子进程那一套是用 {@code /bin/sh} 替身演练的：真对话框需要人
+ * 点一下，但它周围的一切——解析答案、拒绝一个非目录、以及关掉一个没人应答的对话框——都不需要。
  */
 class NativeFolderChooserTest {
 
@@ -36,7 +35,7 @@ class NativeFolderChooserTest {
   @Test
   void aCancelledDialogYieldsNothing() throws IOException {
     assertEquals(Optional.empty(), chooser("exit 1").choose("test"));
-    assertEquals(Optional.empty(), chooser("exit 0").choose("test"), "no output is no answer");
+    assertEquals(Optional.empty(), chooser("exit 0").choose("test"), "没有输出就是没有答案");
   }
 
   @Test
@@ -55,7 +54,7 @@ class NativeFolderChooserTest {
     long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
 
     assertEquals(Optional.empty(), chosen);
-    assertTrue(elapsedMillis < 10_000, "the watchdog must end it, took " + elapsedMillis + "ms");
+    assertTrue(elapsedMillis < 10_000, "看门狗必须终结它，耗时 " + elapsedMillis + "ms");
   }
 
   @Test
@@ -82,8 +81,9 @@ class NativeFolderChooserTest {
     first.join();
 
     assertTrue(
-        failure.get() != null && failure.get().getMessage().contains("already open"),
-        "a second dialog must be refused: " + failure.get());
+        failure.get() != null
+            && failure.get().getMessage().contains("已经有一个文件夹选择器处于打开状态"),
+        "第二个对话框必须被拒绝：" + failure.get());
   }
 
 }

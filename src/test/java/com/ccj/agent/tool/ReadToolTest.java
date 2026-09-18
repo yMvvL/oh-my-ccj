@@ -31,13 +31,13 @@ class ReadToolTest {
     assertTrue(result.content().startsWith("   10\tline 10\n"), result.content());
     assertTrue(result.content().contains("   12\tline 12\n"), result.content());
     assertFalse(result.content().contains("   13\tline 13"), result.content());
-    assertTrue(result.content().contains("resume with offset=13"), result.content());
+    assertTrue(result.content().contains("用 offset=13 继续"), result.content());
   }
 
   @Test
   void aLineLongerThanTheWholeBudgetIsCutInsteadOfBlockingThePage() throws Exception {
-    // The bug: the line was skipped because it did not fit, so the answer was the same "resume with
-    // offset=1" for it every time — a page the reader could never turn.
+    // 曾经的 bug：这行因为放不下而被跳过，于是每次给它的回答都是同一句「用 offset=1 继续」——
+    // 一页读者永远翻不过去的页。
     Files.writeString(dir.resolve("wide.txt"), "中".repeat(2000) + "\nsecond\n");
 
     ToolResult first =
@@ -45,11 +45,11 @@ class ReadToolTest {
             .execute("{\"path\":\"wide.txt\"}", new ToolContext(dir, Approver.ALWAYS, 1024));
 
     assertFalse(first.error(), first.content());
-    assertTrue(first.content().contains("cut short"), first.content());
-    assertTrue(first.content().contains("resume with offset=2"), first.content());
+    assertTrue(first.content().contains("已被截短"), first.content());
+    assertTrue(first.content().contains("用 offset=2 继续"), first.content());
     assertFalse(
         first.content().contains("\uFFFD"),
-        "a cut must land on a character boundary, never mid-codepoint");
+        "截断必须落在字符边界上，绝不能切在码点中间");
 
     ToolResult second =
         new ReadTool()
@@ -66,7 +66,7 @@ class ReadToolTest {
         new ReadTool().execute("{\"path\":\"short.txt\",\"offset\":9}", ToolContext.of(dir));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().contains("past the end"), result.content());
+    assertTrue(result.content().contains("越过了"), result.content());
   }
 
   @Test
@@ -78,9 +78,9 @@ class ReadToolTest {
     ToolResult bad = new ReadTool().execute("{\"path\":\"bad.bin\"}", ToolContext.of(dir));
 
     assertTrue(nul.error(), nul.content());
-    assertTrue(nul.content().contains("binary"), nul.content());
+    assertTrue(nul.content().contains("二进制"), nul.content());
     assertTrue(bad.error(), bad.content());
-    assertTrue(bad.content().contains("binary"), bad.content());
+    assertTrue(bad.content().contains("二进制"), bad.content());
   }
 
   @Test
@@ -91,8 +91,8 @@ class ReadToolTest {
     ToolResult directory = new ReadTool().execute("{\"path\":\"sub\"}", ToolContext.of(dir));
 
     assertTrue(missing.error(), missing.content());
-    assertTrue(missing.content().contains("file not found"), missing.content());
+    assertTrue(missing.content().contains("找不到文件"), missing.content());
     assertTrue(directory.error(), directory.content());
-    assertTrue(directory.content().contains("directory"), directory.content());
+    assertTrue(directory.content().contains("是目录"), directory.content());
   }
 }

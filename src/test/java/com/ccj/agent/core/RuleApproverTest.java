@@ -13,13 +13,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The chain: rules first, the person second, and each answer recorded where it belongs.
+ * 这条链：规则优先，其次是人，而每个答案都会被记录到它该在的地方。
  *
- * <p>Driven with a stub delegate rather than a browser, because what is under test is the order and
- * the bookkeeping between the two — which is where the interesting mistakes are. The one that got
- * away once: a rule written for a command containing a redirect could never match, so "allow for
- * this session" silently did nothing for exactly the commands people most want to stop being asked
- * about, and the test that caught it was a chain test rather than a matching test.
+ * <p>用桩委托驱动，而不是浏览器，因为被测的是两者之间的顺序与簿记 —— 有趣的那些错误正在那里。
+ * 曾经漏掉的那个：为一条含重定向的命令写的规则永远匹配不上，于是「本次会话内允许」恰恰对那些
+ * 人们最不想再被问到的命令毫无作用，而抓到它的测试是一个链式测试，不是匹配测试。
  */
 class RuleApproverTest {
 
@@ -28,7 +26,7 @@ class RuleApproverTest {
   private Path project;
   private Path file;
 
-  /** A delegate that answers from a script and records what it was asked. */
+  /** 一个按脚本作答、并记录自己被问了什么的委托。 */
   private static final class Person implements Approver {
     private final List<ApprovalRequest> asked = new ArrayList<>();
     private final ApprovalAnswer answer;
@@ -66,8 +64,8 @@ class RuleApproverTest {
             announced::add);
 
     assertEquals(ApprovalAnswer.ALLOW_ONCE, chain.approve(cmd("mvn -q -o test")));
-    assertTrue(person.asked.isEmpty(), "a rule that answers means nobody is asked");
-    assertEquals(List.of("allowed by rule — bash: mvn -q -o test"), announced);
+    assertTrue(person.asked.isEmpty(), "一条能作答的规则意味着没有去问任何人");
+    assertEquals(List.of("规则批准 — bash: mvn -q -o test"), announced);
   }
 
   @Test
@@ -81,15 +79,15 @@ class RuleApproverTest {
 
     assertEquals(ApprovalAnswer.DENY_BY_RULE, chain.approve(cmd("rm -rf /")));
     assertTrue(person.asked.isEmpty());
-    assertEquals("denied by a rule in the approvals file (see ccj --help and SECURITY.md)",
+    assertEquals("被审批文件中的某条规则拒绝（可运行 ccj --help、查看 SECURITY.md 了解如何改规则）",
         ApprovalAnswer.DENY_BY_RULE.refusal());
-    assertEquals("rejected by user", ApprovalAnswer.DENY.refusal());
+    assertEquals("被用户拒绝", ApprovalAnswer.DENY.refusal());
   }
 
   @Test
   void withNoRuleThePersonIsAskedAndTheAnswerIsRecordedWhereItBelongs() throws IOException {
-    // "For this session" is memory, "always" is a file write, and neither is "yes, once" — which is
-    // the three-way distinction the boolean this replaced could not make.
+    // 「本次会话内」是记忆，「始终」是一次文件写入，而两者都不是「就这一次，可以」—— 这正是它所
+    // 替换掉的那个布尔值无法做出的三向区分。
     ApprovalRules rules = rules("{\"projects\": {\"%s\": {}}}");
     Person once = new Person(ApprovalAnswer.ALLOW_ONCE);
     List<String> announced = new ArrayList<>();
@@ -97,20 +95,20 @@ class RuleApproverTest {
 
     assertEquals(ApprovalAnswer.ALLOW_ONCE, chain.approve(cmd("printf a > one.txt")));
     assertEquals(1, once.asked.size());
-    assertEquals(ApprovalAnswer.ALLOW_ONCE, chain.approve(cmd("printf a > one.txt")), "asked again");
+    assertEquals(ApprovalAnswer.ALLOW_ONCE, chain.approve(cmd("printf a > one.txt")), "又被问了一次");
     assertEquals(2, once.asked.size());
-    assertTrue(announced.isEmpty(), "a person answering is not an automatic decision to report");
-    assertFalse(Files.readString(file).contains("printf"), "and nothing was written down");
+    assertTrue(announced.isEmpty(), "由人来作答，就不是一个需要报告的自动决定");
+    assertFalse(Files.readString(file).contains("printf"), "而且什么都没写下来");
 
-    // The same command, answered "session": remembered, and not written to the file.
+    // 同一条命令，回答「本次会话」：被记住，且不写进文件。
     Person session = new Person(ApprovalAnswer.ALLOW_SESSION);
     RuleApprover remembering = new RuleApprover(rules, session, announced::add);
     assertEquals(ApprovalAnswer.ALLOW_SESSION, remembering.approve(cmd("printf a > one.txt")));
     assertEquals(ApprovalAnswer.ALLOW_ONCE, remembering.approve(cmd("printf a > one.txt")));
-    assertEquals(1, session.asked.size(), "the second time is answered by what was remembered");
-    assertFalse(Files.readString(file).contains("printf"), "a session allow stays in memory");
+    assertEquals(1, session.asked.size(), "第二次由记住的答案来回应");
+    assertFalse(Files.readString(file).contains("printf"), "会话内的允许留在内存里");
 
-    // And "always" is the one that outlives the process.
+    // 而「始终」是唯一能活过这个进程的那个。
     Person always = new Person(ApprovalAnswer.ALLOW_ALWAYS);
     RuleApprover writing = new RuleApprover(rules, always, announced::add);
     assertEquals(ApprovalAnswer.ALLOW_ALWAYS, writing.approve(cmd("make check")));
@@ -120,22 +118,22 @@ class RuleApproverTest {
         ApprovalAnswer.ALLOW_ONCE,
         new RuleApprover(rules, new Person(ApprovalAnswer.DENY), text -> {})
             .approve(cmd("make check")),
-        "a fresh chain over the same file answers from it");
-    assertTrue(announced.stream().anyMatch(text -> text.startsWith("allowed for this session")));
-    assertTrue(announced.stream().anyMatch(text -> text.contains("allowed from now on")));
+        "一条基于同一文件的新链会从它那里得到答案");
+    assertTrue(announced.stream().anyMatch(text -> text.startsWith("本会话内已批准")));
+    assertTrue(announced.stream().anyMatch(text -> text.contains("今后一直批准，规则写入 ")));
   }
 
   @Test
   void aRulesFileThatCannotBeReadAsksRatherThanAllowing() throws IOException {
-    // Falling back to "no rules" would turn a typo into an open gate: the user believes they wrote
-    // rules, and the tool behaves as though they had written none.
+    // 退回到「没有规则」，会把一个错别字变成一扇敞开的门：用户以为自己写了规则，而工具的表现却
+    // 像他一条都没写。
     rules("{\"projects\": {\"%s\": {\"allow\": \"not an array\"}}}");
     Person person = new Person(ApprovalAnswer.DENY);
     List<String> announced = new ArrayList<>();
     RuleApprover chain = new RuleApprover(ApprovalRules.open(file, project), person, announced::add);
 
     assertEquals(ApprovalAnswer.DENY, chain.approve(cmd("ls")));
-    assertEquals(1, person.asked.size(), "the person is still the one who decides");
-    assertTrue(announced.get(0).contains("could not be read"), announced.toString());
+    assertEquals(1, person.asked.size(), "做决定的仍然是那个人");
+    assertTrue(announced.get(0).contains("审批文件无法读取"), announced.toString());
   }
 }

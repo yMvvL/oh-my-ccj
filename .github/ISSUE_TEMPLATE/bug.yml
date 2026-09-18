@@ -1,27 +1,27 @@
-name: Bug report
-description: Something behaved differently from what the README or a comment says.
+name: Bug 报告
+description: 有东西的行为和 README 或某条注释说的不一样。
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        **Do not paste an API key.** If one appears in output you were about to send, rotate it first.
+        **不要粘贴 API 密钥。** 如果它出现在你正要发出的输出里，先轮换它。
 
-        Security issues go through [SECURITY.md](../blob/main/SECURITY.md), not here.
+        安全问题走 [SECURITY.md](../../blob/main/SECURITY.md)，不是这里。
 
   - type: textarea
     id: what-happened
     attributes:
-      label: What happened
-      description: What you expected, and what you got instead.
+      label: 发生了什么
+      description: 你期望什么，结果得到了什么。
     validations:
       required: true
 
   - type: textarea
     id: reproduce
     attributes:
-      label: How to reproduce
-      description: The exact steps or commands. A reproduction is worth more than a description.
+      label: 如何复现
+      description: 确切的步骤或命令。一份复现比一段描述更值钱。
       placeholder: |
         1. `./ccj --repl`
         2. ...
@@ -31,10 +31,10 @@ body:
   - type: textarea
     id: output
     attributes:
-      label: Output
+      label: 输出
       description: |
-        The exact output, including any error. For a session problem, the relevant lines from
-        `~/.oh-my-ccj/sessions/<id>.jsonl` — every message and command is in there verbatim.
+        确切的输出，包括任何错误。如果是会话相关的问题，`~/.oh-my-ccj/sessions/<id>.jsonl` 里相关
+        的那几行——每条消息和命令都逐字记在那里。
       render: text
     validations:
       required: true
@@ -42,28 +42,28 @@ body:
   - type: input
     id: version
     attributes:
-      label: Version
-      description: The output of `./ccj --version`.
+      label: 版本
+      description: `./ccj --version` 的输出。
     validations:
       required: true
 
   - type: dropdown
     id: platform
     attributes:
-      label: Platform
+      label: 平台
       options:
         - Linux
         - macOS
         - WSL
-        - Other (please say which)
+        - 其它（请说明是哪个）
     validations:
       required: true
 
   - type: input
     id: model
     attributes:
-      label: Provider and model
-      description: Behaviour differs enough between them that it matters.
+      label: 提供方和模型
+      description: 它们之间的行为差异大到会影响判断。
       placeholder: openai / gpt-4o-mini
     validations:
       required: false

@@ -1,53 +1,50 @@
-# Web UI
+# Web 界面
 
-`ccj` — no arguments — runs the same agent loop behind a local HTTP server with a single-page UI, and
-that page is where the model gets configured (`--repl` gives the terminal front end instead). No
-framework, no build step, no new dependency: the server is `com.sun.net.httpserver` and the page is
-three files packed into the jar under `/web/`.
+`ccj` 不带参数运行时，会在一个本地 HTTP 服务器后面跑同一个 agent 循环，并配上单页界面，
+模型就是在这个页面上配置的（`--repl` 则提供终端前端）。没有框架、没有构建步骤、没有新依赖：
+服务器就是 `com.sun.net.httpserver`，页面则是打包进 jar 里 `/web/` 下的三个文件。
 
-It exists because the loop is not terminal-shaped: streaming text, tool cards and approvals are all
-easier to look at as a page. Design constraint that shaped everything below — **the browser is an
-untrusted client**: it gets no shell, no filesystem, and every side effect still goes through
-`Approver`.
+它之所以存在，是因为这个循环不是终端形状的：流式文本、工具卡片和审批，放在页面上看都更容易。
+塑造了以下一切的设计约束是——**浏览器是不可信的客户端**：它拿不到 shell、拿不到文件系统，每
+一个副作用仍然要过 `Approver`。
 
-## Endpoints
+## 接口
 
-| Method | Path | Purpose |
+| 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/` | the page (`index.html`) |
-| `GET` | `/app.js`, `/style.css` | assets, served from the jar |
-| `GET` | `/api/status` | provider, model, base URL, cwd (and whether `-C` overrode it), session, tools, `busy` for the session on screen, and `running` — the ids of the other sessions working right now |
-| `GET` | `/api/events` | SSE stream of everything the loop reports |
-| `POST` | `/api/message` | `{"text": "..."}` — start a turn, or **queue it behind the one running**: `202 {"accepted": true, "queued": true|false}` either way. `409` only when the queue is full (16) or no model is configured. The queue is per conversation, so another conversation still starts immediately |
-| `POST` | `/api/abort` | stop the running turn at the next safe point **and drop what was queued behind it**, publishing how many were dropped; add `?id=<session>` to stop a turn in a conversation you are not looking at (which leaves its queue alone) |
-| `POST` | `/api/compact` | compact the session on screen: the older turns become a summary, written to the next generation file. `409` while a turn is running or when the summary would not be smaller than what it replaces |
-| `POST` | `/api/attachment` | one picture as the raw body, `?name=<file name>` — the vision model describes it and the description starts a turn; `400` when the bytes are not a PNG/JPEG/WebP/GIF, `413` over 8 MB, `409` while that conversation is running or when no vision model is configured |
-| `POST` | `/api/undo` | put back the files the last turn changed: `200 {"restored": n, "files": [...], "remaining": m}`, and a notice in the transcript. `409` while a turn is running — undoing underneath one would restore files the model is mid-thought about |
-| `POST` | `/api/approval` | `{"id": "...", "allow": true, "remember": false}` — answer a pending approval |
-| `POST` | `/api/auto-approve` | `{"enabled": true}` — flip the whole session to auto-approve |
-| `POST` | `/api/session` | `{"action": "new"}` or `{"action": "resume", "id": "..."}` |
-| `GET` | `/api/sessions` | session summaries, newest first; each row reports `running` |
-| `DELETE` | `/api/sessions` | delete every session in the active workspace |
-| `DELETE` | `/api/session?id=...` | delete one session |
-| `POST` | `/api/workspaces/browse` | open the desktop's folder chooser and return the path |
-| `GET` | `/api/history` | the current session replayed as render events (see below) |
-| `GET` | `/api/workspaces` | every workspace, with the active one, its path and its session count |
-| `POST` | `/api/workspaces` | register a workspace: `{"path": "..."}`, or `{"name": "...", "path": "..."}` to override the name (the directory is created if needed) |
-| `POST` | `/api/workspace` | `{"name": "..."}` — switch to a workspace |
-| `DELETE` | `/api/workspace?name=...` | forget a workspace; its session files stay on disk |
-| `GET` | `/api/models` | the provider catalogue: providers, their protocol and endpoint, their models |
-| `GET`/`POST` | `/api/providers` | list or define a provider (`{name, kind, baseUrl, apiKeyEnv, models}`) |
-| `POST` | `/api/models` | remember a model for a provider (`{provider, model}`), built-ins included |
-| `DELETE` | `/api/models?provider=&model=` | forget a model (the one in use included — see below) |
-| `DELETE` | `/api/providers?name=...` | remove a provider: a definition is deleted, a built-in leaves the list |
-| `PUT` | `/api/providers` | `{"name": "..."}` — add a built-in back to the list |
-| `GET` | `/api/config` | what the settings form needs: current values, whether a key exists, where it is stored |
-| `POST` | `/api/config` | save provider/model/key settings and switch to them immediately |
-| `POST` | `/api/config/test` | send one tiny request with the posted settings **without saving** |
+| `GET` | `/` | 页面（`index.html`） |
+| `GET` | `/app.js`, `/style.css` | 静态资源，从 jar 里提供 |
+| `GET` | `/api/status` | 提供方、模型、base URL、cwd（以及 `-C` 是否覆盖了它）、会话、工具、当前屏幕上那个会话的 `busy`，以及 `running`——此刻正在工作的其它会话的 id |
+| `GET` | `/api/events` | 循环上报的一切组成的 SSE 流 |
+| `POST` | `/api/message` | `{"text": "..."}`——开始一个回合，或者**把它排到正在跑的那个回合后面**：两种情况都返回 `202 {"accepted": true, "queued": true|false}`。只有队列满（16）或没有配置模型时才返回 `409`。队列是按对话分的，所以另一个对话仍然立刻就能开始 |
+| `POST` | `/api/abort` | 在下一个安全点停掉正在跑的回合，**并丢弃排在它后面的内容**，同时公布丢弃了多少条；加上 `?id=<session>` 可以停掉你并未在看的那个对话里的回合（其队列不受影响） |
+| `POST` | `/api/compact` | 压缩屏幕上这个会话：较旧的回合变成一段摘要，写入下一代文件。回合正在跑、或摘要不会比它替换掉的东西更小时返回 `409` |
+| `POST` | `/api/attachment` | 一张图片作为原始请求体，`?name=<file name>`——视觉模型描述它，这段描述开启一个回合；字节不是 PNG/JPEG/WebP/GIF 时 `400`，超过 8 MB 时 `413`，该对话正在跑或没有配置视觉模型时 `409` |
+| `POST` | `/api/undo` | 把上一个回合改动过的文件放回去：`200 {"restored": n, "files": [...], "remaining": m}`，并在转录里留一条通知。回合正在跑时返回 `409`——在它底下做退回，会把模型正想着的文件还原回去 |
+| `POST` | `/api/approval` | `{"id": "...", "allow": true, "remember": false}`——为一个待批的审批作答 |
+| `POST` | `/api/auto-approve` | `{"enabled": true}`——把整个会话切到自动批准 |
+| `POST` | `/api/session` | `{"action": "new"}` 或 `{"action": "resume", "id": "..."}` |
+| `GET` | `/api/sessions` | 会话摘要，最新的在前；每一行都报告 `running` |
+| `DELETE` | `/api/sessions` | 删除活动工作区里的每一个会话 |
+| `DELETE` | `/api/session?id=...` | 删除一个会话 |
+| `POST` | `/api/workspaces/browse` | 打开桌面环境的文件夹选择器，返回所选路径 |
+| `GET` | `/api/history` | 把当前会话重放成渲染事件（见下文） |
+| `GET` | `/api/workspaces` | 所有工作区，含活动的那一个、它的路径和会话数 |
+| `POST` | `/api/workspaces` | 注册一个工作区：`{"path": "..."}`，或用 `{"name": "...", "path": "..."}` 覆盖名字（目录不存在时会创建） |
+| `POST` | `/api/workspace` | `{"name": "..."}`——切换到一个工作区 |
+| `DELETE` | `/api/workspace?name=...` | 忘掉一个工作区；它的会话文件仍留在磁盘上 |
+| `GET` | `/api/models` | 提供方目录：各个提供方、它们的协议与端点、它们的模型 |
+| `GET`/`POST` | `/api/providers` | 列出或定义一个提供方（`{name, kind, baseUrl, apiKeyEnv, models}`） |
+| `POST` | `/api/models` | 为某个提供方记住一个模型（`{provider, model}`），内置的也算 |
+| `DELETE` | `/api/models?provider=&model=` | 忘掉一个模型（包括正在使用的那一个——见下文） |
+| `DELETE` | `/api/providers?name=...` | 移除一个提供方：自定义定义会被删除，内置的则只是离开列表 |
+| `PUT` | `/api/providers` | `{"name": "..."}`——把一个内置提供方加回列表 |
+| `GET` | `/api/config` | 设置表单需要的东西：当前值、某个密钥是否存在、它存放在哪里 |
+| `POST` | `/api/config` | 保存提供方/模型/密钥设置，并立刻切换过去 |
+| `POST` | `/api/config/test` | 用提交的设置发一个极小的请求，**但不保存** |
 
-`GET /api/config` also reports `language` and `languages` (see *Thinking language* below), and
-`POST /api/config` accepts `language` among its fields. It reports the model that describes pictures
-too, and accepts it back:
+`GET /api/config` 还会报告 `language` 和 `languages`（见下文 *思考语言*），`POST /api/config`
+也接受 `language` 作为字段之一。它还会报告用于描述图片的模型，并接受把它传回来：
 
 ```json
 "vision": {
@@ -57,43 +54,40 @@ too, and accepts it back:
 }
 ```
 
-| Posted field | Meaning |
+| 提交的字段 | 含义 |
 |---|---|
-| `visionBaseUrl`, `visionModel`, `visionApiKeyEnv`, `visionMaxTokens` | the value, or omitted for "leave as it is" — the same rule every other text field follows |
-| `visionApiKey` | the key literal; omitted, and the stored one survives |
-| `clearVisionApiKey` | forget the key, keeping the endpoint, the model and the budget |
-| `clearVision` | remove the block: describing pictures is off |
+| `visionBaseUrl`, `visionModel`, `visionApiKeyEnv`, `visionMaxTokens` | 给出值，或省略表示「保持原样」——其它每个文本字段都遵循同样的规则 |
+| `visionApiKey` | 密钥字面量；省略则已保存的密钥继续有效 |
+| `clearVisionApiKey` | 忘掉密钥，保留端点、模型和预算 |
+| `clearVision` | 移除整个块：描述图片的功能关闭 |
 
-`on` is what the picture button will actually do — a block with an endpoint but no model, or no key
-anywhere, is `configured` but not `on`, and the form says so rather than promising a description that
-would be refused. The key is reported as a source and never as a value, exactly like the provider's.
+`on` 表示图片按钮实际会做什么——一个有端点但没有模型、或者哪里都没有密钥的块，是 `configured`
+但不是 `on`，表单也会如实这么说，而不是承诺一段最终会被拒绝的描述。密钥只以来源的形式上报，
+永远不以上报值的形式出现，和提供方的密钥完全一样。
 
-### Thinking language
+### 思考语言
 
-`config.json` keeps a `language` alongside `reasoning`, and the settings form offers it: `auto` (the
-default, which adds nothing to the prompt) or one of the languages in `Prompts`. The setting is a
-*sentence appended to the system prompt*, not a protocol parameter — nothing on either wire can ask for
-it — so what it can promise is bounded by the model:
+`config.json` 在 `reasoning` 旁边保存一个 `language`，设置表单也会提供它：`auto`（默认值，
+不会往提示词里加任何东西），或者 `Prompts` 里列出的某种语言。这个设置是*附加到系统提示词后面的
+一句话*，不是协议参数——两条 wire 上都没有东西能请求它——所以它能承诺什么，受限于模型：
 
-- The **answer** language follows reliably, including when the user writes in another language.
-- The **reasoning** language follows on some models and not others. Reasoning models pick the language
-  of their thinking from the whole context and tend to stay in the one they started in; measured here
-  through an OpenAI-shaped relay, a `deepseek-v4.1` thinking stream stayed in English with an English
-  prompt, with a Chinese system prompt that says 必须用中文思考, with a Chinese user message, and with
-  all three at once. The same sentences move other models. The settings hint is worded for that, rather
-  than claiming a guarantee the wire cannot give.
+- **答案**的语言可靠地跟随，即使用户用另一种语言书写。
+- **推理**的语言在有些模型上会跟随，有些则不会。推理模型会从整个上下文里挑选用哪种语言思考，
+  并且倾向于停留在它一开始使用的那一种；这里通过一个 OpenAI 形状的中继实测：一个
+  `deepseek-v4.1` 的思考流，在英文提示词下、在写着「必须用中文思考」的中文系统提示词下、在
+  中文用户消息下，以及三者同时存在时，都停留在英文。同样这几句话在别的模型上却会起效。设置里
+  的提示语就是按这个事实措辞的，而不是去声明一条 wire 给不了的保证。
 
-The sentence is written twice on purpose — once in English, where the agent's other rules live and
-where a model reads it as an instruction, and once in the target language, because the text in front of
-a model is the stronger cue for the text it writes next. `GET /api/config` returns `language` and the
-`languages` list the form renders (`{value, label}`, the label being the language's own name), and a
-`POST` carries `language` back; `auto` normalises to "no sentence".
+这句话被刻意写了两遍——一遍英文，因为 agent 的其它规则都在英文里、模型也会把它读成指令；一遍
+目标语言，因为摆在模型面前的文本，对它接下来要写什么有更强的暗示。`GET /api/config` 返回
+`language`，以及表单所渲染的 `languages` 列表（`{value, label}`，label 是这门语言自己的
+名字），`POST` 则把 `language` 传回来；`auto` 归一化为「不加句子」。
 
-### Workspaces
+### 工作区
 
-A workspace is a working directory plus the sessions that belong to it. Switching one changes where
-tools resolve relative paths **and** which conversation history the page shows — the two are the same
-decision, because a session only makes sense next to the files it was talking about.
+一个工作区是一个工作目录，加上属于它的那些会话。切换工作区会改变工具解析相对路径的位置，
+**也**改变页面显示哪一段对话历史——这两件事是同一个决定，因为一个会话只有和它当时在谈的那些
+文件放在一起才说得通。
 
 ```json
 {"active": "oh-my-ccj",
@@ -103,185 +97,163 @@ decision, because a session only makes sense next to the files it was talking ab
  ]}
 ```
 
-- The registry is `<home>/workspaces.json`. The workspace `ccj` started in is seeded from the starting
-  directory and is the active one; it keeps using the top-level `<home>/sessions` directory, so
-  sessions from before workspaces existed stay where they were.
-- A workspace is named after its folder: `POST /api/workspaces` takes a path and derives the name
-  from the last segment. If that name is taken — the same project twice, or two directories that
-  share a last segment — the next free suffix is used (`api`, `api-2`, …) rather than refusing, since
-  the user picked a folder and not a name. A folder whose last segment could not be one path segment —
-  a separator in it, or a leading dash, which would read as a flag — comes back as `400` with the rule
-  that was broken.
-- A directory that is already a workspace is refused, naming the entry that owns it: two names for
-  one directory would give one working directory two competing histories.
-- Workspaces added later store their sessions under `<home>/workspaces/<name>/sessions/`, and the
-  directory is created if it does not exist.
-- Model settings (`config.json`) are **not** per workspace: a key and a model are a property of the
-  account, not of the folder. Everything else — working directory, sessions, usage totals — is.
-- Switching starts a **new** session in the target workspace (an empty one leaves no file); the
-  sessions list then shows that workspace's history to resume from.
-- `DELETE` only forgets the registry entry. Deleting conversation files because a folder was removed
-  from a list would be a surprising thing for a tool to do.
-- `ccj --workspace <name>` does the same thing for the terminal front end.
+- 注册表是 `<home>/workspaces.json`。`ccj` 启动时所在的工作区由启动目录播种而来，并且是活动的
+  那一个；它继续使用顶层的 `<home>/sessions` 目录，所以工作区出现之前的会话仍留在原处。
+- 工作区以它的文件夹命名：`POST /api/workspaces` 接收一个路径，并从最后一段推导出名字。如果
+  这个名字已被占用——同一个项目加了两次，或者两个目录最后一段相同——就使用下一个可用的后缀
+  （`api`、`api-2`……）而不是拒绝，因为用户挑的是一个文件夹，不是一个名字。最后一段没法当作
+  单个路径段使用的文件夹——里面含分隔符，或者以短横线开头（会被读成 flag）——会返回 `400`，
+  并说明违反了哪条规则。
+- 已经是工作区的目录会被拒绝，并点名拥有它的那条记录：一个目录两个名字，等于让同一个工作目录
+  拥有两段互相冲突的历史。
+- 之后添加的工作区把会话存放在 `<home>/workspaces/<name>/sessions/` 下，目录不存在时会创建。
+- 模型设置（`config.json`）**不是**按工作区分的：密钥和模型是账号的属性，不是文件夹的属性。
+  其它一切——工作目录、会话、用量合计——则是。
+- 切换会在目标工作区里开始一个**新**会话（空的会话不会留下文件）；随后会话列表会显示该工作区的
+  历史，供你从中恢复。
+- `DELETE` 只是忘掉注册表里的那条记录。因为一个文件夹从列表里被移除就删掉对话文件，对工具来说
+  会是一件令人意外的事。
+- `ccj --workspace <name>` 在终端前端里做的是同一件事。
 
-## Deleting sessions
+## 删除会话
 
-Deleting is the cleanup path for a pile of experiment sessions, so it is explicit and reversible only
-in the sense that a deleted file is gone:
+删除是清理一堆实验会话的途径，所以它是显式的；至于可逆，唯一的意义就是「被删掉的文件确实
+就没了」：
 
-- `DELETE /api/session?id=<id>` removes one file. Ids are validated against the same pattern used for
-  file names, so `../` can never reach the filesystem.
-- `DELETE /api/sessions` clears the **active workspace**, and only session files inside it — other
-  files in that directory are left alone.
-- Deleting the active session starts a fresh one and publishes a `status` event, which is how the
-  page learns it should clear and start over. The response is the refreshed session list.
-- Empty sessions are not a problem to clean up: they were never written to disk in the first place.
+- `DELETE /api/session?id=<id>` 删除一个文件。id 会用和文件名相同的模式校验，所以 `../`
+  永远到不了文件系统。
+- `DELETE /api/sessions` 清空**活动工作区**，而且只清其中的会话文件——该目录里的其它文件不动。
+- 删除活动会话会开一个新的，并发布一个 `status` 事件，页面就是这样得知自己该清空重来的。响应
+  是刷新后的会话列表。
+- 空会话不构成清理上的问题：它们本来就从未写到磁盘上。
 
-## Adding a workspace
+## 添加工作区
 
-**Add workspace** is the chooser itself, not a form: one click opens the desktop's dialog, and the
-folder that comes back is registered under its own name — no name field, because the folder already
-has one. The form still exists behind the same trigger for machines where no chooser can run: there
-its **Choose folder…** button opens the chooser and adds what it returns, and its path field is the
-fallback that always works, with **Browse…** filling the field rather than adding it.
+**添加工作区**本身就是选择器，而不是表单：点一下就打开桌面环境的对话框，返回的文件夹以自己的
+名字注册——没有名字输入框，因为文件夹已经有名字了。在同一入口后面，表单仍然为跑不了选择器的
+机器保留着：那里的**选择文件夹…**按钮会打开选择器并添加它返回的结果，而路径输入框是永远可用的
+兜底，**浏览…**只是填充这个输入框，不会直接添加。
 
-A browser cannot supply an absolute path — the File System Access API returns a directory handle with
-a name and nothing else, by design — so both buttons ask the **server**, which is running on the
-machine the user is sitting at, to open the desktop's own chooser. Preference order is `zenity`, then
-`kdialog` (both are native dialogs needing no toolkit), then Swing's `JFileChooser`. A headless
-machine, or one with none of those, gets `400` with a message telling the user to type the path — the
-page then opens the form so the field is visible rather than hidden behind the refusal. Only one
-chooser can be open at a time, and one that is never answered is dismissed after two minutes and
-reported as `cancelled` (which is not an error, and not an add) — a modal dialog must never be able to
-wedge the server.
+浏览器给不出绝对路径——File System Access API 按设计只返回一个带名字的目录句柄，别的什么都
+没有——所以两个按钮都请求**服务器**（它就跑在用户所坐的那台机器上）去打开桌面环境自带的选择器。
+优先级依次是 `zenity`、`kdialog`（两者都是不需要任何工具包的原生对话框），然后是 Swing 的
+`JFileChooser`。无头机器，或者三者都没有的机器，会拿到 `400` 和一条让用户手打路径的消息——这时
+页面会打开表单，让输入框露出来，而不是藏在拒绝消息背后。同一时间只能有一个选择器打开，而一个
+始终没人应答的选择器会在两分钟后被关掉并报告为 `cancelled`（这不是错误，也不是添加）——模态
+对话框绝不能被允许把服务器卡死。
 
-## Theme
+## 主题
 
-Three states — **System**, **Light**, **Dark** — cycled from one control in the header, with the
-choice kept in `localStorage` and System following `prefers-color-scheme` live. The theme variable is
-set on `<html>` by an inline script in `<head>` before the stylesheet paints, so a reload never shows
-the wrong theme first, and a one-line script at the top of `<body>` repeats the answer as the
-attribute the token sheet reads. A manual choice has to be able to override the operating system,
-which is why the OS is never a media query here — only a value the scripts resolve.
+三种状态——**跟随系统**、**浅色**、**深色**——由页头的一个控件循环切换，选择保存在
+`localStorage` 里，而跟随系统会实时跟随 `prefers-color-scheme`。主题变量由 `<head>` 里的一段
+内联脚本在样式表绘制之前设置到 `<html>` 上，所以刷新时绝不会先显示错误的主题；`<body>` 顶部的
+一行脚本会把同一个答案再写一遍，写成 token 表所读取的那个属性。手动选择必须能覆盖操作系统，
+所以这里从不把操作系统做成 media query——它只是脚本解析出的一个值。
 
-The look is the DeepSeek Harness's, and it is copied rather than imitated: `theme.css` is the
-harness's own token sheets (`base.css`, `design-platform.css`, `gradient-shadow-text.css`,
-`scrollbar.css` from `@deepseek-ai/dsh-client-ui-theme`) verbatim, and `style.css` is the component
-sheet that consumes them. That gives one palette in two layers — a static scale and the semantic
-aliases over it — with the dark theme as the harness's own switch (`body[data-ds-dark-theme]`), so a
-dark-mode fix upstream is a re-copy rather than a re-derivation.
+外观是 DeepSeek Harness 的，而且是照抄而不是模仿：`theme.css` 就是 harness 自己的 token 表
+（来自 `@deepseek-ai/dsh-client-ui-theme` 的 `base.css`、`design-platform.css`、
+`gradient-shadow-text.css`、`scrollbar.css`），逐字照搬；`style.css` 则是消费它们的组件表。
+于是得到一套分成两层的调色板——一层静态色阶，以及叠在它上面的语义别名——深色主题用的是
+harness 自己的开关（`body[data-ds-dark-theme]`），所以上游的深色模式修复只需要重新抄一遍，
+而不需要重新推导一遍。
 
-`style.css` defines no colours: every surface, border, text tone and shadow names a `--dsw-*` value.
-What stays local is the geometry the harness writes as literals per component — the radius ladder
-(cards 12px, inputs and rows 8px, the composer and a user bubble 22px, dialogs 24px, pills round),
-the spacing scale, and the 748px chat column. `shiki.css` is the one sheet left out: the transcript
-renders plain code, with no highlighter to name its tokens.
+`style.css` 不定义任何颜色：每一处表面、边框、文字色调和阴影都引用一个 `--dsw-*` 值。留在
+本地的，是 harness 按组件写成字面量的几何属性——圆角阶梯（卡片 12px，输入框和行 8px，输入区和
+用户气泡 22px，对话框 24px，胶囊形是全圆）、间距刻度，以及 748px 的聊天栏宽。`shiki.css` 是唯一
+被排除在外的样式表：转录渲染的是纯代码，没有高亮器来给它的 token 命名。
 
-## Wallpapers
+## 壁纸
 
-The page can rotate a background picture behind itself. The pictures are files in one directory —
-`~/Pictures/ccj-backgrounds` unless `--wallpapers <dir>` or `CCJ_WALLPAPERS` says otherwise — and
-the server offers them read-only through two endpoints: `GET /api/wallpapers` lists the names in the
-order a person reads a numbered set (`1.png`, `2.png`, … `10.jpg`), and `GET /wallpaper/<name>`
-streams one back.
+页面可以在自己背后轮换一张背景图。图片是某个目录里的文件——除非 `--wallpapers <dir>` 或
+`CCJ_WALLPAPERS` 另有指定，否则是 `~/Pictures/ccj-backgrounds`——服务器通过两个端点以只读方式
+提供它们：`GET /api/wallpapers` 按人阅读一组带编号名字的顺序列出名称（`1.png`、`2.png`……
+`10.jpg`），`GET /wallpaper/<name>` 则把其中一张流传回来。
 
-A name is input, so it is treated like one: no separators, no absolute paths, nothing that resolves
-out of the directory through a link, and nothing whose own bytes are not a raster image — the bytes
-decide the media type, so a file named `.jpg` that really holds a PNG is served as a PNG. SVG is
-left out on purpose: it is a document that can carry script, and a background is not worth that
-hole.
+名字是输入，所以按输入来对待：不含分隔符、不是绝对路径、不会经由链接解析到目录之外，而且内容
+字节本身必须是一张光栅图——媒体类型由字节决定，所以一个叫 `.jpg` 其实装着 PNG 的文件会按 PNG
+提供。SVG 被刻意排除在外：那是可以携带脚本的文档，而一张背景图不值得开这个口子。
 
-The page keeps the switch and the position in `localStorage`, rotates every five minutes, and
-fetches the next picture while the current one is on screen so a rotation is a cut rather than a
-blank frame. It starts on the first time a browser sees a directory with pictures in it — the
-control is one click away in the header, and `⇧`-click steps to the next picture immediately. A server with no pictures reports an empty list, and the control hides itself instead
-of offering a button that does nothing.
+页面把开关和位置存在 `localStorage` 里，每五分钟轮换一次，并在当前这张还在屏幕上时就取回
+下一张，好让轮换是一次切换而不是一帧空白。它在浏览器第一次看到一个有图片的目录时启动——页头里
+点一下就是那个控件，`⇧` 加点击则立刻切到下一张。没有图片的服务器返回空列表，控件会把自己藏
+起来，而不是摆一个什么都不做的按钮。
 
-While a wallpaper is on, the surfaces above it turn semi-transparent — the page, the sidebar, the
-details pane and the composer card — and the three panes get a `backdrop-filter` blur. Tool output,
-code cards, menus and dialogs stay opaque: those are the things that get read line by line, and a
-photograph behind a stack trace is decoration fighting content.
+壁纸开着的时候，它上面的那些表面会变成半透明——页面、侧栏、详情面板和输入区卡片——三个窗格
+还会加上 `backdrop-filter` 模糊。工具输出、代码卡片、菜单和对话框保持不透明：这些是要一行一行
+读的东西，而一张照片衬在栈追踪后面，是装饰在和内容打架。
 
-## On a phone, over a tailnet
+## 在手机上，经由 tailnet
 
-The page is one console, meant to be reachable from a phone as well as from the machine it runs on,
-and that shapes the bind, the gate and the layout.
+这个页面是一个控制台，既要能从它所运行的机器上访问，也要能从手机上访问，而这塑造了它的监听、
+门禁和布局。
 
-**The bind.** By default the server is bound to *named addresses*, one server each, sharing the same
-hub and the same conversation: loopback for the machine the user is sitting at, and — when this machine
-is on a tailnet — its tailnet address for their phone.
+**监听。** 默认情况下服务器监听*具名地址*，每个地址一个服务器，共享同一个 hub 和同一个对话：
+一个是回环地址，供用户所坐的那台机器使用；另一个——当这台机器在某个 tailnet 上时——是它的
+tailnet 地址，供用户的手机使用。
 
 ```
 $ ccj
-oh-my-ccj 0.1.0 — web UI: http://127.0.0.1:6767/
-                          also on http://100.72.92.41:6767/?token=…
+oh-my-ccj 0.1.0 — web UI：http://127.0.0.1:6767/
+                          也可通过 http://100.72.92.41:6767/?token=… 访问
 ```
 
-`--host tailscale` means the tailnet address *alone* (for a machine whose loopback nobody wants), and
-`--host <addr>` still means exactly one address. A wildcard is never used: binding `0.0.0.0` would put
-the port on the café wifi, the office LAN and the docker bridge, and the point of naming addresses is
-that the set of devices able to reach the port is a set the user chose. The tailnet address is found
-through the `tailscale0` interface, or by asking `tailscale ip -4` where the tailnet rides a
-differently named one; anything outside `100.64.0.0/10` is refused, and a machine without a tailnet is
-served on loopback alone rather than bound to something else.
+`--host tailscale` 表示*只要*那个 tailnet 地址（给那些不希望别人访问其回环地址的机器），而
+`--host <addr>` 仍然表示恰好一个地址。永远不会使用通配地址：监听 `0.0.0.0` 会把端口暴露在咖啡馆
+的 wifi、办公室局域网和 docker 网桥上，而「给地址起名」的意义就在于：能连上这个端口的设备集合，
+是用户自己选出来的集合。tailnet 地址通过 `tailscale0` 网卡找到；如果 tailnet 挂在名字不同的
+网卡上，就问 `tailscale ip -4`；`100.64.0.0/10` 之外的一律拒绝，而没有 tailnet 的机器就只在
+回环上提供服务，而不是去监听别的东西。
 
-**The gate.** Two ways in, and they answer different questions:
+**门禁。** 两种进入方式，回答的是不同的问题：
 
-| Request | Answer |
+| 请求 | 结果 |
 |---|---|
-| arrived on loopback **and** names a loopback `Host` | served — this is the machine itself, and a secret to type in order to use one's own command line is a password nobody asked for |
-| carries the token (query, `Authorization: Bearer`, or the cookie) | served, from any address |
-| anything else | `401` when the server has a token; `403` when it does not and the `Host` is not a loopback name |
+| 从回环地址到达，**且** `Host` 是回环名字 | 放行——这就是本机，而为了用自己的命令行还要输一个秘密，是没人要过的密码 |
+| 携带 token（查询参数、`Authorization: Bearer`，或者 cookie） | 放行，来自任何地址 |
+| 其它情况 | 服务器有 token 时 `401`；没有 token 且 `Host` 不是回环名字时 `403` |
 
-The `Host` half is not decoration: a tokenless server is reachable from any page the user visits, and
-DNS rebinding is what turns that into a page that can *read* the answers, so a request naming another
-host is refused. The token is what makes a network address safe; loopback is not a network. A caller
-who has proved the token is asked nothing else — the secret is the whole price of reaching this server
-from somewhere else.
+`Host` 那一半不是装饰：没有 token 的服务器，用户访问的任何页面都能连上，而 DNS rebinding 会
+把这一点变成「某个页面可以*读*到应答」，所以点名另一个主机名的请求会被拒绝。让一个网络地址变
+安全的是 token；回环根本不是网络。已经证明自己拿到 token 的调用方不会再被问别的——从别处连上
+这个服务器，代价就是这一个秘密。
 
-The token comes from `--web-token`, or `CCJ_WEB_TOKEN`, or — generated on first use — `web-token` in
-the application home, mode `0600`. The file is what makes "just run `ccj`" work without a secret on the
-command line (which `ps` and shell history read back) and without a new token every restart (which
-would log the phone out each time). It is deliberately **not** a key in `config.json`: a home directory
-gets backed up far more casually than a shell profile. `HttpApi.urls()` marks each address with the
-token only where one is needed — loopback is printed bare, so opening a browser on this machine never
-puts a secret in an address bar.
+token 来自 `--web-token`、`CCJ_WEB_TOKEN`，或者——首次使用时生成——应用主目录里的 `web-token`，
+权限模式 `0600`。正是这个文件让「直接跑 `ccj`」可行：不需要把秘密放在命令行上（`ps` 和 shell
+历史会把它读回去），也不需要每次重启都换一个新 token（那会让手机每次都被登出）。它刻意**不是**
+`config.json` 里的一个 key：主目录被随手备份的概率，远比 shell 配置文件高。`HttpApi.urls()`
+只在需要的地方给每个地址标上 token——回环地址是裸着打印的，所以在本机打开浏览器，永远不会把
+一个秘密放进地址栏。
 
-Opening the tailnet URL once puts the token in the HttpOnly cookie, after which the bookmark needs
-nothing.
+打开一次 tailnet URL 就会把 token 放进 HttpOnly cookie，此后书签什么都不用带。
 
-**Narrowing it to one device** is Tailscale's job rather than the page's: the default tailnet rule
-already lets every device reach every other one, so the token is what separates "on my tailnet" from
-"mine". An access rule restricting `dst: <this-machine>:6767` to one `src` device narrows it further
-(Tailscale's own ACL syntax, applied in the admin console). `tailscale serve` in front of a loopback
-bind is the alternative when HTTPS with a real certificate is wanted — it still needs a token, for the
-reason above.
+**把它收窄到只有一台设备**是 Tailscale 的活，而不是这个页面的活：默认的 tailnet 规则本来就
+允许每台设备连上其它任何一台，所以把「在我的 tailnet 上」和「我的」区分开的正是 token。一条
+把 `dst: <this-machine>:6767` 限制到某个 `src` 设备的访问规则可以进一步收窄（用 Tailscale 自己
+的 ACL 语法，在管理控制台里应用）。想要带真实证书的 HTTPS 时，替代做法是在回环监听前面放一个
+`tailscale serve`——出于上面同样的理由，它仍然需要一个 token。
 
-**The layout** below 720px, because a phone is not a small desktop window:
+**布局**在 720px 以下会变化，因为手机不是缩小的桌面窗口：
 
-| Wide | Phone |
+| 宽屏 | 手机 |
 |---|---|
-| sidebar and details are columns beside the transcript | both are sheets **over** it, one at a time, opened from the header, closed by tapping the scrim, Escape, or by choosing something in them — because picking a session is what the sheet was opened for |
-| rows revealed by hover (session and workspace actions) | revealed always, since there is no hover to reveal them |
-| 32px tree rows, 28px `.btn.sm`, 12px form fields | 42px rows, larger buttons, and 16px fields — the last one because Safari zooms the page when a focused field is under 16px |
-| `show all` is a bare 12px word | padded into a real target |
-| the composer's own buttons carry their words (`Photo`, `Compact`) | the words go and the glyphs stay: the picker, the picture, compact and send do not fit one 390px row with their labels attached. Each of those buttons has an `aria-label`, so the name a screen reader reads is not the label that was hidden |
-| composer padding is fixed | `env(safe-area-inset-bottom)`, so the home bar does not sit on the send button |
+| 侧栏和详情是转录旁边的列 | 两者都是**盖在**转录上的抽屉，一次只开一个，从页头打开，点遮罩、按 Escape，或者在抽屉里选了一样东西后关闭——因为选一个会话，正是这个抽屉被打开的目的 |
+| 靠悬停才出现的行（会话和工作区的操作） | 始终显示，因为没有悬停可以去揭示它们 |
+| 32px 的树行、28px 的 `.btn.sm`、12px 的表单字段 | 42px 的行、更大的按钮、16px 的字段——最后一条是因为聚焦的字段小于 16px 时 Safari 会缩放页面 |
+| 「显示全部」只是一个 12px 的词 | 被撑成一个真正可点的目标 |
+| 输入区自己的按钮带着自己的文字（图片、压缩） | 文字去掉、字形留下：选择器、图片、压缩和发送，连上各自的标签就塞不进一行 390px。这些按钮每一个都有 `aria-label`，所以屏幕阅读器读到的名字并不是被隐藏掉的那个标签 |
+| 输入区的内边距是固定的 | `env(safe-area-inset-bottom)`，这样 home bar 不会压在发送按钮上 |
 
-The scrim is one element below both sheets and below every dialog, so a dialog opened from a sheet
-still lands on top. The sheets do not survive a resize back to a wide window: they are a phone's
-layout, and the columns keep their own state.
+遮罩是一个元素，位于两个抽屉之下、也位于每个对话框之下，所以从抽屉里打开的对话框仍然落在
+最上面。窗口拉宽回去时抽屉不会保留：它们是手机的布局，而那些列保持自己的状态。
 
-## Pictures
+## 图片
 
-The composer's **Photo** button sends one picture, and what joins the conversation is a *description*
-of it written by a separate vision model — the main model never receives an image. The full design,
-including why it is shaped that way, is in [VISION.md](VISION.md); this is what the page and the
-endpoint do.
+输入区的**图片**按钮用来发送一张图片，进入对话的是一段由独立视觉模型写出的*描述*——主模型
+从不接收图像。完整设计（包括为什么是这个形状）在 [VISION.md](VISION.md) 里；这里讲的是页面
+和这个端点做了什么。
 
 ```js
-// The file itself is the request body; the name travels in the query, because only the bytes can
-// say what the file is.
+// 文件本身就是请求体；名字走查询参数，因为只有字节才能说明这个文件是什么。
 fetch('/api/attachment?name=' + encodeURIComponent(file.name), {
   method: 'POST',
   headers: { 'Content-Type': file.type },
@@ -289,8 +261,8 @@ fetch('/api/attachment?name=' + encodeURIComponent(file.name), {
 });
 ```
 
-The server answers `202` with `{accepted, attachment, mediaType, description}` and starts a turn whose
-first message is:
+服务器返回 `202`，内容为 `{accepted, attachment, mediaType, description}`，并开启一个回合，
+它的第一条消息是：
 
 ```
 [picture whiteboard.png] a whiteboard with a red arrow and the words 'ship it'
@@ -298,43 +270,36 @@ first message is:
 (The picture this describes is saved at /home/you/.oh-my-ccj/…/20260918-101500-ab12.attachments/whiteboard.png; read it if a detail the description dropped matters.)
 ```
 
-Three things about that text are deliberate:
+那段文本有三处是刻意的：
 
-- **The description is ordinary text**, so it compacts, replays and renders like anything else typed.
-  Nothing downstream of the composer knows a picture was involved.
-- **The marker says a picture was described** rather than passed off as typing, and the path is what
-  makes the description checkable: `read` needs no approval, so asking about a detail the description
-  dropped costs one tool call rather than another upload.
-- **Nothing is written before the turn can start.** The bytes are sniffed first, the conversation is
-  claimed second, and only then is the vision model asked — so a picture sent into a conversation that
-  is already running is refused without spending an upload and a description on a turn that cannot
-  happen, and a vision model that cannot be reached refuses the picture instead of starting a turn
-  about a picture nobody looked at.
+- **描述就是普通文本**，所以它会像别的输入一样被压缩、重放和渲染。输入区下游的任何东西都不知道
+  曾经有过一张图片。
+- **那个标记说明一张图片被描述过**，而不是把它冒充成打字输入；而路径让这段描述可被核查：`read`
+  不需要审批，所以追问一个描述里漏掉的细节，代价是一次工具调用，而不是再上传一次。
+- **在回合能开始之前什么都不写。** 先嗅探字节，再占用对话，然后才去问视觉模型——所以一张发进
+  已经在跑的对话里的图片会被拒绝，而不是把一次上传和一段描述花在一个不可能发生的回合上；连不上
+  的视觉模型也会拒绝这张图片，而不是开启一个关于没人看过的图片的回合。
 
-| Refusal | When | Body |
+| 拒绝 | 何时 | 响应体 |
 |---|---|---|
-| `400` | the bytes are not PNG, JPEG, WebP or GIF (the type is read from the magic number, never the name or the `Content-Type`) | what the first bytes actually were |
-| `413` | the body is over 8 MB, refused on its declared length and bounded again while reading | the limit and the declared size |
-| `409` | the conversation on screen already has a turn running, or no vision model is configured | what to abort, or which block/flag to set |
-| `500` | the vision endpoint failed, or answered with no description | the endpoint, the status, and — when the reply stopped on `length` — that the budget ran out while the model was still reasoning, with the setting that raises it |
+| `400` | 字节不是 PNG、JPEG、WebP 或 GIF（类型从魔数读出，从不看名字或 `Content-Type`） | 开头那些字节实际是什么 |
+| `413` | 请求体超过 8 MB，按声明的长度先拒一次，读取时还会再限一次 | 上限和声明的长度 |
+| `409` | 屏幕上的对话已经有回合在跑，或者没有配置视觉模型 | 该中止什么，或者该设置哪个块、哪个 flag |
+| `500` | 视觉端点失败，或者应答里没有描述 | 端点、状态码，以及——当回答停在 `length` 时——模型还在推理预算就耗尽了这件事，并给出提高它的那个设置 |
 
-That last refusal is the one worth reading. A reasoning model spends the completion budget *before* it
-writes anything, so a budget that is too small does not shorten a description, it deletes it: a busy
-phone screenshot at `maxTokens: 1500` came back HTTP 200 with `finish_reason: length`, all 1500 tokens
-spent thinking, 6224 characters of reasoning and an empty `content`. The default is 8192, which costs
-nothing extra because a ceiling is not a spend, and `vision.maxTokens` / `--vision-max-tokens` /
-`CCJ_VISION_MAX_TOKENS` raises or lowers it per endpoint — lower for a model that refuses a budget it
-thinks is too large.
+最后那条拒绝最值得一读。推理模型在写出任何东西*之前*就会花掉补全预算，所以预算太小不会让描述
+变短，而是把它删掉：一张繁忙的手机截图，在 `maxTokens: 1500` 下返回 HTTP 200、
+`finish_reason: length`，1500 个 token 全花在思考上，推理文本 6224 个字符，`content` 为空。
+默认值是 8192，它不额外花钱，因为上限不是花费；`vision.maxTokens` / `--vision-max-tokens` /
+`CCJ_VISION_MAX_TOKENS` 可以按端点把它调高或调低——对那种会拒绝它认为过大的预算的模型，就调低。
 
-The picture is stored under `<sessions>/<session-id>.attachments/`, beside the session and never in the
-project — a photo of a receipt is not project content, and a file that shows up in `git status` because
-somebody photographed something is a surprise nobody asked for. Deleting the session deletes them, and
-so does deleting every session in a workspace.
+图片存放在 `<sessions>/<session-id>.attachments/` 下，在会话旁边，从不在项目里——一张收据的
+照片不是项目内容，而一个因为有人拍了张照就出现在 `git status` 里的文件，是没人想要的意外。
+删除会话会删掉它们，删除某个工作区里的所有会话也一样。
 
-## Custom providers
+## 自定义提供方
 
-The built-in names are code; anything else is a definition the user owns, kept in
-`<home>/providers.json`:
+内置的名字是代码；其它一切都是用户自己拥有的定义，保存在 `<home>/providers.json` 里：
 
 ```json
 {"providers": {
@@ -342,108 +307,93 @@ The built-in names are code; anything else is a definition the user owns, kept i
                "apiKeyEnv": "MY_KEY", "models": ["deepseek-v4-flash", "gpt-5.5"]}}}
 ```
 
-- `kind` is the wire protocol (`openai` covers every `/chat/completions` endpoint, `anthropic` the
-  messages API), which is what makes a relay, a gateway, a local vLLM or a personal router usable
-  without a release. Only two protocols exist, and anything else is rejected as a typo.
-- A definition's `baseUrl` is the endpoint that definition is served at; it is also what the status
-  reports, so "where will this go" has one answer. A `baseUrl` stored in `config.json` is used only
-  when it was entered for this provider (a `--base-url` flag, a `CCJ_BASE_URL`, or the settings form
-  while this provider was selected) — a value left behind by the provider you used a minute ago is
-  somebody else's address, and sending this provider's traffic there with that provider's key is what
-  `settingsFor` in the config file exists to prevent. `apiKeyEnv` is a *variable name*
-  (`MY_KEY`), never the key itself; a definition whose field holds something that looks like a key is
-  refused, with the value redacted.
-- Definitions are validated before they are stored, and a definition that could not work is never
-  selectable. Removing one is allowed even while it is in use, because removal is a list decision
-  rather than a capability removal (see below).
-- **A definition is intent**: saving one also puts it in the list when the list has been narrowed,
-  and a definition found on disk but missing from the list is folded back in on load. Without that,
-  a provider the user just saved is invisible — the bug that made Save look broken.
-- **A base URL is a prefix**: an endpoint path in it (`/chat/completions`, `/v1/messages`) is
-  stripped wherever a base URL enters — a provider definition or the settings form — because ccj
-  appends that path itself, and sending it twice is a 404 that teaches nothing. A trailing slash is
-  removed first, so `…/v1/chat/completions/` is normalised exactly like `…/v1/chat/completions`.
-- **An `apiKeyEnv` that holds a key** rather than the *name* of one is reported as exactly that
-  mistake, with the key redacted, instead of the bare "no API key" message.
-- **The key variable of a definition is the one that holds its key.** `apiKeyEnv` in `config.json`
-  belongs to the provider configured there, and `Config.resolved()` fills it with the provider-kind
-  default — `OPENAI_API_KEY` for every name that is not `anthropic`. Reading that variable first
-  would put a globally exported OpenAI key in the `Authorization` header of a request to somebody
-  else's relay, so a definition's own variable is consulted before the config's, and an `apiKey`
-  literal in the config still wins over both.
-- **Removing a provider**: a definition the user made is deleted from `providers.json`. A built-in
-  is an alias compiled into the agent, so there is nothing to delete — it simply leaves the list,
-  and the list becomes **explicit**: `providers.json` records `"shown": [...]`, the providers that
-  exist, rather than anything about what was removed. There is no "hidden" state to explain and
-  nothing to restore; `GET /api/models` reports the built-ins that are *not* in the list as
-  `"builtIns": [...]`, and `PUT /api/providers` adds one back, which is an ordinary add. An
-  *emptied* list is explicit too: removing the last provider leaves the picker empty — no built-in
-  returns — and `builtIns` is how one comes back.
-- Removal is a list decision, never a capability removal: a config naming a removed provider keeps
-  working, which is why removing the provider in use is allowed. Deleting a definition that is in
-  use is also allowed — the running session keeps the provider it built — but the notice warns to
-  choose another before the next restart.
-- Model lists are editable **per provider, built-ins included**: a hand-typed model is not a
-  one-off, and the list a picker offers must survive the next render. The first edit records the
-  whole list, after which it is authoritative — that is what makes a removal stick, and what makes
-  an addition survive a restart. An *empty* recorded list is authoritative too, which is the only
-  reason removing the last model does not resurrect the provider's default.
-- Removing a model **never edits the configuration**: the model in use stays in use, and stays
-  visible to the picker, marked `in use · not offered`. Refusing the removal instead would deadlock
-  the user whenever the model in use was also the only one offered — the exact case that prompted
-  this rule.
-- The catalogue endpoint (`/api/models`) is what the settings form reads. It is deliberately
-  synchronous and offline: a settings form must render instantly, and a router-backed catalogue can
-  cache whatever it fetches. See [ROUTER.md](ROUTER.md).
+- `kind` 是 wire 协议（`openai` 覆盖所有 `/chat/completions` 端点，`anthropic` 则是 messages
+  API），正是它让一个中继、一个网关、本地 vLLM 或个人路由器无需发版就能使用。只有两种协议存在，
+  其它任何值都会被当作拼写错误拒绝。
+- 一条定义的 `baseUrl` 就是这条定义所服务的端点；状态里报告的也是它，所以「这个请求会发到哪里」
+  只有一个答案。存放在 `config.json` 里的 `baseUrl`，只有在它是为这个提供方输入的时候才会被
+  使用（`--base-url` flag、`CCJ_BASE_URL`，或者在这个提供方被选中时用的设置表单）——你一分钟前
+  用的那个提供方留下的值，是别人的地址，而把本提供方的流量配着那个提供方的密钥发过去，正是配置
+  文件里的 `settingsFor` 要防的事。`apiKeyEnv` 是*变量名*（`MY_KEY`），绝不是密钥本身；一条定义
+  里的这个字段如果装着看起来像密钥的东西，会被拒绝，并把值打码。
+- 定义在存入之前都会校验，一条不可能工作的定义永远无法被选中。即使正在使用，也允许移除它，因为
+  移除是一个关于列表的决定，而不是移除某种能力（见下文）。
+- **一条定义就是意图**：当列表已经被收窄时，保存一条定义也会把它放进列表；磁盘上存在但不在列表里
+  的定义，会在加载时被折回列表。没有这一点，用户刚保存的提供方就是不可见的——那个让「保存」看起来
+  坏掉的 bug。
+- **base URL 是前缀**：无论 base URL 从哪里进来——提供方定义或设置表单——里面的端点路径
+  （`/chat/completions`、`/v1/messages`）都会被剥掉，因为 ccj 自己会追加那段路径，发两次就是
+  一个什么也教不了你的 404。末尾的斜杠会先被去掉，所以 `…/v1/chat/completions/` 和
+  `…/v1/chat/completions` 会被归一化得完全一样。
+- **`apiKeyEnv` 里装的是密钥本身**、而不是密钥的*名字*时，会照实报告成这个错误并把密钥打码，
+  而不是只丢一句「没有 API 密钥」。
+- **定义自己的那个密钥变量，才是装着它密钥的变量。** `config.json` 里的 `apiKeyEnv` 属于在那里
+  配置的提供方，而 `Config.resolved()` 会用该提供方类型的默认值填充它——只要名字不是
+  `anthropic`，就是 `OPENAI_API_KEY`。先读那个变量，会把一个全局导出的 OpenAI 密钥放进发往别人
+  中继的请求的 `Authorization` 头里，所以定义自己的变量会先于配置里的变量被查阅，而配置里的
+  `apiKey` 字面量仍然优先于两者。
+- **移除一个提供方**：用户自己建的定义会从 `providers.json` 里删掉。内置提供方是编译进 agent 的
+  别名，所以没有什么可删——它只是离开列表，而列表变成**显式**的：`providers.json` 记录的是
+  `"shown": [...]`，也就是存在的那些提供方，而不是关于删掉了什么的任何信息。没有需要解释的
+  「隐藏」状态，也没有东西需要恢复；`GET /api/models` 会把*不在*列表里的内置提供方报告为
+  `"builtIns": [...]`，而 `PUT /api/providers` 会把一个加回来，那是一次普通的添加。*清空*的
+  列表同样是显式的：移除最后一个提供方会让选择器变空——不会有内置的自己回来——要回来就靠
+  `builtIns`。
+- 移除是关于列表的决定，绝不是移除某种能力：配置里指名了一个被移除的提供方，它仍然继续工作，
+  所以允许移除正在使用的提供方。删除一条正在使用的定义也是允许的——正在跑的会话保留它已经构建好
+  的提供方——但通知会提醒在下次重启前另选一个。
+- 模型列表**按提供方**可编辑，内置的也一样：手打进去的模型不是一次性的，选择器提供的列表必须
+  熬得过下一次渲染。第一次编辑会把整个列表记录下来，此后它就是权威——这才让一次移除留得住，也让
+  一次添加能活过重启。一条*空*的记录列表同样是权威的，这也是移除最后一个模型不会复活该提供方
+  默认值的唯一原因。
+- 移除一个模型**从不改动配置**：正在使用的模型继续被使用，也继续在选择器里可见，并标注为
+  「使用中」（即使提供方已不再提供它）。反过来，如果拒绝这次移除，那么只要正在使用的模型恰好也是
+  唯一被提供的模型，用户就会卡死——正是这个情况催生了这条规则。
+- 设置表单读的是目录端点（`/api/models`）。它刻意做成同步且离线的：设置表单必须瞬间渲染，而由
+  路由器支撑的目录可以缓存它取到的任何东西。见 [ROUTER.md](ROUTER.md)。
 
-## Choosing a model (the composer picker)
+## 选择模型（输入区里的选择器）
 
-The model is chosen where it matters — in a control inside the composer, in its footer row beside the
-send button, the way the harness composes it. It opens a two-column panel: providers on the left, the
-models that provider offers on the right, and, once a model is picked, an effort tier. The tiers
-travel with every request:
+模型就在它该被选的地方被选：输入区里的一个控件，位于发送按钮旁边的底栏，按 harness 的方式组合。
+它打开一个两栏面板：左边是提供方，右边是该提供方提供的模型；选定模型之后还有一档推理强度。
+这些档位会随每个请求一起发送：
 
-| Tier | OpenAI-compatible | Anthropic |
+| 档位 | OpenAI 兼容 | Anthropic |
 |---|---|---|
-| `default` | nothing sent — the provider decides | nothing sent |
-| `low` | `reasoning_effort: "low"` | extended thinking, budget 2048 |
-| `high` | `reasoning_effort: "high"` | extended thinking, budget 8192 |
-| `max` | `reasoning_effort: "high"` plus `max_completion_tokens: 32768` | extended thinking, budget 32768 (and `max_tokens` raised to exceed it) |
+| `default` | 什么都不发——由提供方决定 | 什么都不发 |
+| `low` | `reasoning_effort: "low"` | 扩展思考，预算 2048 |
+| `high` | `reasoning_effort: "high"` | 扩展思考，预算 8192 |
+| `max` | `reasoning_effort: "high"` 外加 `max_completion_tokens: 32768` | 扩展思考，预算 32768（并把 `max_tokens` 提高到超过它） |
 
-Anthropic's `thinking_delta` events are streamed to the client as `reasoning`, like OpenAI's
-`reasoning_content`: a turn that spends thousands of tokens thinking must not look like a stalled
-spinner. The thinking text is not part of the assistant turn — it is not what the transcript shows as
-an answer — but it *is* kept, with its signature, because the Messages API wants it back on the next
-request and rejects a turn that drops it. It is handed back only while a reasoning tier is set: the
-blocks belong to a setting the request must be asking for. A block whose signature never arrived (a
-stream cut mid-thought) is dropped rather than sent, since the signature is what the API verifies; a
-`redacted_thinking` block is opaque and is kept verbatim.
+Anthropic 的 `thinking_delta` 事件会像 OpenAI 的 `reasoning_content` 一样，作为 `reasoning`
+流式发给客户端：一个花了数千 token 思考的回合，不能看起来像一个卡住的转圈。思考文本不属于
+assistant 回合的一部分——转录不会把它当作答案显示——但它*确实*会连签名一起被保留，因为 Messages
+API 希望在下一次请求里拿回它，并会拒绝一个丢掉它的回合。只有在设定了推理档位时才会交还它：
+这些块属于一个请求必须正在索要的设置。签名从未到达的块（流在思考中途被切断）会被丢弃而不是发送，
+因为 API 校验的正是签名；`redacted_thinking` 块是不透明的，会逐字保留。
 
-Two details are protocol facts rather than choices: the OpenAI-shaped API has no effort above `high`,
-so `max` buys room to think instead; and Anthropic rejects a custom `temperature` while thinking is
-enabled, so the tier and a temperature are mutually exclusive there. A tier that is never chosen sends
-nothing at all, which is what keeps every non-reasoning model working unchanged.
+有两个细节是协议事实而不是选择：OpenAI 形状的 API 没有高于 `high` 的强度，所以 `max` 转而
+买来思考的空间；而 Anthropic 在开启思考时会拒绝自定义 `temperature`，所以在那一边，档位和
+temperature 是互斥的。从未被选中的档位什么都不发，这才让每一个非推理模型原封不动地继续工作。
 
-The value is stored as `reasoning` in `config.json`, reported in `status` (with the list of levels so
-the picker needs no second source), accepted by `POST /api/config`, and cleared by posting
-`"reasoning": "default"`.
+这个值以 `reasoning` 的名字存放在 `config.json` 里，在 `status` 里报告（连档位列表一起报告，
+这样选择器不需要第二个来源），由 `POST /api/config` 接受，并通过提交 `"reasoning": "default"`
+清除。
 
-In the composer, **picking a provider is enough to switch to it**: the pick applies immediately,
-paired with the model already in use when that provider offers it and with the first offered model
-otherwise. Browsing alone (swapping the model column without applying) was worse than useless — a
-provider whose list was empty could not be selected at all. The settings form keeps the drafting
-behaviour, because there a pick is an edit to the form until Save.
+在输入区里，**选中一个提供方就足以切换过去**：这次选择立刻生效，优先搭配正在使用的那个模型
+（前提是该提供方提供它），否则搭配第一个被提供的模型。光是浏览（只换模型列而不应用）比没用还糟
+——列表为空的提供方根本选不中。设置表单保留了草稿式的行为，因为在那里，一次选择只是对表单的编辑，
+直到保存为止。
 
-## Settings
+## 设置
 
-The form manages the model that describes pictures as well — *Pictures*, below the provider fields:
-base URL, model, key, description budget, and two checkboxes for the things that are not values
-(forget the saved key, turn pictures off). Nothing there is covered by *Test connection*, which is
-about the provider: the picture button is the test, and it answers with a description or with the
-reason it could not make one.
+表单也管理用于描述图片的模型——*图片*，位于提供方字段下面：base URL、模型、密钥、描述预算，
+以及两个用于「不是值」的东西的复选框（忘掉已保存的密钥、关闭图片功能）。那里的东西不在
+*测试连接*的覆盖范围内，因为后者是关于提供方的：图片按钮本身就是测试，它要么给出一段描述，
+要么给出没能做出描述的原因。
 
-`ccj` with no arguments serves the web UI, and the UI is where a model gets configured — no JSON
-editing, no restart. `GET /api/config` returns:
+`ccj` 不带参数运行时提供 Web 界面，而模型就是在界面上配置的——不用编辑 JSON，不用重启。
+`GET /api/config` 返回：
 
 ```json
 {
@@ -464,109 +414,95 @@ editing, no restart. `GET /api/config` returns:
 }
 ```
 
-`apiKeySource` is `config`, `env` or `none`; the key itself is never sent to the browser.
-`baseUrl`, `apiKeyEnv` and `apiKeySource` describe the **active provider**,
-`usesStoredSettings` is false when what the file holds was entered for a different one (a custom
-provider is served by its definition in that case) — the form then shows the catalogue's endpoint
-rather than offering to save a value that will not be used — and `rememberedProviders` lists, by
-name, the providers that have a key saved, so the form can say "saved" or "not saved" per provider
-before anything is pasted. `POST
-/api/config` takes any subset of
-`{provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, reasoning}` and returns the new
-`status` payload. Rules:
+`apiKeySource` 是 `config`、`env` 或 `none`；密钥本身从不发给浏览器。`baseUrl`、`apiKeyEnv`
+和 `apiKeySource` 描述的是**活动提供方**；当文件里存的东西是为另一个提供方输入的时，
+`usesStoredSettings` 为 false（那种情况下自定义提供方由它自己的定义来服务）——这时表单会显示
+目录里的端点，而不是提议保存一个不会被使用的值——而 `rememberedProviders` 按名字列出存有密钥的
+提供方，所以表单在用户粘贴任何东西之前，就能按提供方说「已保存」或「未保存」。`POST /api/config`
+接受 `{provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, reasoning}` 的任意
+子集，并返回新的 `status` 载荷。规则：
 
-- An omitted or empty `apiKey` keeps the stored one; `"clearApiKey": true` deletes it — and forgets it
-  for that provider, so it cannot come back on the next switch. Other providers' keys are untouched.
-- Keys are kept **per provider** in `config.json`: the pair in effect at the top level, marked with
-  `settingsFor`, and a `remembered` map for the rest. Changing `provider` moves the pair being left
-  into `remembered` and takes the new provider's pair back out, so switching back needs no key and no
-  key is ever sent to a provider it was not entered for.
-- The provider is built and validated **before** anything is written, so a typo cannot leave a broken
-  config behind; a rejected change returns `400` with `{"error": "..."}` and changes nothing.
-- Only what was chosen is written: a defaulted endpoint or key variable is left out of the file and
-  re-derived on load, so the file never accumulates values nobody set.
-- Fields the form does not manage (system prompt, output caps, auto-approve, the context budget) are
-  preserved in the file. The context budget has no form field on purpose: it is a ceiling you set
-  once for a model, not a knob to nudge while sending messages.
-- The file is written with `0600` permissions because it may hold a key.
+- 省略或为空的 `apiKey` 会保留已保存的那个；`"clearApiKey": true` 会删除它——并且为该提供方
+  忘掉它，这样下次切换时它不会再回来。其它提供方的密钥不受影响。
+- 密钥在 `config.json` 里**按提供方**保存：生效的那一对放在顶层，用 `settingsFor` 标注，其余
+  的放在 `remembered` 映射里。改动 `provider` 会把被离开的那一对移进 `remembered`，并把新
+  提供方的那一对取出来，所以切回去不需要密钥，也永远不会把某把密钥发给它并非为其输入的提供方。
+- 提供方在任何东西被写入**之前**就构建并校验，所以一个拼写错误不会留下坏掉的配置；被拒绝的改动
+  返回 `400` 和 `{"error": "..."}`，什么都不改。
+- 只写用户选过的东西：取了默认值的端点或密钥变量不会写进文件，而是在加载时重新推导，所以文件里
+  永远不会堆积没人设过的值。
+- 表单不管理的字段（系统提示词、输出上限、自动批准、上下文预算）会在文件里保留。上下文预算刻意
+  没有表单字段：它是你为某个模型设一次的上限，而不是发消息时随手拧的旋钮。
+- 这个文件以 `0600` 权限写入，因为它可能装着密钥。
 
-`POST /api/config/test` runs one minimal turn with the posted values (no save) and answers
-`{"ok": true, "reply": "...", "elapsedMs": 420}` or `400 {"error": "HTTP 401: bad key"}`. It is the
-only endpoint that spends the user's tokens, and only when they ask for it.
+`POST /api/config/test` 会用提交的值跑一个最小回合（不保存），并返回
+`{"ok": true, "reply": "...", "elapsedMs": 420}` 或 `400 {"error": "HTTP 401: bad key"}`。
+它是唯一会花掉用户 token 的端点，而且只在用户主动要求时才花。
 
-While no provider is configured the UI still works: the status reports `configured: false`, sending a
-turn returns `409 {"error": "no model configured — open Settings"}`, and the settings form opens on
-first load.
+没有配置任何提供方时界面仍然可用：状态报告 `configured: false`，发送一个回合会返回
+`409 {"error": "没有配置模型——打开「设置」添加一个"}`，而设置表单会在首次加载时打开。
 
-All JSON is UTF-8. Errors are `{"error": "..."}` with a non-2xx status; a body over 1 MiB is refused
-with `413` rather than read into memory. The server binds loopback; binding another interface
-requires an explicit token, and every request must then carry it as `?token=` or
-`Authorization: Bearer`.
+所有 JSON 都是 UTF-8。错误是 `{"error": "..."}` 配一个非 2xx 状态码；超过 1 MiB 的请求体
+会被 `413` 拒绝，而不是读进内存。服务器监听回环；监听另一个网卡需要显式的 token，此后每个请求
+都必须以 `?token=` 或 `Authorization: Bearer` 携带它。
 
-Without a token the server additionally requires a **loopback `Host` header**: any page the user
-visits can reach `127.0.0.1` with a simple cross-origin POST (no preflight) and DNS rebinding lets it
-read the answers too, so a request addressed to another name is `403`. A name is never resolved to
-check this — only `localhost` and loopback literals are accepted — because resolving an
-attacker-chosen name is the whole point of a rebinding attack. A token makes the check unnecessary,
-which is why it only applies to the tokenless default.
+没有 token 时，服务器还额外要求 **`Host` 头是回环名字**：用户访问的任何页面都能用一个简单的
+跨源 POST（无预检）连到 `127.0.0.1`，而 DNS rebinding 还能让它读到应答，所以一个寻址到别的
+名字的请求会被 `403`。检查时从不解析域名——只接受 `localhost` 和回环字面量——因为解析一个攻击者
+选定的域名，正是 rebinding 攻击的全部要点。有了 token 这项检查就不必要了，所以它只适用于没有
+token 的默认情况。
 
-State-changing requests are held to a second rule on top of that, token or not: a request that carries
-an `Origin` must have it name this server — a loopback address, or the host the request was aimed at.
-The second half is what makes the phone work. A page opened at `http://100.72.92.41:6767/` sends that
-address as its `Origin`, which is neither loopback nor knowable in advance, and the first version of
-this check refused it: **every** POST from a phone — a message, an abort, a settings save, an approval
-answer, a picture — came back `403` while the same request from a loopback page was served. A page on
-another site still cannot pass, because its `Origin` is its own host and not the one this request was
-aimed at; a page reaching the server through a rebinding name agrees with itself but has no token and
-is refused for that instead. Ports may differ, since the user may have started ccj on a different port
-than the page they first opened.
+在此之上，改动状态的请求还有第二条规则，不论有没有 token：携带 `Origin` 的请求，其中的主机名
+必须是这个服务器——一个回环地址，或者这个请求所寻址的那个主机。后半条正是让手机能用的原因。从
+`http://100.72.92.41:6767/` 打开的页面会把那个地址作为 `Origin` 发出去，它既不是回环，也无法
+事先知道，而这项检查的第一版拒绝了它：来自手机的**每一个** POST——发消息、中止、保存设置、回答
+审批、图片——都返回 `403`，而同样的请求从回环页面发来却被放行。别的站点上的页面仍然过不了，
+因为它的 `Origin` 是它自己的主机，而不是这个请求所寻址的那个；经由 rebinding 名字连到服务器的
+页面，与自身是一致的，但没有 token，于是因为这一点被拒绝。端口可以不同，因为用户启动 ccj 的
+端口可能和最初打开页面的端口不一样。
 
-## SSE events
+## SSE 事件
 
-One JSON object per `data:` line, each with a `type`, and an `id:` line so a reconnecting browser can
-resume with `Last-Event-ID` (the server keeps a small replay buffer).
+每个 `data:` 行一个 JSON 对象，各带一个 `type`；还有一个 `id:` 行，让重连的浏览器可以用
+`Last-Event-ID` 续上（服务器保留着一小段重放缓冲）。
 
-| `type` | Fields | Meaning |
+| `type` | 字段 | 含义 |
 |---|---|---|
-| `status` | as `/api/status`, plus `busy`, `running`, `approvals` and `queued` | sent on connect, after session switches, when a turn ends, when a tool asks for approval, and when a message is queued |
+| `status` | 同 `/api/status`，外加 `busy`、`running`、`approvals` 和 `queued` | 连接时发送、切换会话之后发送、回合结束时发送、工具请求审批时发送，以及有消息进入队列时发送 |
 
-Every event also carries **`sessionId`** — the conversation it belongs to. One stream carries every
-conversation on the server, so this is what lets a page render exactly the transcript it is showing
-and leave a background turn's prose alone. Events that are about the server rather than a
-conversation (a notice from the settings form) carry an empty id and are shown by every page.
+每个事件还携带 **`sessionId`**——它所属的那个对话。一条流承载服务器上的所有对话，所以正是它
+让一个页面能只渲染自己正在显示的那份转录，而不去碰后台回合的文本。属于服务器而不是某个对话的事件
+（比如来自设置表单的通知）携带空 id，每个页面都会显示。
 
 
-| `user` | `text` | the turn's input, echoed so the transcript is server-authoritative |
-| `text` | `delta` | assistant prose, streamed |
-| `reasoning` | `delta` | reasoning/thinking content, streamed |
-| `tool` | `id`, `name`, `summary`, `state` (`start`\|`end`), `ok`, `elapsedMs`, `output` | tool call lifecycle; `summary` is a one-line argument digest. `elapsedMs` is `-1` for a call an abort stopped before it ran: there is no duration to report, and a `0` would read as a measurement |
-| `approval` | `id`, `title`, `detail` | the loop is blocked waiting for an answer |
-| `approval-closed` | `id`, `allow` | answered (by a browser or by timeout) |
-| `notice` | `text` | token usage, retries, a trimmed context budget, a repaired history |
-| `done` | `finalText`, `aborted` | the turn finished |
-| `error` | `message` | the turn failed |
-| `usage` | `turns`, `steps`, `inputTokens`, `outputTokens`, `cachedInputTokens`, `cacheHitRate`, `toolCalls`, `toolErrors`, `elapsedMs`, `contextTokens`, `contextLimit` | running totals for the current session; also sent when a tool call starts or ends, so the panel never contradicts the cards on screen |
+| `user` | `text` | 回合的输入，回显出来，好让转录以服务器为准 |
+| `text` | `delta` | assistant 的正文，流式发送 |
+| `reasoning` | `delta` | 推理/思考内容，流式发送 |
+| `tool` | `id`, `name`, `summary`, `state` (`start`\|`end`), `ok`, `elapsedMs`, `output` | 工具调用的生命周期；`summary` 是一行参数摘要。对一次在运行前就被 abort 停掉的调用，`elapsedMs` 是 `-1`：没有时长可报，而 `0` 会被读成一个测量值 |
+| `approval` | `id`, `title`, `detail` | 循环被阻塞，正在等一个回答 |
+| `approval-closed` | `id`, `allow` | 已作答（由浏览器或超时） |
+| `notice` | `text` | token 用量、重试、被裁剪的上下文预算、被修复的历史 |
+| `done` | `finalText`, `aborted` | 回合结束 |
+| `error` | `message` | 回合失败 |
+| `usage` | `turns`, `steps`, `inputTokens`, `outputTokens`, `cachedInputTokens`, `cacheHitRate`, `toolCalls`, `toolErrors`, `elapsedMs`, `contextTokens`, `contextLimit` | 当前会话的累计值；工具调用开始或结束时也会发送，这样面板永远不会和屏幕上的卡片互相矛盾 |
 
-A subscriber is a queue, not a socket write: the thread that publishes an event never touches a
-client's socket, so a browser that stops reading (a suspended tab, a stalled network) fills only its
-own bounded queue and is dropped if it falls too far behind — where writing straight from `publish`
-would wedge the turn that is streaming, and the replay monitor with it. The page reconnects and
-re-reads `/api/history` after any disconnect, so a dropped client loses nothing but its place.
+订阅者是一个队列，而不是一次 socket 写入：发布事件的线程从不碰客户端的 socket，所以一个停止
+读取的浏览器（标签页被挂起、网络卡住）只会填满它自己的有界队列，落后太多就会被丢弃——而如果
+直接从 `publish` 往外写，就会把正在流式输出的那个回合卡死，重放监视器也一样。页面在任何一次
+断连之后都会重连并重新读取 `/api/history`，所以被丢弃的客户端除位置之外什么都不会丢。
 
-## History and usage
+## 历史与用量
 
-The side panel ends with a number that is an estimate and labelled that way. **context** is what
-this conversation would cost the model's window, against the budget when one is configured
-(`--max-context-tokens`, `CCJ_MAX_CONTEXT_TOKENS`, or `"maxContextTokens"` in `config.json`), and it
-is what tells you a session is about to be trimmed before the transcript says it was. Token counts
-come from the provider and are exact; the context figure is a heuristic over them, and the panel says
-so. There is no money in the panel: a price is an assumption about a rate card that changes without
-telling ccj, and a plausible-looking number nobody can check is worse than no number.
+侧栏面板以一个数字收尾，它是估算值，并且被明确标成估算。**上下文（估算）**是这段对话会占用模型窗口
+多少，在有配置预算时还会和预算对照（`--max-context-tokens`、`CCJ_MAX_CONTEXT_TOKENS`，或
+`config.json` 里的 `"maxContextTokens"`），正是它让你在转录承认之前就知道某个会话快要被裁剪了。
+token 计数来自提供方，是精确的；context 这个数字则是对它们的启发式估算，面板也是这么说的。
+面板里没有金额：价格是关于一张价目表的假设，而那张表变了也不会通知 ccj；一个看起来合理却没人能
+核对的数字，比没有数字更糟。
 
-A page that loads, reloads, or switches sessions must show the conversation that already exists —
-otherwise resuming a session looks like it worked and then shows an empty screen. `GET /api/history`
-returns the current session encoded as **the same event objects the stream emits**, so the page
-renders history and live turns with one code path:
+一个加载、刷新或切换会话的页面，必须显示出已经存在的对话——否则恢复一个会话看起来像是成功了，
+然后给你一个空屏幕。`GET /api/history` 把当前会话按**流所发出的同一批事件对象**编码返回，所以
+页面用同一条代码路径渲染历史和实时回合：
 
 ```json
 {"sessionId": "20260911-233115-94cf",
@@ -583,244 +519,208 @@ renders history and live turns with one code path:
  ]}
 ```
 
-Replay events carry `replay: true` and have no SSE id (they are not part of the live stream, and the
-dedupe that protects reconnects does not apply to them). A tool call and its result are paired by
-`id`, so the renderer produces the same card it would have produced live. Two fields differ from the
-live stream: replayed `tool` end events have `elapsedMs: null` because the session file stores the
-conversation and not timings, and no `notice` events are replayed at all — token lines are transient,
-and the usage panel is fed by `usage` instead.
+重放事件携带 `replay: true`，没有 SSE id（它们不属于实时流，保护重连的去重也不适用于它们）。
+一次工具调用和它的结果通过 `id` 配对，所以渲染器产出的卡片和它在实时场景下会产出的一样。有两个
+字段与实时流不同：重放的 `tool` end 事件里 `elapsedMs: null`，因为会话文件存的是对话而不是计时；
+并且完全不会重放 `notice` 事件——token 那些行是瞬时的，用量面板改由 `usage` 供数。
 
-`usage` totals belong to the session, not to the process: every turn end appends one accounting line
-to the session file (`{"type":"usage","input_tokens":…}`) and reopening a session restores it, so a
-resumed conversation continues its cache hit rate instead of starting at zero. They arrive as an
-event during and after every turn and are also embedded in the `status` payload as a `usage` object,
-so a fresh page has numbers before the first turn. `turns` counts user turns, `steps` counts model
-turns (a turn that calls three tools is three steps plus the answer), and `elapsedMs` is time spent
-inside turns. `cachedInputTokens` and `cacheHitRate` are `null` when the
-provider reported no cache figures — "no information" and "nothing was cached" are different things,
-and reporting 0% for a local model would be a lie.
+`usage` 的合计属于会话，而不是进程：每个回合结束时都会往会话文件里追加一行计账
+（`{"type":"usage","input_tokens":…}`），重新打开会话会把它恢复回来，所以恢复后的对话会接着
+算它的缓存命中率，而不是从零开始。它们在每个回合进行中和结束后作为事件到达，也作为 `usage` 对象
+嵌在 `status` 载荷里，所以一个新打开的页面在第一个回合之前就有数字。`turns` 数的是用户回合，
+`steps` 数的是模型回合（一个调用了三个工具的回合是三步加上答案），`elapsedMs` 是花在回合里的
+时间。当提供方没有报告任何缓存数字时，`cachedInputTokens` 和 `cacheHitRate` 是 `null`——
+「没有信息」和「什么都没缓存」是两件事，而对一个本地模型报告 0% 就是在撒谎。
 
-Cache accounting per protocol: OpenAI-compatible endpoints report
-`prompt_tokens_details.cached_tokens` (DeepSeek and others use `prompt_cache_hit_tokens`), which is
-already included in `prompt_tokens`; Anthropic reports `cache_read_input_tokens` and
-`cache_creation_input_tokens` **in addition to** `input_tokens`, so the prompt size is their sum and
-the hit rate is `cache_read / prompt size`.
+按协议分的缓存计账：OpenAI 兼容端点报告 `prompt_tokens_details.cached_tokens`（DeepSeek 等
+用的是 `prompt_cache_hit_tokens`），它已经包含在 `prompt_tokens` 里；Anthropic 报告的
+`cache_read_input_tokens` 和 `cache_creation_input_tokens` 是**在** `input_tokens` **之外
+追加的**，所以 prompt 的大小是三者之和，命中率是 `cache_read / prompt size`。
 
-### A long conversation is drawn in two passes
+### 长对话分两趟绘制
 
-A session of a few thousand messages is thousands of tool cards, and building them all at once blocks
-the page for long enough that a turn streaming behind the switch looks frozen. So a history longer
-than **300 events** is drawn in two passes: the newest 300 now, the rest as soon as the browser is
-idle. Nothing is dropped, and the reader can scroll immediately.
+一个几千条消息的会话就是几千张工具卡片，一次性把它们全部构建出来，会把页面阻塞到足以让切换
+背后正在流的回合看起来冻住。所以超过 **300 个事件**的历史分两趟绘制：现在先画最新的 300 个，
+其余的等浏览器一空闲就画。什么都不丢，而且读者可以立刻滚动。
 
-Three details make the second pass invisible, and each is the reason it exists:
+三个细节让第二趟变得不可见，每一个都是它存在的理由：
 
-- **The cut lands on a user message**, which is the boundary the renderer already treats as one
-  (`appendUser` closes the open assistant block). Splitting mid-turn would hand one turn to both
-  passes, and the second would append its reasoning *after* the answer the first one drew. An
-  exchange longer than the budget is kept whole: half an answer is worse than a slow screen.
-- **Each chunk is built off-screen and inserted as one node**, above what is already drawn.
-- **The reader's scroll position is held** by the height that was added above them; without that,
-  filling in the past would slide the text being read down the screen.
+- **切口落在一条 user 消息上**，那是渲染器本来就当作边界的地方（`appendUser` 会关闭当前打开的
+  assistant 块）。在回合中间切开，会把同一个回合交给两趟，而第二趟会把它的推理追加在第一趟画出的
+  答案*之后*。比预算更长的一段交换会整段保留：半个答案比一个慢屏幕更糟。
+- **每一块都在屏幕外构建，并作为一个节点插入**，位置在已经画好的内容之上。
+- **读者的滚动位置被固定住**，由加在他们上方的那段高度补偿；没有这一点，补画过去的内容会把正在读
+  的文本往屏幕下方推。
 
-An earlier chunk that is still loading shows a "N earlier events — loading…" line at the top, which is
-removed when the pass finishes; switching sessions again cancels the pass rather than appending one
-conversation's history into another's transcript. Measured on a real 1,320-message session (1,740
-events): the page became usable in 29 ms with 194 nodes drawn, against 64 ms and 1,069 nodes for the
-single pass — and the finished transcript is identical either way.
+还在加载的更早那块会在顶部显示一行「N 条较早的事件 — 加载中…」，这一趟结束时就移除；再次
+切换会话会取消这一趟，而不是把一个对话的历史追加进另一个对话的转录。在一个真实的 1,320 条消息
+会话（1,740 个事件）上实测：页面在 29 ms 内就可用，画了 194 个节点，而单趟方案是 64 ms、
+1,069 个节点——而两种方式完成后的转录一模一样。
 
-## Rendering the answer
+## 渲染答案
 
-Assistant prose is markdown, and the page renders it as markdown — live, from the same deltas the
-stream already carries, and identically when the conversation is restored from `/api/history`.
+assistant 的正文是 markdown，页面就按 markdown 渲染它——实时地，用流本来就携带的那些 delta，
+而且在对话从 `/api/history` 恢复时渲染得完全一样。
 
-Streaming is what shapes the design. A delta can leave a fence unclosed, a table half-written or an
-asterisk unmatched, and a renderer that could not survive that would either flicker or have to guess
-where the message was going. So the renderer re-parses the **whole source** on every flush — string
-work only — and renders each block **from its own source alone**. A half-arrived message is therefore
-a faithful rendering of the message so far, and nothing drawn early ever has to be taken back. What
-makes it cheap is that a block *is* its source: blocks whose source did not change keep the nodes
-they already have, so an answer growing by one word re-creates the one block it is still writing and
-leaves everything above it untouched — the scroll position, a text selection and the paragraph being
-read all survive a long turn.
+流式决定了这个设计的形状。一个 delta 可能留下没闭合的围栏、写了一半的表格、没配对的星号，而一个
+扛不住这种情况的渲染器，要么闪烁，要么只能去猜这条消息要往哪走。所以渲染器在每一次 flush 时都重新
+解析**整份源码**——只是字符串操作——并且**只根据每个块自己的源码**渲染它。于是一条到达一半的消息，
+就是对目前为止这条消息的忠实渲染，早先画出的东西永远不必被收回。让它便宜的地方在于：块*就是*它的
+源码——源码没变的块保留它们已有的节点，所以答案多写一个词，只会重建它正在写的那一个块，而它上面
+的一切都不被动到——滚动位置、文本选区、正在读的那一段，全都能熬过一个长回合。
 
-| Supported | Notes |
+| 支持 | 说明 |
 |---|---|
-| Headings, paragraphs, hard (two-space) and soft breaks | the sizes step down by level |
-| Fenced code, ``` or `~~~` | the info string is shown as a label above the block; the block scrolls in place |
-| Lists, nested, ordered with a start number | GFM task boxes are rendered as *disabled* checkboxes — a transcript is a record, not a form |
-| Blockquotes, thematic breaks | |
-| Tables with `:--`, `--:` and `:--:` alignment | a wide table scrolls inside itself |
-| Inline code, `**bold**`, `*italic*`, `~~struck~~`, links, autolinks | |
+| 标题、段落、硬换行（两个空格）和软换行 | 字号按层级递减 |
+| 围栏代码，``` 或 `~~~` | info string 会作为块上方的标签显示；这个块在自身内部滚动 |
+| 列表、嵌套列表、带起始编号的有序列表 | GFM 任务框渲染成*禁用*的复选框——转录是一份记录，不是一张表单 |
+| 引用块、分隔线 | |
+| 带 `:--`、`--:` 和 `:--:` 对齐的表格 | 宽表格在自身内部滚动 |
+| 行内代码、`**bold**`、`*italic*`、`~~struck~~`、链接、自动链接 | |
 
-Three refusals are security decisions rather than omissions:
+有三处拒绝是安全决策，而不是遗漏：
 
-- **Raw HTML is never interpreted.** `<script>` in an answer is shown as the text it is, not parsed
-  as markup. The page's rule — every string that comes from the server, the model or a tool is
-  written as a text node, with no `innerHTML` anywhere in `app.js` — is what the renderer is built
-  from, and a markdown parser that passes HTML through would be an HTML injection with extra steps.
-- **A link's scheme is filtered.** Only `http`, `https`, `mailto` and scheme-less (relative) targets
-  become an `href`; `javascript:` and `data:` stay text. Every link opens in a new tab with
-  `rel="noopener noreferrer"`.
-- **Images are not fetched.** `![alt](url)` renders as the link it also is, because rendering an
-  image makes the browser request a URL the moment an answer arrives — a beacon the reader never
-  asked for, telling a third party that this conversation is on screen. Inlining would need a proxy
-  in the server, which is a different feature and a different risk.
+- **原始 HTML 从不被解释。** 答案里的 `<script>` 会按它本来的文本显示，而不会被当作标记解析。
+  页面的规则——来自服务器、模型或工具的每一个字符串都写成文本节点，`app.js` 里任何地方都没有
+  `innerHTML`——正是渲染器的构建基础，而一个让 HTML 透传的 markdown 解析器，就是多走几步的
+  HTML 注入。
+- **链接的 scheme 会被过滤。** 只有 `http`、`https`、`mailto` 和无 scheme（相对）的目标会变成
+  `href`；`javascript:` 和 `data:` 保持为文本。每个链接都以 `rel="noopener noreferrer"` 在
+  新标签页打开。
+- **图片不会被抓取。** `![alt](url)` 会按它同时也是的那个链接来渲染，因为渲染一张图片会让浏览器
+  在答案到达的那一刻就去请求一个 URL——一个读者从没要过的信标，告诉第三方这个对话正在某人的屏幕上。
+  要内联就需要服务器里有一个代理，那是另一个特性，也是另一种风险。
 
-Reasoning (`msg-reasoning`) stays plain text: it is the model talking to itself, and it is not what
-the reader is here for. The markdown cases live in `src/test/js/markdown.test.mjs`, which lifts the
-renderer's own source out of `web/app.js` and runs it against a small DOM — no browser, no npm
-package, nothing to install but a `node` binary (`WebMarkdownTest` runs it from `mvn test`, and skips
-it when there is no node).
+推理（`msg-reasoning`）保持纯文本：那是模型在自言自语，它不是读者来这里要看的东西。markdown
+的用例放在 `src/test/js/markdown.test.mjs` 里，它把渲染器自己的源码从 `web/app.js` 里抽出来，
+跑在一个迷你 DOM 上——不用浏览器、不用 npm 包，除了 `node` 二进制什么都不用装
+（`WebMarkdownTest` 会在 `mvn test` 里跑它，没有 node 时则跳过）。
 
-Deliberate deviations from CommonMark, both of them about not guessing: a line that continues a list
-item must be **indented** to that item's content column — a column-0 line after a list is far more
-often the next block of the answer than a wrapped bullet, and guessing "wrapped" once nests the whole
-rest of the answer inside the last item — and HTML entities are not decoded, so `&amp;` stays the
-five characters the model wrote.
+对 CommonMark 的两处刻意偏离，两处都关乎「不要猜」：续接某个列表项的行必须**缩进**到该项的
+内容列——列表之后的第 0 列行，是答案下一段的可能性远大于它是被折行的一个项目符号，而一旦猜成
+「折行」，答案剩下的一切都会被塞进最后一个列表项里；以及 HTML 实体不解码，所以 `&amp;` 就保持
+为模型写下的那五个字符。
 
-## Several conversations at once
+## 同时跑多个对话
 
-A turn running in one session does not lock the server. That is the point of a sidebar full of
-conversations: start a long job in one, switch to another, and deploy the next piece of work while
-the first is still going.
+一个会话里跑着的回合不会锁住服务器。这正是侧栏里塞满对话的意义：在一个里开始一件长活，切到
+另一个，在第一件还在跑的时候部署下一件工作。
 
-What the server keeps per session, and what it still refuses:
+服务器按会话保留了什么，以及它仍然拒绝什么：
 
-- **The unit that takes one turn at a time is the session.** `AgentHub.Conversation` holds that
-  session's turn flag, its running loop and its books. A second `POST /api/message` for a *busy*
-  session is refused with `409`; a message for any other session is accepted. Two writers appending
-  to one transcript is the thing that corrupts it, and that is still impossible.
-- **Looking at a conversation is always allowed — including the busy one.** Opening the session that
-  is running is the main thing a user wants to do with it, and it is answered by putting the *same*
-  `FileSession` its turn is appending to on screen, not by opening a second writer on the file. The
-  first version refused this, which made a running turn impossible to watch: clicking its row in the
-  sidebar bounced with `409`.
-- **Operations are refused by what they touch, not by a global flag.** Deleting the session a turn is
-  writing is refused (`409`) — that would pull the transcript out from under it. Changing the
-  provider or the config file is refused while *anything* is running, because those are what every
-  conversation is built on. Adding a workspace, or opening a conversation in another one, is not
-  refused at all: a turn holds the working directory it started in, so switching the namespace on
-  screen cannot redirect work that is already under way.
-- **Every event names its session.** `sessionId` travels on the event, and the page renders only
-  what belongs to the transcript on screen. A finished turn in another session does not unstick this
-  page's composer, and its prose never lands in the wrong conversation. The page's `lastEventId`
-  still advances for those foreign events — it is a position in one shared stream, and skipping it
-  would make the next reconnect replay frames already delivered.
-- **Running sessions are visible from anywhere.** `GET /api/status` reports `running` (the ids of the
-  other sessions working now), each row of `GET /api/sessions` reports `running`, and the tree marks
-  those rows with a pulsing dot plus a ■ control. That control posts `/api/abort?id=<session>`, so a
-  background turn can be stopped without opening it first.
-- **An approval in another session is still answerable, and comes back when you return.** The prompt
-  is published with its session and `POST /api/approval` answers by id from anywhere. It is also part
-  of that conversation's `status`: an approval is a request blocked in memory, not a message, so
-  replaying a conversation cannot restore it — without reporting it, looking away and back lost the
-  question and left abort as the only way out. Each conversation's status names only its own requests,
-  a request reported while a replay is in flight is held until the transcript stops being rebuilt, and
-  one the server no longer knows about (answered elsewhere, or timed out) is closed rather than left
-  as a card that can never be answered. Aborting a session also denies its pending requests, so abort
-  works on a turn that is blocked on a human.
-- **Two conversations in one workspace can write the same files.** Nothing serialises that: it is
-  the same exposure as two terminals in one directory, and serialising it would defeat the feature.
+- **一次只跑一个回合的单位是会话。** `AgentHub.Conversation` 持有该会话的回合标志、正在跑的
+  循环和它的账本。对*繁忙*会话的第二次 `POST /api/message` 会被 `409` 拒绝；发往任何其它会话的
+  消息都会被接受。两个写者往同一份转录里追加，正是会把它弄坏的事情，而这仍然是不可能发生的。
+- **看一个对话永远是被允许的——包括那个繁忙的。** 打开正在跑的那个会话，是用户对它最想做的主要
+  事情；回答这件事的方式，是把它的回合正在追加的那个*同一个* `FileSession` 放到屏幕上，而不是
+  在文件上开第二个写者。第一版拒绝了这件事，让正在跑的回合变得无法观看：点侧栏里它的那一行会
+  弹回 `409`。
+- **操作被拒绝与否，取决于它碰到了什么，而不是一个全局标志。** 删除某个回合正在写的会话会被拒绝
+  （`409`）——那会把转录从它脚下抽走。改动提供方或配置文件，在*任何东西*正在跑时都会被拒绝，
+  因为它们是每个对话赖以建立的东西。添加工作区，或者在另一个工作区里打开对话，则完全不会被拒绝：
+  一个回合持有它启动时的工作目录，所以切换屏幕上的命名空间，无法把已经在进行的工作引向别处。
+- **每个事件都点名自己的会话。** `sessionId` 随事件一起走，页面只渲染属于屏幕上那份转录的东西。
+  另一个会话里结束的回合，不会解开这个页面输入区卡住的状态，它的正文也永远不会落进错误的对话。
+  对那些外来的事件，页面的 `lastEventId` 仍然会前进——它是同一条共享流里的一个位置，跳过它会让
+  下一次重连重放已经投递过的帧。
+- **正在跑的会话在哪里都看得见。** `GET /api/status` 报告 `running`（此刻在工作的其它会话的 id），
+  `GET /api/sessions` 的每一行也报告 `running`，而树会给这些行标上一个跳动的圆点和一个 ■ 控件。
+  那个控件会向 `/api/abort?id=<session>` 发请求，所以后台回合不必先打开就能停掉。
+- **另一个会话里的审批仍然可以作答，而且你回来时它还在。** 提示随它的会话一起发布，
+  `POST /api/approval` 可以从任何地方按 id 作答。它也是该对话 `status` 的一部分：审批是一个
+  阻塞在内存里的请求，不是一条消息，所以重放对话无法把它恢复回来——不报告它的话，把目光移开再
+  移回来就会丢掉那个问题，只剩下 abort 作为唯一出路。每个对话的状态只点名自己的请求；重放还在
+  进行时报告的请求会被挂起，直到转录不再被重建；服务器已经不再知道的那个（在别处答过，或已超时）
+  会被关闭，而不是留成一张永远无法作答的卡片。中止一个会话也会拒绝它待批的请求，所以 abort 对
+  一个卡在等人回答的回合也管用。
+- **同一个工作区里的两个对话可以写同样的文件。** 没有任何东西对此做串行化：这和同一个目录里开两个
+  终端是同一种暴露，而给它加串行化就会毁掉这个特性。
 
-What abort is and is not: it stops the turn between steps and before each tool call (`AgentLoop`),
-and a running `bash` command is killed through `ToolContext.isCancelled()`. A turn blocked inside the
-model's own network call finishes that call first — there is no cancellation point in the middle of
-reading a stream — so behind an approval it stops at once, and in the middle of a reply it stops at
-the next step boundary.
+abort 是什么、不是什么：它在步骤之间、以及每个工具调用之前停掉回合（`AgentLoop`），而正在跑的
+`bash` 命令会通过 `ToolContext.isCancelled()` 被杀掉。一个阻塞在模型自己网络调用里的回合，会先
+把那次调用做完——读取一条流的中途没有取消点——所以它等在审批后面时会立刻停下，而在回复中途时会在
+下一个步骤边界停下。
 
-## Session lifecycle
+## 会话生命周期
 
-`GET /api/sessions` labels each row with a `title`: the first user message, flattened to one line
-and bounded, so the sidebar reads as a list of tasks instead of a list of `20260913-001746-3377`.
-`preview` is the same message at the shorter length `--list-sessions` prints, and both are derived
-on read — a session's file is still just the conversation, with no index and no title field to go
-stale. The id stays in the payload and in the row's tooltip: a title is what a session is *about*,
-an id is what it *is*, and two sessions can start with the same sentence.
+`GET /api/sessions` 给每一行标上一个 `title`：第一条用户消息，压平成一整行并限长，这样侧栏
+读起来是一串任务，而不是一串 `20260913-001746-3377`。`preview` 是同样的消息、`--list-sessions`
+打印的那个更短的长度，两者都在读取时推导——会话文件仍然只是那份对话，没有索引、也没有会过期的
+title 字段。id 留在载荷里、也留在该行的 tooltip 里：title 是会话*关于*什么，id 是它*是*什么，
+而两个会话可以以同一句话开头。
 
-The order is the server's, not the page's: sessions come back newest first, ordered by the file's
-modification time, which a turn advances. So a turn ends by re-reading the active workspace's list
-— that is what puts the conversation you just had at the top, and what makes a session whose first
-message was this turn appear at all. It is a background refresh of one endpoint, and a failure
-leaves the previous order on screen rather than replacing rows with an error.
+顺序由服务器决定，而不是页面：会话按最新在前返回，排序依据是文件的修改时间，而一个回合会推进它。
+所以一个回合结束时做的事是重新读取活动工作区的列表——正是它把你刚进行过的对话放到最上面，也正是
+它让第一条消息就是本回合的那个会话得以出现。这是对某一个端点的后台刷新，失败时屏幕上保留原来的
+顺序，而不是用一条错误替换掉那些行。
 
-A session file is created on the **first message**, not when a session id is minted: opening the
-CLI, or pressing `New session`, must not leave an empty file behind that pollutes the session list.
-`POST /api/session {"action": "new"}` on an already-empty session is a no-op and says so through a
-`notice` event rather than minting yet another id.
+会话文件是在**第一条消息**时创建的，而不是在铸造一个会话 id 时：打开 CLI，或者按**新建会话**，
+都不能留下一个空文件去污染会话列表。对一个已经是空的会话执行
+`POST /api/session {"action": "new"}` 是空操作，并通过一个 `notice` 事件说明这一点，而不是再
+铸造一个 id。
 
-Accounting records share the file but are not messages: `FileSession` filters them out of the
-conversation, and the last one wins when a session is reopened.
+计账记录和消息共用一个文件，但不是消息：`FileSession` 会把它们从对话里过滤掉，而重新打开会话时
+最后一条生效。
 
-## Approval
+## 审批
 
-A prompt carries the tool, the command and the path as fields of its own — `{"id", "title", "detail",
-"tool", "command", "path"}` — and four answers, which the page draws as four buttons: **Deny**,
-**Allow**, **Allow for session**, **Always allow**. The words on the buttons are the words the server
-acts on (`{"id": "…", "answer": "deny|once|session|always"}`), and the two older boolean fields are
-still understood: `allow: false` is a denial, `allow: true`, `remember: true` now means *this request
-for this session* rather than the whole-session auto-approve it used to switch on.
+一条提示把工具、命令和路径作为自己的字段带上，还有四种回答，页面把它们画成四个按钮：
+**拒绝**、**只允许这一次**、**本会话都允许**、**始终允许**。提示里的字段是
+`{"id", "title", "detail", "tool", "command", "path"}`。
+按钮上的文字就是服务器据以行动的文字（`{"id": "…", "answer": "deny|once|session|always"}`），
+而两个更旧的布尔字段仍然被理解：`allow: false` 是拒绝；`allow: true`、`remember: true`
+现在表示*本会话内的这一个请求*，而不是它过去会开启的整个会话自动批准。
 
-What came back is in the `approval-closed` event as `answer`, so a card answered in another tab reads
-the same here — "Allowed for this session" — instead of guessing from a boolean. Every answer given
-without asking is a `notice` in the transcript: `allowed by rule — bash mvn -q -o test`.
+回来的结果在 `approval-closed` 事件里以 `answer` 出现，所以在另一个标签页里作答的卡片在这里
+读到的是一样的内容——「本会话内已允许」——而不是从一个布尔值去猜。每一个不需要询问就给出的回答，
+都是转录里的一条 `notice`：`规则批准 — bash: mvn -q -o test`。
 
 
-`AgentHub.askApproval` publishes an `approval` event and blocks the loop thread, so a tool call that
-needs a human cannot proceed on its own. Timeout is **deny** — the safe default, and the same rule
-the CLI uses when stdin is not a terminal. `remember: true` flips the session to auto-approve, which
-the UI shows as a visible, revertible state.
+`AgentHub.askApproval` 会发布一个 `approval` 事件并阻塞循环线程，所以一次需要人参与的工具调用
+没法自己往下走。超时等于**拒绝**——这是安全的默认值，也是 CLI 在 stdin 不是终端时用的同一条规则。
+`remember: true` 会把会话翻成自动批准，界面把它显示成一个可见、可撤销的状态。
 
-## Abort and the conversation it leaves behind
+## abort，以及它留下的那个对话
 
-`POST /api/abort` asks the running turn to stop, and the transcript shows what that meant. An abort
-lands in one of two places, and both are visible:
+`POST /api/abort` 请正在跑的回合停下来，转录会显示这具体意味着什么。一次 abort 会落在两个位置
+之一，两者都是可见的：
 
-- **Between calls** — a call that had not started is recorded as `not run`, so its card appears and
-  is closed rather than left spinning on something that will never finish. It carries
-  `elapsedMs: -1`, which the page renders as `failed` with its reason in the output and no timing,
-  and the same text the model will read.
-- **Mid-call** — the tool's own cancellation path runs (`bash` kills the process tree), and the
-  result says it was aborted.
+- **在调用之间**——还没开始的调用会被记录为 `not run`，所以它的卡片会出现并关闭，而不是一直
+  转在做不完的事情上。它带着 `elapsedMs: -1`，页面会把它渲染成 `failed`，在输出里给出原因、
+  不显示时长，用的就是模型将会读到的那段文本。
+- **在调用中途**——工具自己的取消路径会执行（`bash` 杀掉整棵进程树），结果里说明它被 aborted 了。
 
-Either way the assistant turn was already in the session file before its calls ran, and both wire
-formats reject a history where a call has no result. Rather than leave a conversation that every
-later request is refused for — permanently, and with an error that says nothing about why —
-`SessionRepair` makes the projection that goes out sendable: it supplies the missing results, and it
-also handles the case where a message landed in the middle of a turn's answers (a second writer on
-one session, a stray append) — that turn's real result is carried back into the turn, because a
-`tool` message that answers no call the API can see is the same rejected request from the other side
-(`Messages with role 'tool' must be a response to a preceding message with 'tool_calls'`). A result
-that answers no recorded call at all cannot be sent, so it is left out and named in the notice. The
-page announces all of it in a `notice`. The file is not rewritten: append-only is the property that
-makes `--resume` trustworthy, and the repair is a statement about what to *send*, not about what
-happened.
+无论哪种情况，assistant 回合在它的调用跑起来之前就已经在会话文件里了，而两种 wire 格式都会拒绝
+一段「某个调用没有结果」的历史。与其留下一个此后每个请求都会被拒绝的对话——永久地、而且报一个
+完全不说原因的错误——`SessionRepair` 会让发出去的投影变得可发送：它补上缺失的结果，也处理某条
+消息挤进了一个回合的答案中间的情况（同一会话的第二个写者、一次乱入的追加）——那个回合的真实结果
+会被带回该回合，因为一条不应答 API 看得到的任何调用的 `tool` 消息，从另一侧看就是同一个被拒绝的
+请求（`Messages with role 'tool' must be a response to a preceding message with 'tool_calls'`）。
+一个完全不应答任何已记录调用的结果没法发送，所以它不会进请求，并在通知里被点名。页面把这一切都在
+一条 `notice` 里宣布。文件不会被重写：只追加正是让 `--resume` 值得信任的属性，而修复说的是该
+*发送*什么，不是曾经发生了什么。
 
-## Restarting from the page
+## 从页面上重启
 
-`POST /api/message` can lead to the `restart` tool, which installs a rebuilt jar and ends the
-process. The server does not wait for Ctrl-C in that case: its loop watches for the request and
-returns, printing the session id, so the launcher can start the new jar. The page is unaffected
-until the connection drops — then the browser reconnects, `/api/history` replays the session, and
-the turn ends with the tool card rather than an error. See [BOOTSTRAP.md](BOOTSTRAP.md).
+`POST /api/message` 可能会引出 `restart` 工具，它会装上重新构建的 jar 并结束进程。那种情况下
+服务器不会等着 Ctrl-C：它的循环盯着这个请求并返回，打印出会话 id，好让启动器去启动新的 jar。
+在连接断开之前页面不受影响——之后浏览器会重连，`/api/history` 重放会话，而回合以工具卡片结束，
+而不是以一个错误结束。见 [BOOTSTRAP.md](BOOTSTRAP.md)。
 
-The conversation comes back with it. Before returning, the process writes the session it was on into
-`<home>/resume`, and the next process opens that session instead of a new one — so the reload lands
-on the conversation whose turn installed the jar, not on an empty transcript. The note is spent when
-it is read: it resumes exactly the one restart that wrote it, and a later start is a new session
-again. `--resume` and `--continue` still win, since an explicit choice outranks a memory.
+对话也随之回来。返回之前，进程会把它所在的会话写入 `<home>/resume`，下一个进程就打开那个会话，
+而不是新开一个——所以重新加载落在那个「其回合装上了新 jar」的对话上，而不是一份空转录。这条记录
+在被读取时就消耗掉了：它只让写下它的那一次重启恢复会话，此后再启动又是新会话。`--resume` 和
+`--continue` 仍然优先，因为显式的选择压过一份记忆。
 
-## Reuse
+## 复用
 
-The web layer is a front end like any other: it builds the same `Provider`, `ToolRegistry`,
-`FileSession` and `AgentLoop` the CLI does, and implements `AgentListener` to translate callbacks
-into events. Sessions are shared with the CLI, so `ccj --web` can pick up a conversation started in
-the terminal.
+Web 层和任何别的前端一样：它构建的 `Provider`、`ToolRegistry`、`FileSession` 和 `AgentLoop`
+与 CLI 完全相同，并实现 `AgentListener`，把回调翻译成事件。会话与 CLI 共享，所以 `ccj --web`
+可以接着一个在终端里开始的对话继续。
 
-## Room for a router
+## 给路由器留的位置
 
-Nothing here assumes the model is a first-party endpoint: it is one `baseUrl` + `model`, which is
-exactly what an OpenAI-compatible router needs. A router panel (model catalogue, key health, request
-logs, cost) adds `GET /api/router/*` endpoints plus a pane in the page; the status payload already
-carries `provider`, `model` and `baseUrl`, so the pane has somewhere to start without redesigning
-anything above.
+这里没有任何东西假定模型是第一方端点：它就是 `baseUrl` + `model`，而这正是一个 OpenAI 兼容
+路由器所需要的东西。一个路由器面板（模型目录、密钥健康度、请求日志、成本）会增加
+`GET /api/router/*` 端点，并在页面里加一个窗格；状态载荷已经带着 `provider`、`model` 和
+`baseUrl`，所以这个窗格有地方起步，上面的东西什么都不用重新设计。

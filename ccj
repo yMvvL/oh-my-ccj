@@ -1,47 +1,41 @@
 #!/usr/bin/env bash
-# Launcher for the packaged CLI. Resolves symlinks (so it works from anywhere on PATH) and rebuilds
-# the jar when it is missing or older than the sources.
+# 打包 CLI 的启动器。解析符号链接（因此从 PATH 上任何位置都能运行），并在 jar 缺失或比源码旧时
+# 重新构建它。
 #
-# It is also what makes self-modification survivable. The agent can edit this project's sources and
-# run `mvn package`, but writing over the jar the running JVM is executing from kills that process
-# partway through the build. So a build goes to a scratch jar and is moved into place with `mv`:
-# same filesystem, so it is an atomic rename, and the running process keeps the inode it already
-# opened. The process that did the rebuild then exits with RESTART_EXIT and this script starts it
-# again on the new code.
+# 它也是让自我修改得以存活的关键。代理可以编辑本项目的源码并运行 `mvn package`，但覆盖运行中
+# JVM 正在执行的 jar 会在构建中途杀死那个进程。所以构建产物先写到临时 jar，再用 `mv` 移入原位：
+# 同一文件系统内，因此这是一次原子重命名，而正在运行的进程仍然持有它已经打开的 inode。做完重建的
+# 进程随后以 RESTART_EXIT 退出，本脚本则用新代码把它重新启动。
 set -euo pipefail
 
 self="$(readlink -f "${BASH_SOURCE[0]}")"
 here="$(cd "$(dirname "$self")" && pwd)"
 jar="$here/target/ccj.jar"
 
-# The status a rebuilt process exits with, meaning "start me again". It has to survive the
-# intermediate `mvn` process, so it cannot be one of the codes the CLI itself returns: 0 success,
-# 1 runtime failure, 2 usage error.
+# 重建后的进程用来退出、表示「再启动我一次」的状态码。它必须能穿过中间那层 `mvn` 进程存活下来，
+# 因此不能是 CLI 自己会返回的码之一：0 成功、1 运行时失败、2 用法错误。
 readonly RESTART_EXIT=75
 
 build=0
 if [[ ! -f "$jar" ]]; then
   build=1
 elif [[ -d "$here/src/main" ]] && [[ -n "$(find "$here/src/main" "$here/pom.xml" -type f -newer "$jar" -print -quit 2>/dev/null || true)" ]]; then
-  # Everything the build consumes, not just the sources: the page lives in src/main/resources, and
-  # a build reads the pom. A rebuild keyed on `*.java` alone would serve a stale page and a stale
-  # classpath for exactly the edits this project makes most.
+  # 构建所消费的一切，而不只是源码：页面位于 src/main/resources，而构建会读取 pom。只以 `*.java`
+  # 为键的重建，恰恰会在这个项目最常做的那些编辑上，提供一个过期的页面和过期的 classpath。
   build=1
 fi
 
 if (( build )); then
-  echo "oh-my-ccj: building target/ccj.jar" >&2
-  # Built to a scratch name and renamed in, for the same reason the restart tool does it that way:
-  # this build must not truncate the jar another ccj process may be running from.
+  echo "oh-my-ccj: 正在构建 target/ccj.jar" >&2
+  # 构建到临时名字再改名移入，理由与 restart 工具的做法相同：这次构建绝不能截断另一个 ccj 进程
+  # 可能正在运行的 jar。
   (cd "$here" && mvn -q -DskipTests -Djar.name=ccj-next package) >&2
   mv -f "$here/target/ccj-next.jar" "$jar"
 fi
 
-# A restart repeat is a loop, and repeating it can never do anything: a run that ends in a restart
-# has already installed the jar it wanted, so the fresh process would be running exactly the code the
-# exit came from. That makes a one-shot run a genuine dead end — re-issuing `-p` would redo the work
-# — and means the only honest answer is to hand the new jar an interactive front end, where the
-# session and the intent are still present.
+# 重复重启就是一个循环，而重复它永远不可能有任何作用：一次以重启收尾的运行，已经安装好了它想要的
+# jar，所以新进程运行的正是那次退出所来自的代码。这使一次性运行成为真正的死胡同——重新发出 `-p`
+# 只会把活再干一遍——也意味着唯一诚实的答案是给新 jar 配一个交互式前端，那里会话和意图都还在。
 restarts=0
 while :; do
   set +e
@@ -52,10 +46,10 @@ while :; do
     exit "$status"
   fi
   restarts=$(( restarts + 1 ))
-  echo "oh-my-ccj: restarting on the rebuilt jar (#$restarts)" >&2
+  echo "oh-my-ccj: 正在用重建后的 jar 重新启动（第 $restarts 次）" >&2
   if (( restarts >= 2 )); then
-    echo "oh-my-ccj: a run ending in a restart is already running the code it installed;" >&2
-    echo "          stopping here rather than restarting the same run again." >&2
+    echo "oh-my-ccj: 以重启收尾的运行，已经在运行它自己安装的那份代码；" >&2
+    echo "          就此停下，而不是把同一次运行再重启一遍。" >&2
     exit "$RESTART_EXIT"
   fi
   one_shot=0
@@ -63,7 +57,7 @@ while :; do
     case "$arg" in -p|--print|-p=*|--print=*) one_shot=1 ;; esac
   done
   if (( one_shot )); then
-    echo "oh-my-ccj: the new jar is installed; this one-shot prompt is not run again." >&2
+    echo "oh-my-ccj: 新 jar 已安装；这个一次性提示不会再运行。" >&2
     exit 0
   fi
 done

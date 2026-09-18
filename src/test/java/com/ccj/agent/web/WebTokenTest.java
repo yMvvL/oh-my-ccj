@@ -13,12 +13,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The token a run keeps between restarts: generated once, reused after that, and never world-readable.
+ * 一次运行在重启之间留着的 token：只生成一次，之后复用，而且从不允许所有人可读。
  *
- * <p>What it is for is the part worth pinning. A token that changed on every start would log the
- * phone out every time ccj was restarted, and one that a human chose would be the weak link in a
- * 256-bit design — so "the same value comes back" and "a fresh value is unguessable" are the two
- * properties here, not the mechanics of writing a file.
+ * <p>它用来干什么，才是值得钉住的那部分。一个每次启动都变的 token 会让手机在每次 ccj 重启时都
+ * 被登出；而一个由人选定的 token 会是一个 256 位设计里的薄弱环节——所以这里的两条性质是「同样的
+ * 值会回来」和「新值猜不出来」，而不是写文件的机制。
  */
 class WebTokenTest {
 
@@ -29,10 +28,9 @@ class WebTokenTest {
     String first = WebToken.from(home);
     String second = WebToken.from(home);
 
-    assertEquals(first, second, "a restart must not invalidate the phone's cookie");
+    assertEquals(first, second, "一次重启绝不能作废手机的 cookie");
     assertEquals(first, Files.readString(home.resolve(WebToken.FILE_NAME)).strip());
-    // 32 random bytes as hex: long enough that guessing is not a strategy, and the trailing newline
-    // is not part of it.
+    // 32 个随机字节的十六进制：长到「猜」不成其为一种策略，而末尾的换行不算在里面。
     assertEquals(64, first.length());
     assertTrue(first.chars().allMatch(c -> Character.digit(c, 16) >= 0), first);
   }
@@ -51,8 +49,7 @@ class WebTokenTest {
     Path file = home.resolve(WebToken.FILE_NAME);
 
     try {
-      // Skipped rather than failed on a filesystem without POSIX permissions: the file is still
-      // stored, and the platform decides.
+      // 在没有 POSIX 权限的文件系统上跳过而不是失败：文件还是被存下来了，由平台说了算。
       assertEquals(
           "rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(file)));
     } catch (UnsupportedOperationException ignored) {
@@ -62,8 +59,7 @@ class WebTokenTest {
 
   @Test
   void anEmptyFileIsReplacedRatherThanObeyed() throws Exception {
-    // An empty file is a mistake, not a policy: serving a network bind with a blank token would be
-    // serving it with none.
+    // 空文件是一个失误，不是一条策略：用一个空 token 去服务一个网络绑定，等于根本没有 token。
     Files.writeString(home.resolve(WebToken.FILE_NAME), "\n");
 
     String token = WebToken.from(home);
@@ -74,11 +70,11 @@ class WebTokenTest {
 
   @Test
   void anUnwritableHomeIsReportedRatherThanIgnored() throws Exception {
-    // The caller has to be able to fail closed, which means this must throw rather than return
-    // something the caller would then serve without a token.
+    // 调用方必须能够安全地失败，也就是说这里必须抛异常，而不是返回一个调用方随后会拿去做无
+    // token 服务的东西。
     Path file = Files.writeString(home.resolve("not-a-directory"), "x");
 
-    assertTrue(assertThrowsIOException(() -> WebToken.from(file)), "a file is not a home directory");
+    assertTrue(assertThrowsIOException(() -> WebToken.from(file)), "一个文件不是主目录");
   }
 
   private static boolean assertThrowsIOException(ThrowingRunnable runnable) {

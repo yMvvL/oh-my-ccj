@@ -18,11 +18,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The check that runs by itself after an edit, driven through the real `edit` and `write` tools.
+ * 编辑之后自行运行的检查，通过真正的 `edit` 与 `write` 工具驱动。
  *
- * <p>What is under test is the moment the compiler gets to speak: in the same step as the edit, or
- * not at all. Everything else here — which command, how much output — exists to keep that moment
- * cheap enough to have.
+ * <p>被测的是编译器得以开口的那个时刻：与编辑同一步，或者根本不开口。这里其余的一切——用哪条命令、
+ * 多少输出——存在都是为了让那个时刻便宜到可以拥有。
  */
 class PostEditCheckTest {
 
@@ -55,8 +54,8 @@ class PostEditCheckTest {
 
   @Test
   void aBrokenEditComesBackWithWhatTheCheckSaid() throws Exception {
-    // The whole point: the model is told what it broke in the same step, so the fix is the next
-    // thing it does rather than something it has to decide to go and look for.
+    // 全部要点就在这里：模型在同一步里被告知它弄坏了什么，于是修复就是它接下来做的事，而不是它得自己
+    // 决定去找的东西。
     givenConfig(
         """
         {"checks": [{"glob": "**/*.java", "command": "echo 'Foo.java:3: error: cannot find symbol'; exit 1"}]}
@@ -66,11 +65,11 @@ class PostEditCheckTest {
 
     String result = edit("Foo.java", "class Foo {}", "class Foo { int x = missing; }");
 
-    assertTrue(result.startsWith("replaced 1 occurrence"), result);
+    assertTrue(result.startsWith("在 Foo.java 中替换了 1 处"), result);
     assertTrue(result.contains("[check] echo 'Foo.java:3: error: cannot find symbol'; exit 1"), result);
     assertTrue(result.contains("cannot find symbol"), result);
     assertTrue(result.contains("exit code 1"), result);
-    assertTrue(result.contains("fix this before going on"), result);
+    assertTrue(result.contains("继续之前先修好它"), result);
   }
 
   @Test
@@ -81,7 +80,7 @@ class PostEditCheckTest {
     String result = edit("Foo.java", "class Foo {}", "class Foo { int x; }");
 
     assertTrue(result.contains("[check] true — exit 0 ("), result);
-    assertTrue(result.lines().count() <= 3, "a passing check is a line, not a log: " + result);
+    assertTrue(result.lines().count() <= 3, "通过的检查是一行，不是一份日志: " + result);
   }
 
   @Test
@@ -97,15 +96,15 @@ class PostEditCheckTest {
 
   @Test
   void aFailedEditStartsNothing() throws Exception {
-    // The command runs after a write that happened. An edit that matched nothing changed nothing,
-    // and building the project to be told about a change that was never made is work with no reader.
+    // 命令在确实发生过的写入之后运行。什么都没匹配上的编辑什么都没改，而为一件从未发生的改动去构建
+    // 整个项目，是没人需要读的活儿。
     givenConfig("{\"checks\": [{\"glob\": \"**\", \"command\": \"echo should-not-run > marker.txt\"}]}");
     Files.writeString(cwd.resolve("Foo.java"), "class Foo {}\n");
 
     String result = edit("Foo.java", "not in the file", "whatever");
 
-    assertTrue(result.startsWith("nothing was written: the edit found no exact match"), result);
-    assertFalse(Files.exists(cwd.resolve("marker.txt")), "the check ran on a failed edit");
+    assertTrue(result.startsWith("未写入任何内容：该编辑未找到精确匹配"), result);
+    assertFalse(Files.exists(cwd.resolve("marker.txt")), "检查在一次失败的编辑上运行了");
   }
 
   @Test
@@ -123,8 +122,8 @@ class PostEditCheckTest {
 
   @Test
   void theCheckRunsWhereTheSessionRunsAndNowhereElse() throws Exception {
-    // The command is the user's, but the model chooses the path. A check must not become a way to
-    // make the build run in somebody else's directory: the working directory is the session's.
+    // 命令是用户的，但路径是模型选的。检查绝不能变成一种让构建在别人目录里运行的手段：工作目录是
+    // 会话的。
     givenConfig("{\"checks\": [{\"glob\": \"**\", \"command\": \"pwd\"}]}");
     Path outside = Files.createDirectories(tmp.resolve("elsewhere"));
     Files.writeString(outside.resolve("Foo.java"), "class Foo {}\n");
@@ -134,7 +133,7 @@ class PostEditCheckTest {
             .execute(editArgs(outside.resolve("Foo.java").toString(), "class Foo {}", "class Foo { }"), context())
             .content();
 
-    assertFalse(result.contains("[check]"), "a file outside the session cwd runs nothing: " + result);
+    assertFalse(result.contains("[check]"), "会话工作区之外的文件什么都不会运行: " + result);
   }
 
   @Test
@@ -146,8 +145,8 @@ class PostEditCheckTest {
     String result = edit("Foo.java", "class Foo {}", "class Foo { int x; }");
     long seconds = (System.nanoTime() - started) / 1_000_000_000L;
 
-    assertTrue(result.contains("timed out after 1s"), result);
-    assertTrue(seconds < 10, "the deadline has to bound the turn, and it took " + seconds + "s");
+    assertTrue(result.contains("运行 1s 后超时"), result);
+    assertTrue(seconds < 10, "截止时间必须兜住这个回合，而它花了 " + seconds + "s");
   }
 
   @Test
@@ -157,22 +156,22 @@ class PostEditCheckTest {
 
     String result = edit("Foo.java", "class Foo {}", "class Foo { int x; }");
 
-    assertTrue(result.contains("[check] the configured checks could not be read"), result);
+    assertTrue(result.contains("[check] 配置的检查读不出来"), result);
     assertTrue(result.contains("checks"), result);
   }
 
   @Test
   void aChattyCheckIsReportedBounded() throws Exception {
-    // The result is a prompt the user pays for on every later turn, so a build log is capped rather
-    // than pasted: head, tail, and an exact count of what was left out.
+    // 结果是一段用户此后每个回合都要付费的提示，所以构建日志是被封顶的，而不是整段贴出来：头、尾，
+    // 以及被略去部分的精确计数。
     givenConfig(
         "{\"checks\": [{\"glob\": \"**\", \"command\": \"yes 'noise from the compiler' | head -2000; exit 1\"}]}");
     Files.writeString(cwd.resolve("Foo.java"), "class Foo {}\n");
 
     String result = edit("Foo.java", "class Foo {}", "class Foo { int x; }");
 
-    assertTrue(result.contains("omitted"), result);
-    assertTrue(result.length() < 20_000, "the report must stay small, was " + result.length());
+    assertTrue(result.contains("省略了"), result);
+    assertTrue(result.length() < 20_000, "报告必须保持很小，实际是 " + result.length());
   }
 
   @Test
@@ -183,21 +182,20 @@ class PostEditCheckTest {
     String result = edit("Foo.java", "class Foo {}", "class Foo { int x; }");
 
     assertEquals(
-        "replaced 1 occurrence in Foo.java; file now has 1 lines",
+        "在 Foo.java 中替换了 1 处；文件现在有 1 行",
         result,
-        "no config file, no checks, no change to the result the model already knew how to read");
+        "没有配置文件、没有检查，结果与模型早已知道如何读取的完全一样");
   }
 
   @Test
   void theEditToolStillWorksWithNoChecksAtAll() throws Exception {
-    // Every existing caller constructs the tool with no arguments, and the default has to stay the
-    // old behaviour rather than becoming an error.
+    // 每个既有的调用方都用无参方式构造这个工具，默认值必须保持原有的行为，而不是变成一个错误。
     Files.writeString(tmp.resolve("Loose.java"), "class Loose {}\n");
     ToolContext direct = new ToolContext(tmp, Approver.ALWAYS, 4096);
 
     String result =
         new EditTool().execute(editArgs("Loose.java", "class Loose {}", "class Loose { }"), direct).content();
 
-    assertTrue(result.startsWith("replaced 1 occurrence"), result);
+    assertTrue(result.startsWith("在 Loose.java 中替换了 1 处"), result);
   }
 }

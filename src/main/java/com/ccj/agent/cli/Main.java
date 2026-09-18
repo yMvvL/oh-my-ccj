@@ -1,6 +1,6 @@
 package com.ccj.agent.cli;
 
-/** Process entry point: the only place in the application that decides the exit status. */
+/** 进程入口：应用里唯一决定退出状态的地方。 */
 public final class Main {
 
   private Main() {}

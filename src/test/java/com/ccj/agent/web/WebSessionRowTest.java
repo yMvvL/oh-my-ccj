@@ -12,15 +12,14 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 /**
- * The sidebar's session row is browser code — it lives in {@code web/app.js}, a classic script with
- * no exports — so its cases are a node script ({@code src/test/js/session-row.test.mjs}) that lifts
- * {@code sessionRow} out of the shipped file and runs it against a small node stub, the same way
- * {@link WebMarkdownTest} runs the markdown cases.
+ * 侧边栏的会话行是浏览器代码——它住在 {@code web/app.js} 里，那是一个没有导出的经典脚本——所以
+ * 它的用例是一个 node 脚本（{@code src/test/js/session-row.test.mjs}），把 {@code sessionRow} 从
+ * 发布出去的文件里抠出来，对着一个小小的 node 桩运行，就像 {@link WebMarkdownTest} 跑 markdown
+ * 的用例那样。
  *
- * <p>What it pins down is the label on a row: a session is shown by the first thing it was asked,
- * not by its timestamp id, and the id is still reachable when two rows would otherwise read the
- * same. This class runs the script when a node is installed and always checks the property that is
- * about the page rather than the row: the server sends the title the row is built from.
+ * <p>它钉住的是行上那个标签：一个会话由它被问的第一件事来显示，而不是由它的时间戳 id，而在两行
+ * 本来会读起来一样的时候，id 仍然够得着。这个类在有 node 的时候运行那个脚本，并且总是检查那条
+ * 关于页面（而不是关于这一行）的性质：服务器发送这一行据以构建的 title。
  */
 class WebSessionRowTest {
 
@@ -29,26 +28,24 @@ class WebSessionRowTest {
 
   @Test
   void theSessionRowScriptPasses() throws IOException, InterruptedException {
-    runNodeCases(SCRIPT, "the session row");
+    runNodeCases(SCRIPT, "会话行");
   }
 
   /**
-   * Runs a node case file against the shipped {@code app.js}.
+   * 对着发布出去的 {@code app.js} 跑一个 node 用例文件。
    *
-   * <p>Reported as <em>skipped</em> rather than passed when node is absent. The earlier version
-   * printed a line and returned, which JUnit records as a green test: a build machine without node
-   * would show every browser case as passing while not one of them ran. A test that cannot run has to
-   * say so in the report, because the report is what everybody reads.
+   * <p>node 不在时报成<em>跳过</em>，而不是通过。更早的版本打印一行再返回，而 JUnit 把这记成一个
+   * 绿色的测试：一台没有 node 的构建机器会显示每一个浏览器用例都通过，而它们一个都没跑。一个跑
+   * 不了的测试必须在报告里说出来，因为报告是所有人都会读的东西。
    *
-   * <p>Output is collected while the process runs, not after. The earlier version read the stream to
-   * the end before waiting, so the wait was never the thing that bounded it: a case file that hung
-   * would hold the build, and the timeout was decoration.
+   * <p>输出是在进程运行期间收集的，而不是之后。更早的版本在等待之前就把流读到了末尾，于是等待
+   * 从来就不是给它设界限的那个东西：一个卡住的用例文件会拖住整个构建，而超时只是装饰。
    */
   static void runNodeCases(Path script, String what) throws IOException, InterruptedException {
-    Assumptions.assumeTrue(Files.exists(script), "source tree is not the working directory");
+    Assumptions.assumeTrue(Files.exists(script), "源码树不是当前工作目录");
     String node = findNode();
     Assumptions.assumeTrue(
-        node != null, "no node on PATH — the " + what + " cases cannot run");
+        node != null, "PATH 里没有 node —— " + what + " 的用例跑不了");
 
     Path root = script.toAbsolutePath().getParent().getParent().getParent().getParent();
     Process process = new ProcessBuilder(node, script.toAbsolutePath().toString())
@@ -56,8 +53,8 @@ class WebSessionRowTest {
         .redirectErrorStream(true)
         .start();
     process.getOutputStream().close();
-    // Drained on another thread so the pipe cannot fill and deadlock the child while we wait: a case
-    // file that prints more than the pipe buffer holds used to hang until the timeout.
+    // 在另一个线程上抽干，这样管道不会在我们等待时被填满、把子进程卡死：一个打印量超过管道
+    // 缓冲区的用例文件过去会一直挂到超时。
     StringBuilder collected = new StringBuilder();
     Thread drain =
         new Thread(
@@ -69,15 +66,15 @@ class WebSessionRowTest {
                 while ((read = in.read(buffer)) != -1) {
                   String chunk = new String(buffer, 0, read, StandardCharsets.UTF_8);
                   collected.append(chunk);
-                  // Keep only the tail: a failing case's useful output is at the end, and an
-                  // unbounded buffer would make a runaway script a memory problem too.
+                  // 只留尾巴：失败用例有用的输出在末尾，而无界的缓冲区会让一个失控的脚本也变成
+                  // 内存问题。
                   if (collected.length() > 200_000) {
                     collected.delete(0, collected.length() - 100_000);
                   }
                   tail = chunk;
                 }
               } catch (IOException ignored) {
-                // The process ended or was killed; the exit value is what is reported.
+                // 进程结束了或被杀了；报告的是退出值。
               }
             },
             "node-cases-drain");
@@ -91,8 +88,8 @@ class WebSessionRowTest {
     }
     drain.join(2_000);
     String output = collected.toString();
-    assertTrue(finished, what + " cases must finish within 60s; output so far:\n" + output);
-    assertTrue(process.exitValue() == 0, what + " cases failed:\n" + output);
+    assertTrue(finished, what + " 的用例必须在 60 秒内跑完；目前的输出：\n" + output);
+    assertTrue(process.exitValue() == 0, what + " 的用例失败了：\n" + output);
   }
 
   @Test
@@ -100,12 +97,12 @@ class WebSessionRowTest {
     String script = appSource();
     if (script == null) { return; }
 
-    // The row reads `title` (falling back to the shorter `preview` the CLI also
-    // uses), and AgentHub puts both on the payload. If either half is renamed the
-    // sidebar silently goes back to showing ids, which no server test would catch.
-    assertTrue(script.contains("firstLine(str(item.title))"), "the row must read title");
+    // 这一行读的是 `title`（回退到 CLI 也在用的那个更短的 `preview`），
+    // 而 AgentHub 把两者都放进了载荷。只要有一半被改名，侧边栏就会悄悄退回
+    // 去显示 id，而这是任何服务器端的测试都抓不到的。
+    assertTrue(script.contains("firstLine(str(item.title))"), "这一行必须读 title");
     assertTrue(hubSource().contains("node.put(\"title\", summary.title())"),
-        "the server must send title");
+        "服务器必须发送 title");
   }
 
   @Test
@@ -113,15 +110,14 @@ class WebSessionRowTest {
     String script = appSource();
     if (script == null) { return; }
 
-    // The server orders sessions by modification time, and a turn writes to the
-    // active session's file — so the list the page is holding is stale the moment
-    // a turn ends, and the conversation just used has to rise to the top. This is
-    // the wiring for that: `done` asks for the order again.
+    // 服务器按修改时间给会话排序，而一个回合会写当前会话的文件——所以页面
+    // 持有的那个列表在回合结束的瞬间就过时了，刚用过的对话必须升到最上面。
+    // 这里就是为此接的线：`done` 会再要一次顺序。
     int done = script.indexOf("function onDone(ev) {");
     int next = script.indexOf("// ------------------------------------------------------------- dispatch");
-    assertTrue(done > 0 && next > done, "onDone must be delimited");
+    assertTrue(done > 0 && next > done, "onDone 必须被界定出来");
     assertTrue(script.substring(done, next).contains("reorderSessionsAfterTurn()"),
-        "a finished turn must re-read the order");
+        "结束的回合必须重新读一次顺序");
     assertTrue(script.contains("request('/api/sessions?workspace='"), script);
   }
 
@@ -150,7 +146,7 @@ class WebSessionRowTest {
           return candidate;
         }
       } catch (IOException | InterruptedException err) {
-        // try the next name
+        // 试下一个名字
       }
     }
     return null;

@@ -1,15 +1,13 @@
-# Plugging a router into ccj
+# 把一个路由器插进 ccj
 
-Notes for the API router that will sit in front of the model providers. The short version: **most of
-the integration already exists and needs no code**, and the one piece that does need code is a single
-interface that already has a working implementation to copy.
+给将要坐在模型提供方前面的那个 API 路由器的笔记。短版本：**大部分集成已经存在，不需要代码**，而唯一确实需要代码的那一块是一个单一接口，它已经有一个能照抄的可用实现。
 
-## 1. A router is just a provider
+## 1. 路由器就是一个提供方
 
-Anything that speaks the OpenAI chat-completions API is already usable, today, with no changes:
+任何会说 OpenAI chat-completions API 的东西，今天就已经可以直接用，不需要任何改动：
 
 ```bash
-# from the settings panel, or:
+# 从设置面板，或者：
 curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d '{
   "name": "router",
   "kind": "openai",
@@ -19,75 +17,58 @@ curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d
 }'
 ```
 
-After that the provider is selectable in the settings panel, `ccj --provider router --model …` works
-in the terminal, and the model list is offered in the model field. Definitions live in
-`~/.oh-my-ccj/providers.json`; `kind: "anthropic"` is available for a router that prefers the messages
-API. Keys are read from the named environment variable, so nothing secret is written down.
+之后这个提供方就可以在设置面板里选择，`ccj --provider router --model …` 在终端里能用，模型列表也会在模型字段里提供。定义住在 `~/.oh-my-ccj/providers.json`；`kind: "anthropic"` 可供偏好 messages API 的路由器使用。密钥从具名的环境变量读取，所以没有任何机密被写下来。
 
-**This is the whole integration for a router that only proxies.** No agent code, no UI code.
+**对一个只做代理转发的路由器来说，这就是全部集成。** 没有代理代码，没有 UI 代码。
 
-## 2. A dynamic catalogue needs one interface
+## 2. 动态目录需要一个接口
 
-`ModelCatalog` answers "which providers and models exist, and where did that answer come from?":
+`ModelCatalog` 回答「存在哪些提供方和模型，以及这个答案来自哪里？」：
 
 ```java
 public interface ModelCatalog {
-  List<ProviderInfo> providers();   // name, kind, baseUrl, builtIn, models
-  List<Model> models();             // provider, model, source   ("config" today, "router" later)
+  List<ProviderInfo> providers();   // 名字、kind、baseUrl、builtIn、models
+  List<Model> models();             // provider、model、source（今天是 "config"，以后是 "router"）
 }
 ```
 
-`ConfigModelCatalog` is the shipped implementation (built-ins plus `providers.json`). A
-router-backed one is a second implementation of the same two methods, for example:
+`ConfigModelCatalog` 是随包发布的实现（内置加上 `providers.json`）。一个由路由器支撑的实现是对同样两个方法的第二份实现，例如：
 
 ```java
 final class RouterCatalog implements ModelCatalog {
   private final String baseUrl;                 // http://localhost:9090
   @Override public List<Model> models() {
-    // GET {baseUrl}/v1/models, or the router's own endpoint — whichever it exposes.
-    // Map into Model(provider, model, "router"); cache for a few seconds.
+    // GET {baseUrl}/v1/models，或者路由器自己的端点——看它暴露哪一个。
+    // 映射进 Model(provider, model, "router")；缓存几秒。
   }
 }
 ```
 
-Two things make this a real seam rather than a plan:
+有两件事让它成为一条真正的接缝，而不只是一个计划：
 
-- The web layer never learns where the catalogue came from. `GET /api/models` serialises whatever the
-  catalogue returns, `source` included, so a router-provided entry shows up in the model field with
-  no front-end change. The page even labels the source already.
-- Nothing else in the agent reads the catalogue. The provider actually used is still chosen by
-  `config.provider` + `config.model`, i.e. the router can be selected without the catalogue agreeing
-  with it — and if the catalogue is slow or down, the settings form still renders from configuration
-  (that is why the shipped implementation is synchronous and does no I/O).
+- web 层从不知道目录来自哪里。`GET /api/models` 序列化目录返回的任何东西，包括 `source`，所以一个由路由器提供的条目会出现在模型字段里，前端不用改。页面甚至已经给来源打标签了。
+- 代理里没有别的东西读这个目录。实际使用的提供方仍然由 `config.provider` + `config.model` 选定，也就是说，可以在目录并不认同的情况下选中这个路由器——而且如果目录慢或者挂了，设置表单仍然从配置渲染（这就是为什么随包发布的实现是同步的、不做任何 I/O）。
 
-Wiring it up is one line, where the CLI builds the hub:
+接线就是一行，就在 CLI 构建 hub 的地方：
 
 ```java
 new AgentHub.Settings(…, new RouterCatalog(baseUrl), providerStore, …);
 ```
 
-## 3. What the router should expose
+## 3. 路由器应该暴露什么
 
-Only one endpoint is needed for the catalogue, and the boring choice is best:
+目录只需要一个端点，而无聊的选择最好：
 
-| Endpoint | Used for | Notes |
+| 端点 | 用于 | 备注 |
 |---|---|---|
-| `GET /v1/models` | the model field | OpenAI-shaped `{"data":[{"id":…}]}` keeps the adapter trivial |
-| `POST /v1/chat/completions` | the agent's turns | already required, already works |
-| `GET /health` (optional) | a future provider-status panel | not needed for anything today |
+| `GET /v1/models` | 模型字段 | OpenAI 形状的 `{"data":[{"id":…}]}` 让适配器保持平凡 |
+| `POST /v1/chat/completions` | 代理的回合 | 已经必需，已经能用 |
+| `GET /health`（可选） | 未来的提供方状态面板 | 今天不需要它做任何事 |
 
-## 4. What deliberately does not belong in the agent
+## 4. 刻意不属于代理的东西
 
-The agent talks to exactly one endpoint and does not try to be a router: no cross-provider failover,
-no cost accounting, no model selection heuristics. Those are the router's job, and duplicating them
-would put two disagreeing policies on the same path. What the agent *does* report is the accounting it
-can see — tokens, cache hit rate, tool calls, per session (`/api/status.usage`) — which is what a
-router panel would need to show savings rather than guess them.
+代理只与一个端点说话，也不试图当路由器：没有跨提供方故障转移、没有成本记账、没有模型选择启发式。那些是路由器的活儿，重复它们会把两套互相矛盾的政策放到同一条路径上。代理*确实*报告的是它能看见的记账——token、缓存命中率、工具调用，按会话（`/api/status.usage`）——这正是路由器面板为了展示节省量、而不是猜测节省量所需要的东西。
 
-## 5. If a router panel is wanted later
+## 5. 如果以后想要一个路由器面板
 
-The pattern is the workspace panel: a `GET /api/router/*` endpoint that proxies the router's own API
-(a local router has no CORS story worth relaying), plus a pane in the page. The pieces that already
-exist and would be reused: the loopback-only server with the token gate, the SSE event stream, the
-notice channel, and the settings form's provider list. Nothing above `AgentHub` needs to change; the
-hub would gain a thin client for the router's metadata, exactly as it gained a folder chooser.
+模式就是工作区面板：一个 `GET /api/router/*` 端点代理路由器自己的 API（本地路由器没有什么值得中继的 CORS 故事），再加上页面里的一个窗格。已经存在、会被复用的零件：只有回环、带 token 闸门的服务器、SSE 事件流、通知通道，以及设置表单的提供方列表。`AgentHub` 之上没有任何东西需要改；hub 会获得一个针对路由器元数据的瘦客户端，就像它获得了文件夹选择器一样。

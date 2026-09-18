@@ -8,37 +8,32 @@ import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
 
 /**
- * Delegates work to a sub-agent and returns its report.
+ * 把活儿委托给一个子代理，并返回它的报告。
  *
- * <p>The reason this exists is context, not speed. An agent that reads thirty files to find the three
- * that matter has spent thirty files' worth of tokens in the conversation, and every later request
- * re-sends them — which is why long sessions end up needing {@code /compact} at all. A sub-agent reads
- * the thirty in its own conversation, which is thrown away, and reports the three. The main
- * conversation grows by a conclusion instead of by a search.
+ * <p>它存在的理由是上下文，不是速度。一个读了三十个文件才找出其中要紧的三个的代理，已经在对话里花掉
+ * 三十个文件的 token，而此后每次请求都会把它们重发一遍——长会话最终之所以需要 {@code /compact}，正是
+ * 这个原因。子代理在它自己的对话里读那三十个文件，读完就丢掉，只报告那三个。主对话增长的是结论，而不是
+ * 一次搜索。
  *
- * <p>What the model gets back is a report, never the sub-agent's transcript: the whole value is that
- * the reading does not come back with it. And there is no {@code task} tool in a sub-agent's own
- * registry, so a sub-agent cannot delegate further — recursion is refused by construction rather than
- * by a depth counter.
+ * <p>模型拿回来的是报告，绝不是子代理的转录：全部价值就在于阅读过程不跟着一起回来。而且子代理自己的
+ * 注册表里没有 {@code task} 工具，所以子代理无法再往下委托——递归是被结构拒绝的，而不是靠一个深度计数。
  *
- * <p>A writing role writes where the main agent writes, and asks the same person for permission. The
- * sub-agent is invisible in what it reads; it is not invisible in what it does.
+ * <p>会写的角色在主代理写的地方写，向同一个人请求许可。子代理在它读什么上是看不见的；在它做什么上并非如此。
  */
 public final class TaskTool implements Tool {
 
-  /** Who a tool call is made on behalf of. */
+  /** 一次工具调用是代表谁发出的。 */
   @FunctionalInterface
   public interface Runner {
     SubAgentReport run(SubAgentRole role, String task);
   }
 
   /**
-   * Where a delegated run's cost goes.
+   * 委托出去的运行，其开销记到哪里。
    *
-   * <p>A sub-agent's tokens are the parent conversation's tokens — the same model, the same account,
-   * the same bill — so they are added to the session that delegated the work. Reporting the report
-   * but not the cost would make the usage panel understate what was spent, and a number that is
-   * quietly wrong is worse than no number.
+   * <p>子代理的 token 就是父对话的 token——同一个模型、同一个账号、同一份账单——所以它们被加到委托出
+   * 这次工作的会话上。只报报告不报开销，会让用量面板少算实际花掉的量，而一个悄悄算错的数字比没有数字
+   * 更糟。
    */
   @FunctionalInterface
   public interface UsageSink {
@@ -50,11 +45,11 @@ public final class TaskTool implements Tool {
   private final boolean writesAllowed;
 
   /**
-   * @param runner executes a sub-agent; supplied by the caller because the provider, the settings and
-   *     the approver it needs belong to the conversation, not to a stateless tool
-   * @param usage where the run's cost is added, or null to count nothing
-   * @param writesAllowed false to restrict every role to reading, which is how a caller that does not
-   *     want a delegated run to write at all says so
+   * @param runner 执行一个子代理；由调用方提供，因为它需要的提供方、设置和审批者属于那次对话，而不属于
+   *     一个无状态的工具
+   * @param usage 运行的开销加到哪里，null 表示什么都不计
+   * @param writesAllowed 传 false 把每个角色都限制为只读，不希望委托出去的运行做任何写入的调用方就是
+   *     这样表达的
    */
   public TaskTool(Runner runner, UsageSink usage, boolean writesAllowed) {
     this.runner = runner;
@@ -68,9 +63,8 @@ public final class TaskTool implements Tool {
   }
 
   /**
-   * Not read-only, and deliberately so: a delegated task may write, and the loop uses this flag to
-   * decide what may overlap. Two sub-agents running at once is a question about files, and this tool
-   * cannot promise it has none to touch.
+   * 不是只读的，而且这是刻意的：委托出去的任务可能会写，而循环用这个标志决定什么可以并行。两个子代理
+   * 同时运行是一个关于文件的问题，而这个工具无法保证自己没有文件要碰。
    */
   @Override
   public boolean readOnly() {
@@ -119,23 +113,22 @@ public final class TaskTool implements Tool {
             .orElseThrow(
                 () ->
                     new IllegalArgumentException(
-                        "unknown role '" + roleName + "'; expected one of " + SubAgentRole.names()));
+                        "未知角色 '" + roleName + "'；期望是 " + SubAgentRole.names() + " 之一"));
     if (role.writes() && !writesAllowed) {
       return ToolResult.error(
-          "the '" + role.wireName() + "' role is not available in this conversation; use 'explore'"
-              + " or 'verify', which read and report without changing anything");
+          "'" + role.wireName() + "' 这个角色在这次对话里不可用；请改用 'explore'"
+              + " 或 'verify'，它们只读取并报告，什么都不改");
     }
-    // A run that failed still carries what it spent — SubAgentRunner attaches the tally on the failure
-    // path too — so the cost is reported whatever the status, and the caller's own listener has
-    // already counted the tokens this turn spent by itself.
+    // 失败的运行仍然带着它花掉的量——SubAgentRunner 在失败路径上也会附上这份计数——所以无论状态如何，
+    // 开销都会被报告；而调用方自己的监听器已经把这个回合自身花掉的 token 记下了。
     SubAgentReport report = runner.run(role, task);
     if (usage != null && report.usage() != null) {
       usage.add(report.usage());
     }
     String rendered = report.render(ctx.cwd().toString());
     if ("failed".equals(report.status())) {
-      // A failed run is reported as an error result rather than a success, so the model sees it as
-      // something that did not work and can decide what to do, instead of reading it as an answer.
+      // 失败的运行报成错误结果而不是成功，这样模型会把它看作一件没成的事，可以决定接下来怎么办，而不是
+      // 把它读成一个答案。
       return ToolResult.error(rendered);
     }
     return ToolResult.ok(rendered);

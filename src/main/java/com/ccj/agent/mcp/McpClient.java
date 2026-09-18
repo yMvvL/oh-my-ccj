@@ -20,42 +20,39 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * One MCP server, spoken to over its standard input and output.
+ * 一个 MCP 服务器，通过它的标准输入输出与之交谈。
  *
- * <p>The protocol is JSON-RPC 2.0 with one JSON object per line, which is the whole of what a client
- * needs for tools: `initialize`, `tools/list`, `tools/call`. Servers also speak HTTP with SSE; this
- * client does not, and says so rather than half-supporting it — a local server started by this process
- * is the case that needs no ports, no tokens and no network, and it is what "bring your own tools"
- * means for one person on one machine.
+ * <p>协议是 JSON-RPC 2.0，每行一个 JSON 对象，这对一个客户端来说就是要用工具所需要的一切：
+ * `initialize`、`tools/list`、`tools/call`。服务器也会说带 SSE 的 HTTP；本客户端不会，而且会
+ * 明说这一点，而不是半支持它——由本进程启动的本地服务器，正是那种不需要端口、不需要 token、
+ * 不需要网络的情形，而对于一台机器上的一个人来说，「带上你自己的工具」指的也就是它。
  *
- * <p>Three things make this more than a pipe. A request is answered by <em>id</em>, so a reader thread
- * hands each reply to the caller waiting for it, and a notification (a message with no id) is dropped
- * rather than mistaken for an answer. Every request has a deadline, because a server that has wedged
- * must not wedge the agent with it. And the process's stderr is drained: a server that logs to it is
- * normal, and a full pipe would block the server forever — the failure looks like a hang with no
- * explanation at all.
+ * <p>有三件事让它不止是一根管道。请求是按 <em>id</em> 应答的，因此一个读取线程把每个回复交给
+ * 正在等它的调用方，而通知（没有 id 的消息）会被丢弃，不会被误当成答案。每个请求都有截止时间，
+ * 因为一个卡住的服务器绝不能连带把代理也卡住。还有，进程的 stderr 会被抽干：往那里打日志的服务
+ * 器很正常，而一根写满的管道会让服务器永远阻塞——那看起来就是一次毫无解释的卡死。
  */
 public final class McpClient implements AutoCloseable {
 
-  /** How long a server gets to answer a request it was just asked. */
+  /** 服务器在被刚问到之后，有多久来回答一个请求。 */
   private static final long REQUEST_TIMEOUT_MILLIS = 30_000;
 
-  /** How long a server gets to start talking after `initialize` is sent. */
+  /** 发出 `initialize` 之后，服务器有多久开始说话。 */
   private static final long HANDSHAKE_TIMEOUT_MILLIS = 20_000;
 
-  /** The protocol revision this client implements, and the one it falls back to if refused. */
+  /** 本客户端实现的协议修订版，也是被拒绝时回退到的那个版本。 */
   private static final String PROTOCOL_VERSION = "2025-06-18";
 
   private static final String FALLBACK_PROTOCOL_VERSION = "2024-11-05";
 
-  /** Kept for the error message when a server writes more than this without being asked. */
+  /** 服务器在没人问它的情况下写超过这么多内容时，留给错误消息用的保留行数。 */
   private static final int STDERR_KEPT_LINES = 20;
 
   /**
-   * How long this client waits for an answer, per instance so a test can shorten it.
+   * 本客户端等一个答案等多久；按实例设置，好让测试把它缩短。
    *
-   * <p>The default is the product's; the parameter exists because "a server that never answers is
-   * reported" is a claim that has to be checkable without a test that takes thirty seconds.
+   * <p>默认值是产品的值；这个参数之所以存在，是因为「一个永远不回答的服务器会被报告出来」是一条
+   * 必须能被检验的主张，而不该为此写一个要跑三十秒的测试。
    */
   private final long requestTimeoutMillis;
 
@@ -78,12 +75,12 @@ public final class McpClient implements AutoCloseable {
     Thread.ofVirtual().name("mcp-" + server.name() + "-err").start(this::drainStderr);
   }
 
-  /** Starts the server and completes the handshake, or throws with a reason worth reading. */
+  /** 启动服务器并完成握手；否则带着一个值得一读的理由抛出。 */
   public static McpClient start(McpConfig.Server server) {
     return start(server, REQUEST_TIMEOUT_MILLIS);
   }
 
-  /** The same, with the request deadline named by the caller; see {@link #requestTimeoutMillis}. */
+  /** 同上，但由调用方指定请求的截止时间；参见 {@link #requestTimeoutMillis}。 */
   static McpClient start(McpConfig.Server server, long requestTimeoutMillis) {
     List<String> argv = new ArrayList<>();
     argv.add(server.command());
@@ -95,27 +92,27 @@ public final class McpClient implements AutoCloseable {
       process = builder.start();
     } catch (IOException e) {
       throw new AgentException(
-          "could not start MCP server '" + server.name() + "' (" + server.command() + "): " + e, e);
+          "无法启动 MCP 服务器 '" + server.name() + "'（" + server.command() + "）：" + e, e);
     }
     McpClient client = new McpClient(server, process, requestTimeoutMillis);
     client.handshake();
     return client;
   }
 
-  /** The server's tools, each as the name the model sees and the schema it is called with. */
+  /** 服务器提供的工具，每个都带上模型看到的名字和调用它时用的 schema。 */
   public List<McpTool> tools() {
     JsonNode result = call("tools/list", Json.object());
     JsonNode tools = result.path("tools");
     if (!tools.isArray()) {
       throw new AgentException(
-          "MCP server '" + server.name() + "' answered tools/list without a tools array: " + result);
+          "MCP 服务器 '" + server.name() + "' 对 tools/list 的应答里没有 tools 数组：" + result);
     }
     List<McpTool> discovered = new ArrayList<>();
     for (JsonNode tool : tools) {
       String name = tool.path("name").asText("");
       if (name.isBlank()) {
         throw new AgentException(
-            "MCP server '" + server.name() + "' listed a tool with no name: " + tool);
+            "MCP 服务器 '" + server.name() + "' 列出的工具没有名字：" + tool);
       }
       JsonNode schema = tool.get("inputSchema");
       discovered.add(
@@ -129,13 +126,12 @@ public final class McpClient implements AutoCloseable {
   }
 
   /**
-   * Calls one tool, and returns what the server said.
+   * 调用一个工具，并返回服务器说了什么。
    *
-   * <p>A tool that reports failure (`isError`) is returned as text for the caller to turn into an error
-   * result: an MCP tool refusing is the same kind of event as a bad argument to a built-in, and the
-   * model gets to read it and react. The content blocks are joined as text; other block types (an
-   * image, an embedded resource) are named rather than dropped silently, because a model that asked
-   * for a picture and got nothing would have no way to tell that from an empty answer.
+   * <p>报告失败（`isError`）的工具会作为文本返回，交给调用方变成一条错误结果：一个 MCP 工具
+   * 拒绝，和内置工具收到一个坏参数是同一种事件，模型有权读到它并作出反应。内容块按文本拼接；
+   * 其他块类型（图片、内嵌资源）会被点名，而不是被悄悄丢掉，因为一个要了图片却什么都没拿到的
+   * 模型，没法把这种情形和空答案区分开。
    */
   public String callTool(String tool, String argumentsJson) {
     ObjectNode params = Json.object();
@@ -153,18 +149,18 @@ public final class McpClient implements AutoCloseable {
       if ("text".equals(type)) {
         text.append(block.path("text").asText(""));
       } else {
-        text.append("[").append(type.isBlank() ? "unknown content" : type)
-            .append(" content, which this client does not render]");
+        text.append("[").append(type.isBlank() ? "未知内容" : type + " 内容")
+            .append("，本客户端不渲染]");
       }
     }
     if (result.path("isError").asBoolean(false)) {
       throw new McpToolFailure(
-          text.isEmpty() ? "the tool reported failure with no message" : text.toString());
+          text.isEmpty() ? "工具报告了失败，但没有给出任何消息" : text.toString());
     }
-    return text.isEmpty() ? "(the tool returned no content)" : text.toString();
+    return text.isEmpty() ? "（工具没有返回任何内容）" : text.toString();
   }
 
-  /** A tool the server reported as failed; the message is what the model reads. */
+  /** 服务器报告为失败的工具；这条消息就是模型读到的东西。 */
   public static final class McpToolFailure extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
@@ -176,7 +172,7 @@ public final class McpClient implements AutoCloseable {
   @Override
   public void close() {
     closed = true;
-    pending.forEach((id, future) -> future.completeExceptionally(new IOException("client closed")));
+    pending.forEach((id, future) -> future.completeExceptionally(new IOException("客户端已关闭")));
     pending.clear();
     process.descendants().forEach(ProcessHandle::destroyForcibly);
     process.destroyForcibly();
@@ -187,12 +183,12 @@ public final class McpClient implements AutoCloseable {
     }
   }
 
-  /** True while the server process is alive, which is what a caller checks before reusing it. */
+  /** 服务器进程还活着时为 true；调用方复用它之前检查的就是这个。 */
   public boolean alive() {
     return process.isAlive();
   }
 
-  // ------------------------------------------------------------------ the protocol
+  // ------------------------------------------------------------------ 协议
 
   private void handshake() {
     ObjectNode params = Json.object();
@@ -205,8 +201,8 @@ public final class McpClient implements AutoCloseable {
     try {
       result = request("initialize", params, HANDSHAKE_TIMEOUT_MILLIS);
     } catch (McpError refused) {
-      // The one case worth a second try: a server that only speaks the older revision says so. A
-      // handshake that fails for any other reason is reported as it is.
+      // 唯一值得重试一次的情形：只讲旧修订版的服务器会明说。因任何其他原因失败的握手，都按原样
+      // 报告。
       if (refused.getMessage() == null || !refused.getMessage().contains("protocol")) {
         throw refused;
       }
@@ -226,11 +222,11 @@ public final class McpClient implements AutoCloseable {
 
   private JsonNode request(String method, ObjectNode params, long timeoutMillis) {
     if (closed) {
-      throw new McpToolFailure("MCP server '" + server.name() + "' was already closed");
+      throw new McpToolFailure("MCP 服务器 '" + server.name() + "' 已经关闭");
     }
     if (!process.isAlive()) {
       throw new McpToolFailure(
-          "MCP server '" + server.name() + "' is not running any more" + whyStopped());
+          "MCP 服务器 '" + server.name() + "' 已经不再运行" + whyStopped());
     }
     long id = nextId.getAndIncrement();
     ObjectNode request = Json.object();
@@ -246,27 +242,27 @@ public final class McpClient implements AutoCloseable {
     } catch (TimeoutException e) {
       pending.remove(id);
       throw new McpToolFailure(
-          "MCP server '"
+          "MCP 服务器 '"
               + server.name()
-              + "' did not answer "
-              + method
-              + " within "
-              + (timeoutMillis < 1000 ? timeoutMillis + "ms" : timeoutMillis / 1000 + "s"));
+              + "' 在 "
+              + (timeoutMillis < 1000 ? timeoutMillis + "ms" : timeoutMillis / 1000 + "s")
+              + " 内没有回应 "
+              + method);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       pending.remove(id);
-      throw new McpToolFailure("interrupted while waiting for " + method);
+      throw new McpToolFailure("等待 " + method + " 时被中断");
     } catch (ExecutionException e) {
       Throwable cause = e.getCause();
       if (cause instanceof McpError error) {
         throw error;
       }
       throw new McpToolFailure(
-          "MCP server '" + server.name() + "' failed " + method + ": " + cause.getMessage());
+          "MCP 服务器 '" + server.name() + "' 执行 " + method + " 失败：" + cause.getMessage());
     }
   }
 
-  /** An error the server itself reported, with its code kept for the message. */
+  /** 服务器自己报告的错误，它的 code 会保留在消息里。 */
   private static final class McpError extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
@@ -286,7 +282,7 @@ public final class McpClient implements AutoCloseable {
     try {
       write(notification);
     } catch (McpToolFailure ignored) {
-      // A notification that cannot be sent is not a failure of anything the caller asked for.
+      // 发不出去的通知，不算调用方所求之事的失败。
     }
   }
 
@@ -299,7 +295,7 @@ public final class McpClient implements AutoCloseable {
       }
     } catch (IOException e) {
       throw new McpToolFailure(
-          "could not write to MCP server '" + server.name() + "': " + e + whyStopped());
+          "无法写入 MCP 服务器 '" + server.name() + "'：" + e + whyStopped());
     }
   }
 
@@ -315,14 +311,14 @@ public final class McpClient implements AutoCloseable {
         try {
           message = Json.parse(line);
         } catch (IllegalArgumentException notJson) {
-          // A server that prints something which is not a message is worth reporting once, and not
-          // worth killing the session over: the line is kept where the error message can quote it.
+          // 打印出非消息内容的服务器，值得被报告一次，但不值得为此杀掉整个会话：那一行会被
+          // 留下来，好让错误消息引用它。
           stderrTail.add("stdout: " + line);
           continue;
         }
         JsonNode idNode = message.get("id");
         if (idNode == null || idNode.isNull()) {
-          continue; // a notification, not an answer
+          continue; // 一条通知，不是答案
         }
         CompletableFuture<JsonNode> waiting = pending.remove(idNode.asLong());
         if (waiting == null) {
@@ -333,13 +329,13 @@ public final class McpClient implements AutoCloseable {
           waiting.completeExceptionally(
               new McpError(
                   error.path("code").asInt(0),
-                  server.name() + " answered " + error.path("message").asText("an error")));
+                  server.name() + " 应答了 " + error.path("message").asText("一个错误")));
         } else {
           waiting.complete(message.path("result"));
         }
       }
     } catch (IOException e) {
-      // The pipe closed: every caller waiting is told, rather than waiting out its deadline.
+      // 管道关闭了：每个在等的调用方都会被告知，而不是各自等到截止时间。
       pending.forEach((id, future) -> future.completeExceptionally(e));
       pending.clear();
     }
@@ -356,17 +352,17 @@ public final class McpClient implements AutoCloseable {
         }
       }
     } catch (IOException ignored) {
-      // The process ended; whatever it wrote is already kept.
+      // 进程结束了；它写下的东西已经被保留下来了。
     }
   }
 
-  /** What the server last said on stderr, for an error message that has to explain a silence. */
+  /** 服务器最后在 stderr 上说了什么，供一条必须解释沉默的错误消息使用。 */
   private String whyStopped() {
     synchronized (stderrTail) {
       if (stderrTail.isEmpty()) {
         return "";
       }
-      return " — it last said: " + String.join(" | ", List.copyOf(stderrTail));
+      return " — 它最后说的是：" + String.join(" | ", List.copyOf(stderrTail));
     }
   }
 }

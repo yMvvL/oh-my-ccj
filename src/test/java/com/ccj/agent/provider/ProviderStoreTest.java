@@ -15,8 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The registry for user-defined providers: a name, a protocol, an endpoint, and the models to offer.
- * Built-ins are never stored here, so a bad definition cannot take {@code openai} down with it.
+ * 用户自定义提供方的注册表：一个名字、一种协议、一个端点，以及要提供的模型。内置项从不存这里，所以一个坏
+ * 定义无法把 {@code openai} 一起拖下水。
  */
 class ProviderStoreTest {
 
@@ -56,7 +56,8 @@ class ProviderStoreTest {
     assertTrue(store.list().isEmpty());
     IllegalArgumentException missing =
         assertThrows(IllegalArgumentException.class, () -> store.remove("relay"));
-    assertTrue(missing.getMessage().contains("no custom provider"), missing.getMessage());
+    assertTrue(
+        missing.getMessage().contains("没有名为 'relay' 的自定义提供方"), missing.getMessage());
   }
 
   @Test
@@ -67,7 +68,7 @@ class ProviderStoreTest {
     assertThrows(IllegalArgumentException.class, () -> store.save(definition("bad name", "openai", "https://x")));
     assertThrows(IllegalArgumentException.class, () -> store.save(definition("relay", "grpc", "https://x")));
     assertThrows(IllegalArgumentException.class, () -> store.save(definition("relay", "openai", "")));
-    assertTrue(store.list().isEmpty(), "a rejected definition must not be stored");
+    assertTrue(store.list().isEmpty(), "被拒绝的定义不能存下来");
   }
 
   @Test
@@ -99,7 +100,7 @@ class ProviderStoreTest {
 
   @Test
   void aDefinitionMissingFromAnExplicitListIsFoldedBackIn() throws IOException {
-    // What the buggy build left behind: a definition on disk that the list never mentions.
+    // 那个有 bug 的版本留下的东西：磁盘上有一个列表从未提到的定义。
     Files.writeString(
         tmp.resolve("providers.json"),
         """
@@ -109,9 +110,9 @@ class ProviderStoreTest {
 
     ProviderStore store = ProviderStore.open(tmp);
 
-    assertEquals(List.of("deepseek", "OpenCode"), store.shown(), "a definition is intent to have it");
+    assertEquals(List.of("deepseek", "OpenCode"), store.shown(), "有定义就说明想留着它");
     assertTrue(
         Files.readString(tmp.resolve("providers.json")).contains("OpenCode"),
-        "and the repaired list is written down");
+        "修好的列表被写了下来");
   }
 }

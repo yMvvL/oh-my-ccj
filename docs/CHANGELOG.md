@@ -1,11 +1,8 @@
-# Changelog
+# 更新日志
 
-What changed, newest first, in the words a reader would use — not a dump of commit subjects. The
-reasoning for each entry is in the commit that made it and in the document the entry links to; this
-file is the index.
+改了什么，最新的在前，用读者会用的说法——不是提交主题的倾倒。每一条的推理在做出它的那次提交里，也在该条目链接到的文档里；这个文件是索引。
 
-There are no version numbers yet: [ROADMAP](ROADMAP.md) 3.1 is where tags, notes and a JDK statement
-land. Until then an entry is a date and what it did, and `0.1.0` is what the launcher prints.
+目前还没有版本号：[ROADMAP](ROADMAP.md) 3.1 是标签、发布说明和一句 JDK 声明落地的地方。在那之前，一个条目就是一个日期和它做了什么，而启动器打印的是 `0.1.0`。
 
 ## 2026-09-19 — a configuration file somebody typed by hand could not be saved from the form
 
@@ -162,7 +159,6 @@ both wire protocols (OpenAI-shaped and Anthropic) with streaming and retry, an o
 launcher that survives being symlinked onto `PATH`, and `--demo`: no model and no key, so the loop,
 the tools and the approval prompts can be tried before anything is configured.
 
-## What is not in it yet
+## 还没有的东西
 
-MCP, plugins, a sandbox, multi-user accounts — and the experience work, which is where the next
-changes go: [ROADMAP](ROADMAP.md) Phase 2.5.
+MCP、插件、沙箱、多用户账号——以及体验类的工作，接下来的改动就去那里：[ROADMAP](ROADMAP.md) Phase 2.5。

@@ -22,19 +22,18 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
- * Provider for Anthropic's {@code /v1/messages} API.
+ * Anthropic {@code /v1/messages} API 的提供方。
  *
- * <p>The Messages API is stricter than the chat-completions family in two ways that shape this
- * class. Tool results are content blocks inside a <em>user</em> turn and every {@code tool_result}
- * for one assistant turn must live in the same user turn, so consecutive results are merged rather
- * than emitted one message each. And reply content is an ordered list of blocks, streamed by index,
- * so assembly keeps a block table keyed by index instead of appending in arrival order.
+ * <p>Messages API 比 chat-completions 那一族更严格，有两点塑造了这个类。工具结果是 <em>user</em> 回合
+ * 里的内容块，而一个助手回合的每个 {@code tool_result} 都必须待在同一个 user 回合里，所以连续的结果会被
+ * 合并，而不是各发一条消息。另外，回复内容是按索引流式到达的有序块列表，所以组装时维护的是一张按索引键控的
+ * 块表，而不是按到达顺序追加。
  */
 public final class AnthropicProvider implements Provider {
 
   public static final String NAME = "anthropic";
 
-  /** The Messages API has no model-specific default for {@code max_tokens}; it is mandatory. */
+  /** Messages API 没有按模型区分的 {@code max_tokens} 默认值；这个字段是必填的。 */
   public static final int DEFAULT_MAX_TOKENS = 4096;
 
   private static final String API_VERSION = "2023-06-01";
@@ -46,7 +45,7 @@ public final class AnthropicProvider implements Provider {
 
   public AnthropicProvider(String baseUrl, String apiKey) {
     if (baseUrl == null || baseUrl.isBlank()) {
-      throw new IllegalArgumentException("anthropic base URL is required");
+      throw new IllegalArgumentException("anthropic 需要 base URL");
     }
     this.baseUrl = stripTrailingSlash(baseUrl);
     this.apiKey = apiKey == null ? "" : apiKey;
@@ -66,7 +65,7 @@ public final class AnthropicProvider implements Provider {
     try (Stream<String> lines = response.body()) {
       return consume(response, lines, sink);
     } catch (UncheckedIOException e) {
-      throw new Exception("connection lost while streaming the response: " + e.getCause(), e);
+      throw new Exception("流式读取响应时连接断开：" + e.getCause(), e);
     }
   }
 
@@ -90,14 +89,14 @@ public final class AnthropicProvider implements Provider {
   private ObjectNode buildBody(Request request) {
     String model = request.model();
     if (model == null || model.isBlank()) {
-      throw new IllegalArgumentException("anthropic requests need a model");
+      throw new IllegalArgumentException("anthropic 请求需要 model");
     }
     ObjectNode root = Json.object();
     root.put("model", model);
     root.put("max_tokens", request.maxTokens() == null ? DEFAULT_MAX_TOKENS : request.maxTokens());
     if (request.system() != null && !request.system().isBlank()) {
-      // A block array rather than a bare string: prompt caching needs somewhere to put the
-      // breakpoint, and the system prompt is the most stable part of every request this agent makes.
+      // 用块数组而不是裸字符串：前缀缓存需要有地方放断点，而系统提示词是这个代理发出的每个请求里最稳定的
+      // 部分。
       ObjectNode block = root.putArray("system").addObject();
       block.put("type", "text");
       block.put("text", request.system());
@@ -115,14 +114,14 @@ public final class AnthropicProvider implements Provider {
         entry.put("description", tool.description());
         entry.set("input_schema", Json.parse(tool.parametersJson()));
       }
-      // The tool set is as stable as the system prompt and as large: a breakpoint after the last of
-      // them is what makes the two of them a cache hit rather than a rewrite on every turn.
+      // 工具集和系统提示词一样稳定、也一样大：在最后一个工具之后放断点，才让这两者命中缓存，而不是每个回合
+      // 都重写一遍。
       ((ObjectNode) tools.get(tools.size() - 1)).set("cache_control", ephemeral());
     }
     root.put("stream", true);
     if (effort != null) {
-      // Extended thinking: a budget in tokens, max_tokens must exceed it, and temperature cannot be
-      // customised while thinking is on — the API rejects the combination rather than ignoring it.
+      // 扩展思考：一个以 token 计的预算，max_tokens 必须大于它，而且开着思考时不能自定义 temperature
+      // ——API 会直接拒绝这个组合，而不是忽略它。
       int budget = "low".equals(effort) ? 2_048 : "high".equals(effort) ? 8_192 : 32_768;
       root.putObject("thinking").put("type", "enabled").put("budget_tokens", budget);
       int cap = root.path("max_tokens").asInt(4_096);
@@ -136,27 +135,24 @@ public final class AnthropicProvider implements Provider {
   }
 
   /**
-   * The caching breakpoint sent with every marker.
+   * 每个标记都会附上的那个缓存断点。
    *
-   * <p>Five minutes, refreshed by every hit, which is the only kind the API offers — and the useful
-   * kind for an agent: the wait between two turns of one conversation is seconds.
+   * <p>五分钟，每次命中都会刷新，这是 API 提供的唯一一种——也是对代理有用的那种：同一段对话两个回合之间
+   * 的等待只有几秒。
    */
   private static ObjectNode ephemeral() {
     return Json.object().put("type", "ephemeral");
   }
 
   /**
-   * Puts the conversation's caching breakpoint at the end of the conversation.
+   * 把这段对话的缓存断点放到对话末尾。
    *
-   * <p>This is the one that pays for an agent loop. Turn *n+1* sends everything turn *n* sent, plus
-   * the model's answer and the tool results — so the whole prefix is what a cache is for, and the
-   * breakpoint at last turn's end turns ~all of it into a cache read at a tenth of the input price.
-   * The API allows four breakpoints in total; this uses three, for the system prompt, the tool set,
-   * and here.
+   * <p>就是这一个让代理循环回本。回合 *n+1* 会发出回合 *n* 发过的一切，再加上模型的回答和工具结果——所以
+   * 整段前缀正是缓存存在的意义，而放在上一回合末尾的断点，把这几乎全部变成一次按输入价格十分之一计费的缓存
+   * 读取。API 总共允许四个断点；这里用了三个，分别给系统提示词、工具集，以及此处。
    *
-   * <p>The block has to carry it rather than the message: the wire format takes `cache_control` on a
-   * content block, so a plain text turn becomes a one-block array, and a turn that already has blocks
-   * (tool results) gains it on its last one.
+   * <p>必须由内容块来携带，而不是消息：线路格式只在内容块上接受 `cache_control`，所以一个纯文本回合会变成
+   * 单块数组，而一个本来就有块的回合（工具结果）则在最后一块上带上它。
    */
   private static void markPrefixEnd(ArrayNode messages) {
     if (messages.isEmpty()) {
@@ -185,7 +181,7 @@ public final class AnthropicProvider implements Provider {
     }
   }
 
-  /** Writes the conversation, merging tool-result runs into the one user turn the API expects. */
+  /** 写出这段对话，把成串的工具结果合并成 API 期望的那一个 user 回合。 */
   private static void appendMessages(List<Message> source, ArrayNode messages, boolean thinking) {
     int index = 0;
     while (index < source.size()) {
@@ -208,9 +204,8 @@ public final class AnthropicProvider implements Provider {
     return switch (message) {
       case Message.System system -> textTurn(system.text());
       case Message.User user -> textTurn(user.text());
-      // A summary goes on the wire as a user turn: the Messages API has no other shape that can carry
-      // prose the model needs to read but did not say, and the marker inside the text is what keeps it
-      // from reading as its own earlier words.
+      // 摘要以 user 回合上线：Messages API 没有别的形状能承载「模型需要读、但不是它说的」散文，而文本里的
+      // 标记正是让它不会读成自己先前的话的原因。
       case Message.Summary summary -> textTurn(summary.text());
       case Message.Assistant assistant -> assistantTurn(assistant, thinking);
       case Message.ToolResult result -> {
@@ -234,13 +229,11 @@ public final class AnthropicProvider implements Provider {
     node.put("role", "assistant");
     ArrayNode blocks = node.putArray("content");
     if (thinking) {
-      // The API wants the model's own thinking back, first in the turn, whenever the request enables
-      // extended thinking — the signature is what makes the block unforgeable, and a turn that drops
-      // it is rejected. Nothing is sent when thinking is off: the blocks belong to a setting the
-      // request is not asking for any more.
+      // 只要请求启用了扩展思考，API 就要求把模型自己的思考还回来，且放在回合的最前面——签名让这个块无法伪
+      // 造，而丢掉它的回合会被拒绝。思考关闭时什么都不发：这些块属于一个请求已不再要求的设置。
       for (Message.Thinking block : assistant.thinking()) {
         if (!block.redacted() && block.signature().isEmpty()) {
-          // Unsigned thinking cannot be replayed: the stream was cut before the signature arrived.
+          // 没有签名的思考无法重放：流在签名到达之前就被切断了。
           continue;
         }
         ObjectNode entry = blocks.addObject();
@@ -267,7 +260,7 @@ public final class AnthropicProvider implements Provider {
       use.set("input", inputOf(call.arguments()));
     }
     if (blocks.isEmpty()) {
-      // An empty content array is rejected, so a silent assistant turn still needs one block.
+      // 空的 content 数组会被拒绝，所以一个沉默的助手回合仍然需要一个块。
       ObjectNode text = blocks.addObject();
       text.put("type", "text");
       text.put("text", "");
@@ -276,14 +269,12 @@ public final class AnthropicProvider implements Provider {
   }
 
   /**
-   * Tool arguments as the object {@code tool_use.input} must be.
+   * 按 {@code tool_use.input} 必须是对象的要求给出的工具参数。
    *
-   * <p>The Messages API rejects a non-object input, and a stream that was cut off mid-call — the
-   * model hit its token cap, the connection died — leaves the arguments half-written. Parsing that
-   * text strictly would throw while the *next* request is being built, which is the one failure
-   * with no way out: every later turn rebuilds the same history, so the session could never be sent
-   * again. An empty input instead reaches the tool, which reports the missing argument back to the
-   * model and keeps the conversation moving.
+   * <p>Messages API 拒绝非对象的 input，而一次在调用中途被切断的流——模型撞上 token 上限、连接断了——会
+   * 留下只写了一半的参数。严格解析那段文本会在构建*下一个*请求时抛出，而这是唯一一种没有出路的失败：之后每
+   * 个回合都会重建同一段历史，于是这个会话再也发不出去。改为一个空 input，它仍会到达工具，工具再把缺少参数
+   * 这件事回报给模型，让对话继续走下去。
    */
   private static JsonNode inputOf(String arguments) {
     JsonNode parsed;
@@ -305,9 +296,8 @@ public final class AnthropicProvider implements Provider {
   }
 
   /**
-   * Reads the event stream to completion. Usage is reported once, when {@code message_delta} turns
-   * the output token count into a total, because the input count on its own is not a completed
-   * measurement a caller could act on.
+   * 把事件流读到结束。用量只上报一次，在 {@code message_delta} 把输出 token 数补成一个总数时，因为单独的
+   * 输入计数不是一个调用方能据以行动的完整测量。
    */
   private Message.Assistant consume(
       HttpResponse<?> response, Stream<String> lines, Consumer<Event> sink) throws Exception {
@@ -330,16 +320,16 @@ public final class AnthropicProvider implements Provider {
         switch (type) {
           case "message_start" -> {
             JsonNode usage = payload.path("message").path("usage");
-            // A field that is present but null is not a measurement: only a number is a report, and
-            // gateways send explicit nulls where the API itself omits the field.
+            // 存在但为 null 的字段不是一次测量：只有数字才算上报，而网关会在 API 本身省略字段的地方发来显式
+            // 的 null。
             JsonNode read = number(usage.get("cache_read_input_tokens"));
             JsonNode created = number(usage.get("cache_creation_input_tokens"));
             if (read == null && created == null) {
               JsonNode input = number(usage.get("input_tokens"));
               inputTokens = input == null ? inputTokens : input.asInt();
             } else {
-              // Cache reads and writes are reported *in addition to* input_tokens, so the prompt is
-              // their sum — otherwise a cached turn would look smaller than an uncached one.
+              // 缓存读取与写入是*在 input_tokens 之外*另行上报的，所以提示词大小是它们的和——否则一个命中
+              // 缓存的回合会显得比没命中的还小。
               int readTokens = read == null ? 0 : read.asInt();
               int createdTokens = created == null ? 0 : created.asInt();
               JsonNode input = number(usage.get("input_tokens"));
@@ -350,7 +340,7 @@ public final class AnthropicProvider implements Provider {
           case "content_block_start" -> openBlock(payload, blocks, sink);
           case "content_block_delta" -> appendDelta(payload, blocks, sink);
           case "content_block_stop" -> {
-            // Every fragment of the block has arrived; nothing left to do.
+            // 这个块的每一段片段都到齐了；没什么可做的。
           }
           case "message_delta" -> {
             outputTokens = payload.path("usage").path("output_tokens").asInt(outputTokens);
@@ -362,9 +352,9 @@ public final class AnthropicProvider implements Provider {
               sink.accept(new Event.Usage(inputTokens, outputTokens, cachedInputTokens));
             }
           }
-          case "error" -> throw new Exception("anthropic error: " + payload.path("error"));
+          case "error" -> throw new Exception("anthropic 错误：" + payload.path("error"));
           default -> {
-            // ping and future event types carry no content.
+            // ping 以及将来的事件类型都不带内容。
           }
         }
       }
@@ -373,15 +363,15 @@ public final class AnthropicProvider implements Provider {
     List<Message.ToolCall> calls = new ArrayList<>();
     List<Message.Thinking> thinking = new ArrayList<>();
     if (frames == 0) {
-      // A body with no frames is not a turn: reporting it as an empty answer would leave the user
-      // with a silent stop and no way to see that the endpoint never spoke this protocol.
+      // 没有任何帧的响应体不是一个回合：把它当作空回答报出去，用户只会看到一次无声的停止，看不出这个端点根本
+      // 没在说这个协议。
       throw new IllegalStateException(Transport.noEvents(response, arrived.toString()));
     }
     for (Block block : blocks.values()) {
       if (block.toolUse()) {
         calls.add(new Message.ToolCall(block.id, block.name, block.arguments.toString()));
       } else if (block.thinking() || block.redactedThinking()) {
-        // Kept for the next request: with extended thinking on, the API expects these back.
+        // 留给下一个请求：开着扩展思考时，API 期望把这些还回去。
         thinking.add(
             block.redactedThinking()
                 ? Message.Thinking.redacted(block.payload)
@@ -404,16 +394,14 @@ public final class AnthropicProvider implements Provider {
         block.name = content.path("name").asText("");
         JsonNode input = content.get("input");
         if (input != null && input.isObject() && !input.isEmpty()) {
-          // The documented stream opens with an empty input and streams the arguments as
-          // input_json_delta; a gateway that sends the finished object here would otherwise leave
-          // the call with no arguments at all, and the tool would run with none.
+          // 文档中的流以一个空 input 开场，再用 input_json_delta 流式送参数；否则一个在这里直接发来完整
+          // 对象的网关，会让这次调用完全没有参数，工具也就会在无参数的情况下跑起来。
           block.arguments.append(Json.write(input));
         }
         sink.accept(new Event.ToolCallStart(block.id, block.name));
       }
       case "thinking", "redacted_thinking" -> {
-        // The opening block may already carry the first words (or, for a redacted block, the whole
-        // opaque payload); the rest arrives as deltas.
+        // 开场块可能已经带着开头的文字（对于被遮蔽的块，则是整个不透明载荷）；其余部分以增量到达。
         block.text.append(content.path("thinking").asText(""));
         block.payload = content.path("data").asText("");
         if (!block.text.isEmpty()) {
@@ -421,9 +409,8 @@ public final class AnthropicProvider implements Provider {
         }
       }
       default -> {
-        // The documented shape opens a text block empty and streams every character as a delta, but
-        // a gateway is free to put the first words in the opening block instead. Dropping them would
-        // be silent data loss in the middle of a sentence, so they are treated as a delta.
+        // 文档中的形状把文本块以空开场，每个字符都以增量流式送达，但网关完全可以改为把开头的文字放进开场块。
+        // 丢掉它们就是在句子中间悄悄丢数据，所以按增量对待。
         String opening = content.path("text").asText("");
         if (!opening.isEmpty()) {
           block.text.append(opening);
@@ -452,9 +439,8 @@ public final class AnthropicProvider implements Provider {
               .arguments
               .append(delta.path("partial_json").asText(""));
       case "thinking_delta" -> {
-        // Extended thinking is on whenever a reasoning tier is set, and a turn can spend a long time
-        // there; forwarding it keeps the front end from looking stalled, and keeping it is what lets
-        // the next request hand the block back.
+        // 只要设了推理档位，扩展思考就是开着的，而一个回合可能在那里花很久；把它们转发出去，前端才不会看起来
+        // 卡住，而保留它们才让下一个请求能把块交还回去。
         String thinking = delta.path("thinking").asText("");
         blocks.computeIfAbsent(index, i -> new Block("thinking")).text.append(thinking);
         if (!thinking.isEmpty()) {
@@ -467,17 +453,16 @@ public final class AnthropicProvider implements Provider {
               .signature
               .append(delta.path("signature").asText(""));
       default -> {
-        // Redacted thinking arrives whole in its opening block; future delta kinds carry nothing.
+        // 被遮蔽的思考在开场块里整块到达；将来的增量类型都不带内容。
       }
     }
   }
 
   /**
-   * A JSON number, or null when the field is absent <em>or</em> explicitly null.
+   * 一个 JSON 数字；字段缺失<em>或</em>显式为 null 时返回 null。
    *
-   * <p>Jackson hands back a {@code NullNode} rather than Java null for a null it saw, so a plain
-   * null check would read "the endpoint reported no cache figures" as "zero tokens were cached" and
-   * turn an unknown into a measurement.
+   * <p>Jackson 见到 null 时会交回一个 {@code NullNode} 而不是 Java 的 null，所以单纯判 null 会把「端点
+   * 没有报缓存数字」读成「缓存了零个 token」，把一个未知变成一次测量。
    */
   private static JsonNode number(JsonNode node) {
     return node == null || !node.isNumber() ? null : node;
@@ -489,8 +474,8 @@ public final class AnthropicProvider implements Provider {
   }
 
   /**
-   * One content block of the reply: prose, one tool call, or one thinking block, streamed in
-   * fragments. Which it is decides what a fragment appends to and what the finished turn carries.
+   * 回复里的一个内容块：散文、一次工具调用，或一个思考块，以片段流式到达。它是哪一种决定了片段往哪里追加、
+   * 完成的回合又携带什么。
    */
   private static final class Block {
     private final String kind;
@@ -499,7 +484,7 @@ public final class AnthropicProvider implements Provider {
     private final StringBuilder signature = new StringBuilder();
     private String id = "";
     private String name = "";
-    /** The opaque payload of a {@code redacted_thinking} block, which cannot be read as text. */
+    /** {@code redacted_thinking} 块的不透明载荷，它无法当作文本来读。 */
     private String payload = "";
 
     private Block(String kind) {

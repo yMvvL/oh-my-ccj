@@ -8,24 +8,21 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * What the page does when a compaction lands is browser code — it lives in {@code web/app.js}, a
- * classic script with no exports — so the two functions that matter are a node script
- * ({@code src/test/js/compaction.test.mjs}) that lifts them out of the shipped file and runs them
- * against a small stub, the same way {@link WebReplayTest} runs the replay cases.
+ * 一次压缩落地时页面做什么，是浏览器代码——它住在 {@code web/app.js} 里，那是一个没有导出的经典
+ * 脚本——所以要紧的那两个函数是一个 node 脚本（{@code src/test/js/compaction.test.mjs}），把它们
+ * 从发布出去的文件里抠出来，对着一个小小的桩运行，就像 {@link WebReplayTest} 跑回放的用例那样。
  *
- * <p>Both bugs it pins down got past a full {@code mvn test} pass and a real end-to-end session driven
- * over HTTP, because curl cannot see a transcript:
+ * <p>它钉住的两个 bug 都躲过了一整轮 {@code mvn test}，也躲过了一次真正经 HTTP 驱动的端到端
+ * 会话，因为 curl 看不见转录：
  *
  * <ol>
- *   <li>{@code loadHistory} <em>appends</em>, since it is written for a session switch where the id
- *       changed and the pane was cleared for it. A compaction keeps the same id, so the kept exchanges
- *       were drawn a second time underneath the ones already on screen.
- *   <li>The summary was never drawn at all — {@code historyJson} had no branch for it and fell through
- *       to the "not part of a rendered conversation" default.
+ *   <li>{@code loadHistory} 是<em>追加</em>的，因为它本来是给「id 变了、面板已清空」的会话切换
+ *       写的。压缩保持同一个 id，于是被留下的那几组往来又在屏幕上已有的那些底下画了一遍。
+ *   <li>摘要则压根没被画出来——{@code historyJson} 没有为它准备分支，直接落到了「不属于一份被
+ *       渲染的对话」的默认处理上。
  * </ol>
  *
- * <p>The cases below are what a node cannot check on its own: that the server produces the event and
- * the page consumes it, by name, on both sides.
+ * <p>下面这些用例是 node 自己查不了的：服务器按名字产生那个事件、页面按名字消费它，两边都要有。
  */
 class WebCompactTest {
 
@@ -36,68 +33,66 @@ class WebCompactTest {
 
   @Test
   void theCompactionScriptPasses() throws IOException, InterruptedException {
-    WebSessionRowTest.runNodeCases(SCRIPT, "compaction");
+    WebSessionRowTest.runNodeCases(SCRIPT, "压缩");
   }
 
   @Test
   void theTranscriptIsClearedBeforeTheNewHistoryArrives() throws IOException {
     String script = source(APP);
-    assertTrue(script != null, "app.js must be readable");
+    assertTrue(script != null, "app.js 必须可读");
 
     int at = script.indexOf("async function onCompacted(");
-    assertTrue(at >= 0, "the page handles the compacted event");
-    // The clear has to come *before* the fetch: after it, the append has already happened and the
-    // conversation on screen is doubled.
+    assertTrue(at >= 0, "页面会处理 compacted 事件");
+    // 清空必须发生在取数据*之前*：在它之后的话，追加已经发生，屏幕上的对话就翻倍了。
     int clear = script.indexOf("clearTranscript();", at);
     int load = script.indexOf("loadHistory(", at);
     assertTrue(clear > at && load > clear,
-        "onCompacted must clear the transcript before it re-reads the history");
+        "onCompacted 必须在重新读取历史之前清空转录");
   }
 
   @Test
   void theSummaryEventIsRendered() throws IOException {
     String script = source(APP);
-    assertTrue(script != null, "app.js must be readable");
+    assertTrue(script != null, "app.js 必须可读");
 
-    assertTrue(script.contains("case 'summary':"), "the page dispatches the summary event");
-    assertTrue(script.contains("function appendSummary("), "and has a renderer for it");
-    // The card says where the full conversation still is: that is what makes a summary that dropped a
-    // detail recoverable, so it is not optional decoration.
-    assertTrue(script.contains("read it back"),
-        "the card tells the reader the detail can be read back from the file");
+    assertTrue(script.contains("case 'summary':"), "页面会派发 summary 事件");
+    assertTrue(script.contains("function appendSummary("), "而且有一个渲染它的东西");
+    // 那张卡片会说出完整对话仍然在哪里：正是这一点让一份漏掉细节的摘要是可恢复的，所以它不是
+    // 可有可无的装饰。
+    assertTrue(script.contains("读回"),
+        "卡片会告诉读者，细节可以从文件里读回来");
   }
 
   @Test
   void theServerSendsTheSummaryRatherThanDroppingIt() throws IOException {
     String hub = source(HUB);
-    assertTrue(hub != null, "AgentHub.java must be readable");
+    assertTrue(hub != null, "AgentHub.java 必须可读");
 
-    // The bug was here: `Message.Summary` fell through to the default branch whose comment says system
-    // messages are not rendered content, so a page loaded after a compaction showed the kept exchanges
-    // with no sign that a compaction had ever happened.
+    // bug 就在这儿：`Message.Summary` 落到了默认分支上，而那个分支的注释说系统消息不是被渲染
+    // 的内容，于是一次压缩之后加载的页面只显示留下的那几组往来，没有任何迹象表明发生过压缩。
     int at = hub.indexOf("public ObjectNode historyJson()");
-    assertTrue(at >= 0, "the history is built by one method");
+    assertTrue(at >= 0, "历史是由一个方法构建的");
     int end = hub.indexOf("private static ObjectNode replay(", at);
     String history = hub.substring(at, end > at ? end : hub.length());
 
     assertTrue(history.contains("case Message.Summary summary ->"),
-        "historyJson must have a branch for a summary");
+        "historyJson 必须为摘要准备一个分支");
     assertTrue(history.contains("replay(\"summary\")"),
-        "and send it as a summary event, which is what the page dispatches");
+        "并作为 summary 事件发出去，而这正是页面派发的东西");
     assertTrue(history.contains(".put(\"covers\""),
-        "carrying the count the card displays");
+        "带上那张卡片显示的计数");
   }
 
   @Test
   void theCompactedEventIsStillAnnouncedToThePage() throws IOException {
     String hub = source(HUB);
-    assertTrue(hub != null, "AgentHub.java must be readable");
+    assertTrue(hub != null, "AgentHub.java 必须可读");
 
-    // The event is what tells the page to rebuild at all; the summary event alone only arrives on a
-    // history fetch, which the event is what triggers.
-    assertTrue(hub.contains("\"compacted\""), "the hub publishes a compacted event");
+    // 正是这个事件告诉页面该重建了；单有 summary 事件只在取历史时才到，而取历史正是这个事件
+    // 触发的。
+    assertTrue(hub.contains("\"compacted\""), "hub 会发布一个 compacted 事件");
     assertTrue(hub.contains(".put(\"savedPercent\""),
-        "and reports what it saved, which is the number the notice shows");
+        "并且报告它省下了多少，也就是那条通知显示的数字");
   }
 
   private static String source(Path path) {

@@ -1,21 +1,21 @@
-## What this changes
+## 这次改了什么
 
-<!-- One or two sentences. If it fixes an issue, link it. -->
+<!-- 一两句话。如果它修了一个 issue，链接它。 -->
 
-## How it was verified
+## 怎么验证的
 
 <!--
-The command you ran and what it printed. "Should work" is not a result; an honest "not verified, and
-here is why" is worth more than a confident claim that turns out false.
+你跑的命令和它打印的内容。「应该能跑」不是结果；一句诚实的「没验证，原因如下」比一个后来被证明是假的
+自信断言更值钱。
 -->
 
 ```
 ./mvnw test
 ```
 
-## Checklist
+## 检查清单
 
-- [ ] `./mvnw test` passes (and node is installed, so the browser cases are not skipped)
-- [ ] A fix comes with a test that fails without it
-- [ ] Comments explain the *why*, including any alternative that was rejected
-- [ ] No new runtime dependency (or: it was discussed in an issue first)
+- [ ] `./mvnw test` 通过（并且装了 node，所以浏览器用例没有被跳过）
+- [ ] 修复带着一个没有它就会失败的测试
+- [ ] 注释解释了*为什么*，包括任何被拒掉的替代做法
+- [ ] 没有新的运行时依赖（或者：已经在 issue 里讨论过）

@@ -5,26 +5,23 @@ import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 
 /**
- * Matching a project-relative path against the patterns users write.
+ * 把项目相对路径与用户写下的模式做匹配。
  *
- * <p>Shared by the two features that let a user say "this applies to files like that" — the post-edit
- * checks and the approval rules — because two implementations of "what does `**` mean here" is one
- * more than can stay consistent, and the difference would show up as a check that never fires or a
- * rule that never matches.
+ * <p>两个让用户表达「这适用于那种文件」的功能——编辑后检查和审批规则——共用这份实现，因为「`**` 在这里是
+ * 什么意思」有两份实现就多了一份，无法保持一致，而差异会表现为某个永远不触发的检查，或某条永远匹配不上的
+ * 规则。
  *
- * <p>A pattern beginning {@code **&#47;} is tried twice: as written, and with that prefix removed.
- * The second try is not a convenience. {@link PathMatcher} reads {@code **&#47;*.java} as "a java
- * file inside some directory" and does not match {@code Foo.java} at the top of the project, while
- * every other tool a user has met — gitignore, `.editorconfig`, ripgrep's {@code --glob} — reads
- * {@code **&#47;foo} as "foo at any depth, including none". A pattern that silently matches nothing
- * is indistinguishable from a rule with nothing to object to, which is the failure both callers
- * exist to avoid.
+ * <p>以 {@code **&#47;} 开头的模式会被尝试两次：按原样，以及去掉该前缀。第二次不是图方便。
+ * {@link PathMatcher} 把 {@code **&#47;*.java} 读作「某个目录里的 java 文件」，匹配不到项目根部的
+ * {@code Foo.java}；而用户见过的其他工具——gitignore、`.editorconfig`、ripgrep 的 {@code --glob}——
+ * 都把 {@code **&#47;foo} 读作「任意深度（包括零层）的 foo」。一个静默匹配不到任何东西的模式，与一条没有
+ * 任何东西可反对的规则无从区分，而这正是两个调用方都要避免的失败。
  */
 public final class PathGlobs {
 
   private PathGlobs() {}
 
-  /** True when {@code glob} matches {@code relative}, a path relative to the project root. */
+  /** 当 {@code glob} 匹配 {@code relative}（相对项目根的路径）时为 true。 */
   public static boolean matches(String glob, String relative) {
     if (matcher(glob).matches(Path.of(relative))) {
       return true;
@@ -33,10 +30,10 @@ public final class PathGlobs {
   }
 
   /**
-   * The path as a project-relative, forward-slashed string, or null when it is outside the project.
+   * 路径的项目相对、正斜杠形式；位于项目之外时返回 null。
    *
-   * <p>Outside is not "match anyway with the absolute path": a rule is a statement about this
-   * project, and a file elsewhere is a different question with a different answer.
+   * <p>「在项目之外」不是「照样用绝对路径去匹配」：规则是关于本项目的陈述，别处的文件是另一个问题，有另一个
+   * 答案。
    */
   public static String relative(Path file, Path project) {
     Path target = file.toAbsolutePath().normalize();

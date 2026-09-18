@@ -28,11 +28,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Drives the real CLI against a scripted model backend.
+ * 让真实的 CLI 对着一个按脚本应答的模型后端运行。
  *
- * <p>Nothing is stubbed below the CLI: the request really goes out over HTTP, the SSE stream is
- * really parsed, the tool really runs, and the resulting file really lands on disk. That is the
- * whole point of these tests — the unit tests prove the pieces, these prove the machine.
+ * <p>CLI 之下没有任何桩：请求真的经 HTTP 发出，SSE 流真的被解析，工具真的运行，产出的文件真的落到
+ * 磁盘上。这正是这些测试的意义——单元测试证明各个部件，这些测试证明整台机器。
  */
 class CliEndToEndTest {
 
@@ -94,7 +93,7 @@ class CliEndToEndTest {
     };
   }
 
-  /** The same invocation with extra flags, which is how the options are exercised end to end. */
+  /** 同一次调用外加若干参数，选项就是这样被端到端跑到的。 */
   private static String[] append(String[] base, String... extra) {
     String[] all = new String[base.length + extra.length];
     System.arraycopy(base, 0, all, 0, base.length);
@@ -113,11 +112,10 @@ class CliEndToEndTest {
   }
 
   /**
-   * A registry whose active workspace is {@link #workspace}, as the sidebar would leave it.
+   * 一个活动工作区为 {@link #workspace} 的注册表，就像侧边栏会留下的那样。
    *
-   * <p>Without one the first run seeds the workspace from the starting directory, which is where the
-   * test JVM happens to be — and then the answer to "where do the tools run" would come from the
-   * test framework's working directory rather than from anything the test set up.
+   * <p>没有它，首次运行会以起始目录播种工作区，而那恰好是测试 JVM 所在之处——于是「工具在哪里运行」
+   * 的答案就会来自测试框架的工作目录，而不是测试自己设置的任何东西。
    */
   private void writeRegistry() throws IOException {
     Files.writeString(
@@ -133,8 +131,7 @@ class CliEndToEndTest {
 
   @Test
   void aProjectsOwnRulesReachTheRequest() throws IOException {
-    // The point of the feature: a CCJ.md in the directory the tools run in is in the prompt of every
-    // request, without the user configuring anything.
+    // 这个功能的要点：工具运行目录中的 CCJ.md 会出现在每次请求的提示词里，而用户无需配置任何东西。
     Files.writeString(
         workspace.resolve(ProjectPrompt.FILE_NAME),
         "This project is special: always run `make check` before answering.\n");
@@ -147,20 +144,19 @@ class CliEndToEndTest {
     String sent = server.lastRequest().body();
     assertTrue(
         sent.contains("always run `make check`"),
-        "the working directory's rules must be in the request: " + sent.substring(0, 600));
+        "工作目录的规则必须在请求里： " + sent.substring(0, 600));
     assertFalse(
         sent.contains("Rules from"),
-        "with no heading naming the file: with one file at one known location there is nothing to"
-            + " disambiguate, and a heading would spend prompt on every request: "
+        "没有点名文件的标题：一个已知位置上的唯一文件没有什么需要消歧的，而标题会在每次请求上"
+            + " 白花提示词： "
             + sent.substring(0, 600));
   }
 
   @Test
   void rulesInAParentDirectoryAreNotUsed() throws IOException {
-    // The read is one directory deep, on purpose. A walk upwards would let a file in a home directory
-    // apply to every project beneath it without any project asking for it, and the user would have to
-    // search upwards to find out why their prompt changed. What a run uses has to be answerable by
-    // looking at the directory it was started in.
+    // 读取刻意只深入一层目录。向上遍历会让主目录里的一个文件在没有任何项目要求的情况下作用于其下每
+    // 一个项目，用户还得到处向上翻找才知道自己的提示词为什么变了。一次运行用了什么，必须只看着它
+    // 启动时所在的目录就能回答。
     Path nested = Files.createDirectories(workspace.resolve("src/module"));
     Files.writeString(
         workspace.resolve(ProjectPrompt.FILE_NAME), "Top rule: never force-push.");
@@ -178,20 +174,19 @@ class CliEndToEndTest {
 
     assertEquals(0, run.exitCode(), run.err());
     String sent = server.lastRequest().body();
-    assertTrue(sent.contains("this one uses tabs"), "the working directory's rules are used: " + sent);
+    assertTrue(sent.contains("this one uses tabs"), "工作目录的规则被使用了： " + sent);
     assertFalse(
         sent.contains("never force-push"),
-        "and the parent's are not, even though they are one level up: " + sent);
-    // The built-in rules are still in the request: a project's file leads the prompt, it does not
-    // replace what this agent is.
+        "而父目录的规则没有，尽管它就在上一层： " + sent);
+    // 内置规则仍在请求里：项目文件只是引领提示词，并不会取代这个 agent 本身。
     assertTrue(sent.contains("You are ccj"), sent.substring(0, 500));
     assertTrue(sent.contains("Inspect before you change"), sent.substring(0, 900));
   }
 
   @Test
   void aWorkingDirectoryWithoutRulesSendsTheSamePromptAsBefore() throws IOException {
-    // Additive, or every existing setup changes silently. The request's system prompt must be exactly
-    // what it was before rules files existed.
+    // 必须是增量式的，否则每个既有配置都会悄悄改变。请求里的系统提示词必须与规则文件存在之前完全
+    // 一致。
     writeConfig("openai", server.openAiBaseUrl(), true);
     server.enqueue(MockModelServer.openAiText("ok"));
 
@@ -202,13 +197,12 @@ class CliEndToEndTest {
     assertTrue(sent.contains("You are ccj"), sent.substring(0, 400));
     assertFalse(
         sent.contains(ProjectPrompt.FILE_NAME),
-        "no rules file exists here, so none is mentioned: " + sent.substring(0, 600));
+        "这里不存在规则文件，所以不会被提及： " + sent.substring(0, 600));
   }
 
   @Test
   void theProjectsRulesLeadThePromptInARealRequest() throws IOException {
-    // Order as it reaches the wire, not just as the builder returns it: the project's own statement
-    // comes first, the built-in rules follow it.
+    // 顺序要看到达线上时的样子，而不只是构建器返回时的样子：项目自己的声明在前，内置规则随后。
     Files.writeString(
         workspace.resolve(ProjectPrompt.FILE_NAME), "PROJECT RULE: this tree uses tabs.");
     writeConfig("openai", server.openAiBaseUrl(), true);
@@ -221,14 +215,13 @@ class CliEndToEndTest {
     int project = sent.indexOf("PROJECT RULE");
     int base = sent.indexOf("You are ccj");
     assertTrue(project >= 0 && base >= 0, sent.substring(0, 800));
-    assertTrue(project < base, "the project's rules come before the built-in ones:\n" + sent.substring(0, 800));
+    assertTrue(project < base, "项目的规则排在内置规则之前：\n" + sent.substring(0, 800));
   }
 
   @Test
   void anOversizedRulesFileIsCutRatherThanSentWhole() throws IOException {
-    // The system prompt is on every request and nothing trims it, so a runaway rules file has to be
-    // bounded where it is read. The marker says so, because a model that believes it read every rule
-    // is worse than one told the list is incomplete.
+    // 系统提示词出现在每一次请求里且无人裁剪，因此失控的规则文件必须在读取处就被限制。标记会说明
+    // 这一点，因为一个以为自己读完了全部规则的模型，比一个被告知列表不完整的模型更糟。
     Files.writeString(
         workspace.resolve(ProjectPrompt.FILE_NAME), "rule ".repeat(ProjectPrompt.LIMIT_CHARS));
     writeConfig("openai", server.openAiBaseUrl(), true);
@@ -238,17 +231,16 @@ class CliEndToEndTest {
 
     assertEquals(0, run.exitCode(), run.err());
     String sent = server.lastRequest().body();
-    assertTrue(sent.contains("cut short"), "the cut is announced: " + sent.length());
+    assertTrue(sent.contains("cut short"), "裁剪被宣告了： " + sent.length());
     assertTrue(
         sent.length() < ProjectPrompt.LIMIT_CHARS * 2,
-        "and the request stays bounded: " + sent.length());
+        "且请求仍是有界的： " + sent.length());
   }
 
   @Test
   void toolsRunInTheActiveWorkspaceEvenWhenTheRunStartsElsewhere() throws IOException {
-    // The starting directory used to become a silent cwd override, so a run that announced
-    // "workspace project (…/project)" was really reading and writing files in the directory it was
-    // launched from. The workspace is what the sidebar selects, so it is where the tools must run.
+    // 起始目录过去会变成无声的 cwd 覆盖，于是宣布「workspace project (…/project)」的一次运行实际上
+    // 却在它被启动的目录里读写文件。工作区是侧边栏所选定的东西，因此工具必须在那里运行。
     Files.writeString(workspace.resolve("note.txt"), "hello from the workspace\n");
     writeRegistry();
     writeConfig("openai", server.openAiBaseUrl(), true);
@@ -267,15 +259,14 @@ class CliEndToEndTest {
     assertEquals(0, run.exitCode(), run.err());
     assertTrue(
         server.lastRequest().body().contains("hello from the workspace"),
-        "the tool must read the workspace's file, not the starting directory's: "
+        "工具必须读取工作区的文件，而不是起始目录的： "
             + server.lastRequest().body());
   }
 
   @Test
   void aCheckDeclaredInTheConfigFileRunsAfterAnEditAndItsVerdictReachesTheModel() throws IOException {
-    // The whole feature, end to end and offline: the CLI reads the config file, builds the tools
-    // with the checks it declares, the model's edit triggers one, and the verdict is in the next
-    // request — in the same step as the change, which is the entire point of having it.
+    // 整个功能，端到端且离线：CLI 读取配置文件，用其声明的检查构建工具，模型的编辑触发其中一个，
+    // 判决出现在下一次请求里——与改动同一步，这正是拥有它的全部意义。
     Files.writeString(workspace.resolve("Foo.java"), "class Foo {}\n");
     writeConfig("openai", server.openAiBaseUrl(), true);
     Files.writeString(
@@ -299,17 +290,17 @@ class CliEndToEndTest {
     String toModel = server.lastRequest().body();
     assertTrue(
         toModel.contains("cannot find symbol"),
-        "the check's verdict must be in the request that follows the edit: " + toModel);
+        "检查的判决必须出现在编辑之后的那次请求里： " + toModel);
     assertTrue(toModel.contains("[check] echo "), toModel);
     assertTrue(
         Files.readString(workspace.resolve("Foo.java")).contains("missing"),
-        "the edit itself still happened");
+        "编辑本身仍然发生了");
   }
 
   @Test
   void aFileNoCheckIsAboutIsEditedWithoutRunningAnything() throws IOException {
-    // The default stays free: a project that declares no checks, or a file none of them match, gets
-    // exactly the result the model already knew how to read.
+    // 默认保持零开销：没有声明任何检查的项目，或者没有任何检查匹配的文件，得到的结果与模型早已知道
+    // 如何读取的完全一样。
     Files.writeString(workspace.resolve("notes.md"), "old text\n");
     writeConfig("openai", server.openAiBaseUrl(), true);
     Files.writeString(
@@ -335,8 +326,8 @@ class CliEndToEndTest {
 
   @Test
   void theCwdFlagIsStillHonouredAndSaysSo() throws IOException {
-    // -C stays a per-run override, but it is no longer silent: a session whose tools run somewhere
-    // other than the active workspace has to say which directory that is.
+    // -C 仍是单次运行的覆盖，但它不再无声：工具运行在活动工作区之外某处的会话，必须说明那是哪个
+    // 目录。
     Files.writeString(tmp.resolve("elsewhere.txt"), "from the flag\n");
     writeRegistry();
     writeConfig("openai", server.openAiBaseUrl(), true);
@@ -357,7 +348,7 @@ class CliEndToEndTest {
     assertEquals(0, run.exitCode(), run.err());
     assertTrue(
         server.lastRequest().body().contains("from the flag"),
-        "the flag's directory must be the one used: " + server.lastRequest().body());
+        "参数指定的目录必须是实际使用的那个： " + server.lastRequest().body());
   }
 
   @Test
@@ -371,23 +362,23 @@ class CliEndToEndTest {
 
     assertEquals(0, run.exitCode(), run.err());
     assertTrue(run.out().contains("the file says hello"), run.out());
-    assertEquals(2, server.requestCount(), "one turn for the tool call, one for the answer");
+    assertEquals(2, server.requestCount(), "一次回合用于工具调用，一次用于回答");
 
     String secondRequest = server.lastRequest().body();
     assertTrue(
         secondRequest.contains("\"model\":\"test-model\""),
-        "the configured model must reach the wire: " + secondRequest);
+        "配置的模型必须到达线上： " + secondRequest);
     assertTrue(
         secondRequest.contains("hello from disk"),
-        "the tool result must be fed back to the model: " + secondRequest);
+        "工具结果必须回喂给模型： " + secondRequest);
     assertTrue(
         server.lastRequest().authorization().contains("sk-test-key-1234"),
-        "the configured key must be sent as a bearer token");
+        "配置的密钥必须作为 bearer token 发送");
 
     List<Path> sessions = sessionFiles();
-    assertEquals(1, sessions.size(), "the session must be persisted: " + sessions);
+    assertEquals(1, sessions.size(), "会话必须被持久化： " + sessions);
     List<String> lines = Files.readAllLines(sessions.get(0));
-    assertEquals(4, lines.size(), "user, assistant(tool call), tool result, assistant\n" + lines);
+    assertEquals(4, lines.size(), "user、assistant(工具调用)、tool result、assistant\n" + lines);
   }
 
   @Test
@@ -423,8 +414,8 @@ class CliEndToEndTest {
 
   @Test
   void theConfiguredReasoningTierReachesTheWireFromTheCommandLine() throws IOException {
-    // The tier was configurable and only ever applied by the web UI: a CLI run ignored it, which is
-    // the kind of gap a "works in the browser" feature hides.
+    // 该档位可以配置，却一直只被网页 UI 应用：CLI 运行会忽略它，这正是「在浏览器里能用」的功能所
+    // 掩盖的那类缺口。
     writeConfig("openai", server.openAiBaseUrl(), true);
     server.enqueue(MockModelServer.openAiText("ok"));
 
@@ -433,7 +424,7 @@ class CliEndToEndTest {
     assertEquals(0, flagged.exitCode(), flagged.err());
     assertTrue(
         server.lastRequest().body().contains("\"reasoning_effort\":\"high\""),
-        "the flag must reach the request: " + server.lastRequest().body());
+        "该参数必须到达请求： " + server.lastRequest().body());
   }
 
   @Test
@@ -458,7 +449,7 @@ class CliEndToEndTest {
     assertEquals(0, run.exitCode(), run.err());
     assertTrue(
         server.lastRequest().body().contains("\"reasoning_effort\":\"low\""),
-        "config.json is a source of settings like any other: " + server.lastRequest().body());
+        "config.json 与其他任何设置来源一样： " + server.lastRequest().body());
   }
 
   @Test
@@ -473,18 +464,17 @@ class CliEndToEndTest {
     assertEquals(0, run.exitCode(), run.err());
     String wire = server.lastRequest().body();
     assertTrue(
-        wire.contains("cut short") || wire.contains("elided"),
-        "the second request must carry a trimmed history: " + wire.substring(0, Math.min(400, wire.length())));
-    assertTrue(run.out().contains("context:"), "and say so in the transcript: " + run.out());
+        wire.contains("已截短") || wire.contains("已略去"),
+        "第二次请求必须携带被裁剪过的历史： " + wire.substring(0, Math.min(400, wire.length())));
+    assertTrue(run.out().contains("上下文："), "并在转录里说明这一点： " + run.out());
     List<String> lines = Files.readAllLines(sessionFiles().get(0));
-    assertEquals(4, lines.size(), "the session file keeps the whole conversation:\n" + lines);
+    assertEquals(4, lines.size(), "会话文件保留完整的对话：\n" + lines);
   }
 
   @Test
   void aSessionInterruptedMidCallCanBeResumed() throws IOException {
-    // Reproduces the report exactly: a turn was aborted after its tool call was written and before
-    // its result was, and from then on every message came back as
-    // "an assistant message with 'tool_calls' must be followed by tool messages".
+    // 精确复现那份报告：一个回合在其工具调用已写入、结果尚未写入时被中止，此后每条消息都以
+    // "an assistant message with 'tool_calls' must be followed by tool messages" 返回。
     writeConfig("openai", server.openAiBaseUrl(), true);
     Path sessions = Files.createDirectories(home.resolve("sessions"));
     String id = "20260912-010101-abcd";
@@ -508,29 +498,28 @@ class CliEndToEndTest {
     String sent = server.lastRequest().body();
     assertTrue(
         sent.contains("\"tool_call_id\":\"call_1\""),
-        "the request must answer the call that was left hanging: " + sent);
-    assertTrue(sent.contains("not run"), "and say what happened to it: " + sent);
+        "请求必须回答那个被悬置的调用： " + sent);
+    assertTrue(sent.contains("未运行"), "并说明它遭遇了什么： " + sent);
     assertTrue(
-        run.out().contains("history repaired"),
-        "the user is told why the conversation works again: " + run.out());
-    // The file keeps its bytes: the repair belongs to the request, not to the record. The run appends
-    // its own two messages, and nothing else — no synthetic result is written into the history.
+        run.out().contains("历史已修复"),
+        "用户被告知对话为什么又能用了： " + run.out());
+    // 文件保留它的字节：修复属于请求，不属于记录。这次运行只追加它自己的两条消息，别无其他——不会
+    // 有合成的结果被写进历史。
     List<String> lines = Files.readAllLines(sessions.resolve(id + ".jsonl"));
-    assertEquals(4, lines.size(), "only the new turn is appended:\n" + lines);
+    assertEquals(4, lines.size(), "只追加了新回合：\n" + lines);
     assertTrue(
         lines.get(1).contains("\"tool_calls\""),
-        "the interrupted turn is still exactly as it was recorded:\n" + lines);
+        "被中断的回合仍与记录时一模一样：\n" + lines);
     assertTrue(
-        lines.stream().noneMatch(line -> line.contains("not run")),
-        "the repair is not written back:\n" + lines);
+        lines.stream().noneMatch(line -> line.contains("未运行")),
+        "修复没有被写回：\n" + lines);
   }
 
   @Test
   void aResultThatSomethingDisplacedDuringTheTurnIsCarriedBackForTheRequest() throws IOException {
-    // Reported shape: the assistant asked for a call, something was written into the session before
-    // the result was, and the result then sat past it. Sent as recorded, the tool message answers no
-    // assistant message the API can see, and every later turn came back as
-    // "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'".
+    // 报告出来的形态：助手请求了一次调用，结果尚未写入之前有别的东西被写进了会话，结果于是落在它
+    // 之后。照记录原样发送时，那条 tool 消息回答不了 API 能看到的助手消息，之后每个回合都以
+    // "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"。
     writeConfig("openai", server.openAiBaseUrl(), true);
     Path sessions = Files.createDirectories(home.resolve("sessions"));
     String id = "20260912-010102-abcd";
@@ -555,21 +544,21 @@ class CliEndToEndTest {
     assertEquals(0, run.exitCode(), run.err());
     String sent = server.lastRequest().body();
     assertEquals(1, occurrences(sent, "\"tool_call_id\":\"call_1\""),
-        "the real result is sent once, and nothing is invented beside it: " + sent);
-    assertFalse(sent.contains("not run"), "the call was answered: " + sent);
+        "真实结果只发送一次，旁边没有编造任何东西： " + sent);
+    assertFalse(sent.contains("未运行"), "该调用得到了回答： " + sent);
     int answer = sent.indexOf("\"role\":\"tool\"");
     int probe = sent.indexOf("a probe written mid-turn");
     assertTrue(answer > 0 && probe > answer,
-        "the answer goes back into its turn, before what displaced it: " + sent);
+        "回答回到它所属的回合，排在挤走它的东西之前： " + sent);
     assertTrue(
-        run.out().contains("history repaired") && run.out().contains("moved back"),
-        "the transcript says what was done to the request: " + run.out());
-    // The record is untouched: the repair is a statement about what to send.
+        run.out().contains("历史已修复") && run.out().contains("带回了提出它们的那个回合"),
+        "转录说明了请求被做了什么处理： " + run.out());
+    // 记录原封不动：修复只是关于「发送什么」的陈述。
     List<String> lines = Files.readAllLines(sessions.resolve(id + ".jsonl"));
-    assertEquals(6, lines.size(), "only the new turn is appended:\n" + lines);
+    assertEquals(6, lines.size(), "只追加了新回合：\n" + lines);
     assertEquals(
         1, occurrences(String.join("\n", lines), "\"type\":\"user\",\"text\":\"a probe written mid-turn\""),
-        "the displaced message stays where it was written:\n" + lines);
+        "被挤走的消息仍留在它被写入的位置：\n" + lines);
   }
 
   private static int occurrences(String haystack, String needle) {
@@ -592,10 +581,10 @@ class CliEndToEndTest {
     assertEquals(0, run.exitCode(), run.err());
     assertTrue(run.out().contains("read it via anthropic"), run.out());
     assertEquals(2, server.requestCount());
-    assertEquals("sk-test-key-1234", server.lastRequest().apiKey(), "x-api-key header expected");
+    assertEquals("sk-test-key-1234", server.lastRequest().apiKey(), "预期使用 x-api-key 头");
     assertTrue(
         server.lastRequest().body().contains("anthropic round trip"),
-        "tool result must be mapped into a tool_result block: " + server.lastRequest().body());
+        "工具结果必须映射进 tool_result 块： " + server.lastRequest().body());
   }
 
   @Test
@@ -608,11 +597,11 @@ class CliEndToEndTest {
     Run run = runCli(args("create nope.txt"));
 
     assertEquals(0, run.exitCode(), run.err());
-    assertFalse(Files.exists(workspace.resolve("nope.txt")), "denied command must not run");
+    assertFalse(Files.exists(workspace.resolve("nope.txt")), "被拒绝的命令绝不能运行");
     String feedback = server.lastRequest().body();
     assertTrue(
-        feedback.contains("rejected") || feedback.contains("denied"),
-        "the model must learn the call was refused: " + feedback);
+        feedback.contains("拒绝"),
+        "模型必须得知该调用已被拒绝： " + feedback);
   }
 
   @Test
@@ -624,7 +613,7 @@ class CliEndToEndTest {
 
     assertEquals(0, run.exitCode(), run.err());
     assertTrue(run.out().contains("just talking"), run.out());
-    assertEquals(1, server.requestCount(), "a plain answer must not trigger another turn");
+    assertEquals(1, server.requestCount(), "普通回答不得触发另一个回合");
   }
 
   @Test
@@ -634,10 +623,10 @@ class CliEndToEndTest {
 
     Run run = runCli(args("hello"));
 
-    assertEquals(1, run.exitCode(), "a provider failure is not a success");
+    assertEquals(1, run.exitCode(), "提供方失败不算成功");
     assertTrue(
         (run.err() + run.out()).contains("401"),
-        "the status code must be reported: out=" + run.out() + " err=" + run.err());
+        "状态码必须被报告：out=" + run.out() + " err=" + run.err());
   }
 
   @Test
@@ -655,10 +644,9 @@ class CliEndToEndTest {
 
   @Test
   void aRestartAskedForByAnEarlierRunDoesNotEndThisOne() throws Exception {
-    // The flag is one process asking itself one question, and the answer belongs to the run that
-    // made it. A process that runs the CLI more than once — this suite does, an embedder may — must
-    // not have the next run report a restart it never asked for: the tool sets the flag, the run
-    // starts by clearing it, and only a restart *this* run asked for ends it.
+    // 这个标志是一个进程问自己的一个问题，答案属于提出它的那次运行。会多次运行 CLI 的进程——本测试
+    // 套件如此，嵌入方也可能如此——绝不能让下一次运行报告一个它从未请求过的重启：工具设置标志，运行
+    // 开始时清除它，只有*本次*运行请求的重启才会结束它。
     Path project = Files.createDirectories(tmp.resolve("self-build"));
     Files.createDirectories(project.resolve("target"));
     Files.writeString(project.resolve("target/ccj.jar"), "installed");
@@ -671,22 +659,21 @@ class CliEndToEndTest {
                 new ToolContext(project, Approver.ALWAYS, 0));
 
     assertFalse(installed.error(), installed.content());
-    assertTrue(RestartTool.restartRequested(), "the tool did ask to be restarted on the new jar");
+    assertTrue(RestartTool.restartRequested(), "该工具确实请求过用新 jar 重启");
 
     writeConfig("openai", server.openAiBaseUrl(), true);
     server.enqueue(MockModelServer.openAiText("no restart here"));
 
     Run run = runCli(args("just answer"));
 
-    assertEquals(0, run.exitCode(), "this run asked for nothing: " + run.err());
+    assertEquals(0, run.exitCode(), "这次运行什么都没请求： " + run.err());
     assertTrue(run.out().contains("no restart here"), run.out());
   }
 
   @Test
   void theReplEndsItselfWhenTheAgentInstallsANewJar() throws IOException {
-    // The REPL used to keep reading stdin after a restart, so the process went on running bytes that
-    // were no longer on disk and the launcher never got its handover. One turn, then exit 75 — a
-    // second line on stdin is never read, which is what the request count proves.
+    // REPL 过去会在重启后继续读取 stdin，于是进程继续运行早已不在磁盘上的字节，启动器也永远等不到
+    // 交接。一个回合，然后退出码 75——stdin 上的第二行永远不会被读取，这正是请求计数所证明的。
     Files.createDirectories(workspace.resolve("target"));
     Files.writeString(workspace.resolve("target/ccj.jar"), "installed");
     Files.writeString(workspace.resolve("target/ccj-next.jar"), "next");
@@ -708,30 +695,30 @@ class CliEndToEndTest {
             workspace.toString());
 
     assertEquals(RestartTool.RESTART_EXIT, run.exitCode(), run.err());
-    assertEquals(1, server.requestCount(), "the turn after the restart must not run");
+    assertEquals(1, server.requestCount(), "重启之后的回合绝不能运行");
     assertEquals("next", Files.readString(workspace.resolve("target/ccj.jar")));
-    // The next process has to come back to this conversation, and the note is how it will: the
-    // launcher re-runs the same command, which carries no session of its own.
-    assertTrue(run.err().contains("resuming session"), run.err());
+    // 下一个进程必须回到这个会话，而那则记录就是它回归的方式：启动器重新运行同一条命令，而那条命令
+    // 本身不携带任何会话。
+    assertTrue(run.err().contains("恢复会话"), run.err());
     assertEquals(
         Optional.of(sessionIdIn(run.err())),
         ResumePoint.read(home),
-        "the session the REPL was on is written down for the process that follows: " + run.err());
+        "REPL 所在的那个会话被写下来，留给后面的进程： " + run.err());
   }
 
-  /** The session id named by a "resuming session <id>" line. */
+  /** 「恢复会话 <id>」一行所点名的会话 id。 */
   private static String sessionIdIn(String text) {
-    int at = text.indexOf("resuming session ");
+    int at = text.indexOf("恢复会话 ");
     assertTrue(at >= 0, text);
-    String rest = text.substring(at + "resuming session ".length());
+    String rest = text.substring(at + "恢复会话 ".length());
     int end = rest.indexOf('\n');
     return (end < 0 ? rest : rest.substring(0, end)).strip();
   }
 
   @Test
   void theProcessThatFollowsARestartResumesTheConversation() throws IOException {
-    // What the user asked for in one sentence: a restart should put them back where they were. The
-    // launcher re-runs the same command with no --resume, so the fact has to survive on disk.
+    // 用户用一句话提出的要求：重启应该把人放回原来的地方。启动器重跑同一条命令且不带 --resume，
+    // 所以这个事实必须在磁盘上活下来。
     Files.createDirectories(workspace.resolve("target"));
     Files.writeString(workspace.resolve("target/ccj.jar"), "installed");
     Files.writeString(workspace.resolve("target/ccj-next.jar"), "next");
@@ -753,10 +740,10 @@ class CliEndToEndTest {
     String session = sessionIdIn(restarted.err());
     assertTrue(
         Files.exists(home.resolve("sessions").resolve(session + ".jsonl")),
-        "the conversation is on disk, so resuming it is possible at all");
+        "对话在磁盘上，所以恢复它才成为可能");
 
-    // The next process is started exactly the way the launcher starts it: the same command, with
-    // nothing added. It must open the conversation the restart left behind.
+    // 下一个进程完全按启动器启动它的方式启动：同一条命令，不加任何东西。它必须打开重启留下的那个
+    // 会话。
     Run again =
         runCliWithStdin(
             "what did we just do?\n",
@@ -767,28 +754,28 @@ class CliEndToEndTest {
             "-C", workspace.toString());
 
     assertEquals(0, again.exitCode(), again.err());
-    // Proof it opened that conversation: the only session with messages is the one the restart was
-    // on, so if this run used a new session its turn would be in a second file.
+    // 证明它打开了那个会话：唯一带有消息的会话就是重启时所在的那个，因此如果这次运行用了新会话，
+    // 它的回合就会出现在第二个文件里。
     List<Path> files;
     try (Stream<Path> listed = Files.list(home.resolve("sessions"))) {
       files = listed.toList();
     }
-    assertEquals(1, files.size(), "one conversation only, and it is the resumed one: " + files);
+    assertEquals(1, files.size(), "只有一个对话，而且它就是被恢复的那个： " + files);
     List<String> written = Files.readAllLines(files.get(0));
     assertTrue(
         written.stream().anyMatch(line -> line.contains("what did we just do?")),
-        "the question went to the resumed conversation:\n" + written);
+        "问题进入了被恢复的对话：\n" + written);
     assertTrue(
         written.stream().anyMatch(line -> line.contains("install the new jar")),
-        "which still has the turn the restart interrupted:\n" + written);
-    // And the note is spent: one restart, one resume.
-    assertTrue(ResumePoint.read(home).isEmpty(), "the note answers once");
+        "它仍然保有重启中断的那个回合：\n" + written);
+    // 而那则记录已被用掉：一次重启，一次恢复。
+    assertTrue(ResumePoint.read(home).isEmpty(), "那则记录只回答一次");
   }
 
   @Test
   void anExplicitResumeBeatsWhatTheRestartRemembered() throws IOException {
-    // --resume is the user saying where this run goes; the note only remembers where the last one
-    // was. Getting this backwards would make the flag unusable right after a restart.
+    // --resume 是用户在说这次运行去哪里；那则记录只记得上一次在哪。把这两者弄反，会让该参数在重启
+    // 之后立刻变得没法用。
     writeConfig("openai", server.openAiBaseUrl(), true);
     Path sessions = Files.createDirectories(home.resolve("sessions"));
     String remembered = "20260913-010000-abcd";
@@ -819,19 +806,19 @@ class CliEndToEndTest {
     assertEquals(0, run.exitCode(), run.err());
     List<String> rememberedLines = Files.readAllLines(sessions.resolve(remembered + ".jsonl"));
     assertEquals(
-        2, rememberedLines.size(), "the remembered session must not gain this run's turn:\n"
+        2, rememberedLines.size(), "被记住的会话不得得到本次运行的回合：\n"
             + rememberedLines);
     assertTrue(
         Files.readAllLines(sessions.resolve(chosen + ".jsonl")).stream()
             .anyMatch(line -> line.contains("in the chosen session")),
-        "the turn went to the session the flag named");
-    assertTrue(ResumePoint.read(home).isEmpty(), "and the note is spent, not left to fire later");
+        "回合进入了参数点名的会话");
+    assertTrue(ResumePoint.read(home).isEmpty(), "而那则记录已被用掉，不会留到以后触发");
   }
 
   @Test
   void aRememberedConversationThatIsGoneStartsFreshInsteadOfFailing() throws IOException {
     writeConfig("openai", server.openAiBaseUrl(), true);
-    ResumePoint.write(home, "20260913-010000-abcd");   // never existed on disk
+    ResumePoint.write(home, "20260913-010000-abcd");   // 磁盘上从未存在过
     server.enqueue(MockModelServer.openAiText("fresh start"));
 
     Run run = runCli("-p", "hello", "--home", home.toString(),
@@ -839,14 +826,14 @@ class CliEndToEndTest {
 
     assertEquals(0, run.exitCode(), run.err());
     assertTrue(run.out().contains("fresh start"), run.out());
-    assertTrue(ResumePoint.read(home).isEmpty(), "and a dead note does not linger");
+    assertTrue(ResumePoint.read(home).isEmpty(), "而失效的记录不会滞留");
   }
 
   @Test
   void unknownFlagsAreRejectedBeforeAnyRequest() {
     Run run = runCli("--not-a-flag");
 
-    assertEquals(2, run.exitCode(), "usage errors exit 2");
+    assertEquals(2, run.exitCode(), "用法错误以退出码 2 结束");
     assertEquals(0, server.requestCount());
   }
 }

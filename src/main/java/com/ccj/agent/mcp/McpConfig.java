@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The MCP servers this machine has been told about.
+ * 这台机器被告知过的 MCP 服务器。
  *
  * <pre>
  * { "servers": [
@@ -21,21 +21,19 @@ import java.util.Map;
  * ] }
  * </pre>
  *
- * <p>Where this lives, and why: in the application home, beside the approvals file, rather than in the
- * project. A server is a command that gets executed and a set of tools the model may then call, which
- * is not a decision a repository should be able to make on the user's behalf by being cloned.
+ * <p>它放在哪里、为什么：放在应用主目录、审批文件旁边，而不是项目里。一个服务器就是一条会被
+ * 执行的命令，外加一组此后模型可以调用的工具，这不是一个仓库靠被克隆就能替用户做出的决定。
  *
- * <p>Every tool it brings is named {@code mcp__<server>__<tool>} — the server is part of the name
- * because an approval prompt and a rule have to be able to say which one is asking. A name that read
- * just {@code read_file} would be indistinguishable from a built-in, and "which program is this" is
- * the first question anybody watching asks.
+ * <p>它带来的每个工具都叫 {@code mcp__<server>__<tool>}——服务器是名字的一部分，因为审批提示
+ * 和规则必须能说出是哪一台在请求。一个只读作 {@code read_file} 的名字，会和内置工具无从区分，
+ * 而「这是哪个程序」是任何看着的人问出的第一个问题。
  */
 public final class McpConfig {
 
-  /** One server: what to run, and what to call it. */
+  /** 一个服务器：运行什么，以及叫它什么。 */
   public record Server(String name, String command, List<String> args, Map<String, String> env) {
 
-    /** The prefix every one of this server's tools carries. */
+    /** 这个服务器的每个工具都携带的前缀。 */
     public String toolPrefix() {
       return "mcp__" + name + "__";
     }
@@ -49,17 +47,16 @@ public final class McpConfig {
     this.servers = List.copyOf(servers);
   }
 
-  /** Nothing configured: the common case, and the one that must cost nothing. */
+  /** 什么都没配置：最常见的情形，也是必须零成本的那一种。 */
   public static McpConfig none() {
     return new McpConfig(List.of());
   }
 
   /**
-   * The servers named in {@code file}.
+   * {@code file} 里点名的服务器。
    *
-   * <p>A malformed entry throws rather than being skipped: a server that silently does not start is a
-   * set of tools that silently is not there, and "why is the model not using my server" is not a
-   * question anybody should have to answer by reading a log.
+   * <p>格式错误的条目会抛错而不是被跳过：一个悄悄没启动的服务器，就是一组悄悄不存在的工具，
+   * 而「模型为什么不用我的服务器」这个问题，不该靠读日志来回答。
    */
   public static McpConfig from(Path file) {
     if (file == null || !Files.isRegularFile(file)) {
@@ -69,49 +66,49 @@ public final class McpConfig {
     try {
       root = Json.parse(Files.readString(file, StandardCharsets.UTF_8));
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot read " + file, e);
+      throw new UncheckedIOException("无法读取 " + file, e);
     }
     if (!root.isObject()) {
-      throw new IllegalArgumentException("the MCP file must be a JSON object: " + file);
+      throw new IllegalArgumentException("MCP 文件必须是一个 JSON 对象：" + file);
     }
     JsonNode entries = root.get("servers");
     if (entries == null || entries.isNull()) {
       return none();
     }
     if (!entries.isArray()) {
-      throw new IllegalArgumentException("'servers' must be an array in " + file);
+      throw new IllegalArgumentException("'servers' 必须是数组，见 " + file);
     }
     if (entries.size() > MAX_SERVERS) {
       throw new IllegalArgumentException(
-          "'servers' holds " + entries.size() + " entries; the limit is " + MAX_SERVERS + " in " + file);
+          "'servers' 里有 " + entries.size() + " 个条目；" + file + " 里的上限是 " + MAX_SERVERS);
     }
     List<Server> servers = new ArrayList<>();
     for (JsonNode entry : entries) {
       if (!entry.isObject()) {
-        throw new IllegalArgumentException("each server must be an object in " + file + ": " + entry);
+        throw new IllegalArgumentException("每个 server 都必须是对象，见 " + file + "：" + entry);
       }
       String name = text(entry, "name", file);
       String command = text(entry, "command", file);
       if (name == null || command == null) {
         throw new IllegalArgumentException(
-            "a server needs a 'name' and a 'command' in " + file + ": " + entry);
+            "server 需要 'name' 和 'command'，见 " + file + "：" + entry);
       }
       if (name.contains("__") || name.contains(" ")) {
         throw new IllegalArgumentException(
-            "'" + name + "' cannot be a server name: the tool names it prefixes use '__' as their"
-                + " separator, and spaces make a name nobody can type. Use letters, digits, '-' and"
-                + " '_': " + file);
+            "'" + name + "' 不能作为服务器名：以它为前缀的工具名用 '__' 作分隔符，而空格会造出"
+                + "没人打得出来的名字。请只用字母、数字、'-' 和 '_'：" + file);
       }
       List<String> args = new ArrayList<>();
       JsonNode argsNode = entry.get("args");
       if (argsNode != null && !argsNode.isNull()) {
         if (!argsNode.isArray()) {
-          throw new IllegalArgumentException("server 'args' must be an array in " + file + ": " + entry);
+          throw new IllegalArgumentException(
+              "server 的 'args' 必须是数组，见 " + file + "：" + entry);
         }
         for (JsonNode arg : argsNode) {
           if (!arg.isTextual()) {
             throw new IllegalArgumentException(
-                "every entry of 'args' must be a string in " + file + ": " + arg);
+                "'args' 的每个条目都必须是字符串，见 " + file + "：" + arg);
           }
           args.add(arg.asText());
         }
@@ -120,7 +117,8 @@ public final class McpConfig {
       JsonNode envNode = entry.get("env");
       if (envNode != null && !envNode.isNull()) {
         if (!envNode.isObject()) {
-          throw new IllegalArgumentException("server 'env' must be an object in " + file + ": " + entry);
+          throw new IllegalArgumentException(
+              "server 的 'env' 必须是对象，见 " + file + "：" + entry);
         }
         envNode
             .fields()
@@ -128,7 +126,10 @@ public final class McpConfig {
                 pair -> {
                   if (!pair.getValue().isTextual()) {
                     throw new IllegalArgumentException(
-                        "every value of 'env' must be a string in " + file + ": " + pair.getKey());
+                        "'env' 的每个值都必须是字符串，见 "
+                            + file
+                            + "："
+                            + pair.getKey());
                   }
                   env.put(pair.getKey(), pair.getValue().asText());
                 });
@@ -152,7 +153,7 @@ public final class McpConfig {
       return null;
     }
     if (!node.isTextual()) {
-      throw new IllegalArgumentException("server '" + field + "' must be a string in " + file);
+      throw new IllegalArgumentException("server 的 '" + field + "' 必须是字符串，见 " + file);
     }
     String value = node.asText().strip();
     return value.isEmpty() ? null : value;

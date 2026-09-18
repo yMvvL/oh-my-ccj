@@ -17,18 +17,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The MCP client, against a real server process spawned the way the product spawns one.
+ * MCP 客户端，针对一个按产品方式派生的真实服务器进程来测试。
  *
- * <p>The interesting failures here are all about the other end being a separate program: one that
- * speaks an older revision, one that logs until its pipe fills, one that dies while a call is in
- * flight, one that never answers. Each is a test rather than a paragraph because each is a way for
- * "bring your own tools" to hang the agent.
+ * <p>这里有意思的失败，全都关于另一端是另一个程序：讲旧修订版的、一直打日志直到管道写满的、
+ * 在一次调用途中死掉的、从不回答的。每一种都是一个测试而不是一段文字，因为每一种都是「带上你
+ * 自己的工具」把代理卡住的方式。
  */
 class McpClientTest {
 
   @TempDir Path dir;
 
-  /** The fixture, run out of the test classpath exactly as a real server is run. */
+  /** 那个 fixture，像真实服务器一样从测试 classpath 里跑起来。 */
   private static McpConfig.Server fixture(String name, String... args) {
     List<String> argv = new java.util.ArrayList<>(List.of(args));
     List<String> all = new java.util.ArrayList<>();
@@ -56,7 +55,7 @@ class McpClientTest {
       assertEquals("mcp__fixture__echo", echo.name());
       assertTrue(echo.description().contains("Echo back"), echo.description());
       assertTrue(echo.description().contains("MCP server 'fixture'"),
-          "the tool says where it came from: " + echo.description());
+          "工具会说明自己来自哪里：" + echo.description());
       assertTrue(echo.parametersJson().contains("\"text\""), echo.parametersJson());
     }
   }
@@ -81,9 +80,8 @@ class McpClientTest {
 
   @Test
   void aServerThatOnlySpeaksTheOlderRevisionIsAskedAgain() {
-    // The one retry the protocol allows, and the reason it is worth having: a server one revision
-    // behind is a server that works, and refusing to speak to it would be a client bug dressed as
-    // strictness.
+    // 协议只允许的那一次重试，以及它值得拥有的理由：落后一个修订版的服务器是一台能用的
+    // 服务器，拒绝和它说话就是伪装成严格的客户端 bug。
     try (McpClient client = McpClient.start(fixture("old", "old-protocol"))) {
       assertEquals("echo: hi", client.callTool("echo", "{\"text\":\"hi\"}"));
     }
@@ -91,8 +89,8 @@ class McpClientTest {
 
   @Test
   void aServerThatLogsUntilItsPipeFillsDoesNotWedgeTheClient() {
-    // stderr is drained on its own thread. Without that the server blocks on a full pipe and never
-    // answers — and the failure looks like a hang with nothing to read.
+    // stderr 在自己的线程上被抽干。没有它，服务器会阻塞在写满的管道上、永不回答——而那失败
+    // 看起来就是一次没什么可读的卡死。
     try (McpClient client = McpClient.start(fixture("noisy", "noisy"))) {
       assertEquals("echo: still here", client.callTool("echo", "{\"text\":\"still here\"}"));
     }
@@ -104,8 +102,8 @@ class McpClientTest {
       McpClient.McpToolFailure failure =
           assertThrows(McpClient.McpToolFailure.class, () -> client.callTool("slow", "{}"));
 
-      assertTrue(failure.getMessage().contains("did not answer"), failure.getMessage());
-      assertTrue(failure.getMessage().contains("'slow'"), "it names the server: " + failure.getMessage());
+      assertTrue(failure.getMessage().contains("没有回应"), failure.getMessage());
+      assertTrue(failure.getMessage().contains("'slow'"), "它会点名服务器：" + failure.getMessage());
       assertTrue(failure.getMessage().contains("tools/call"), failure.getMessage());
       assertTrue(failure.getMessage().contains("500ms"), failure.getMessage());
     }
@@ -119,13 +117,13 @@ class McpClientTest {
     McpClient.McpToolFailure failure =
         assertThrows(McpClient.McpToolFailure.class, () -> client.callTool("echo", "{\"text\":\"x\"}"));
 
-    assertTrue(failure.getMessage().contains("already closed")
-        || failure.getMessage().contains("not running"), failure.getMessage());
+    assertTrue(failure.getMessage().contains("已经关闭")
+        || failure.getMessage().contains("不再运行"), failure.getMessage());
   }
 
   @Test
   void aServerThatExitsDuringTheHandshakeNamesItselfAndWhy() {
-    // A command that is not a server at all — the entry most likely to be wrong in a config file.
+    // 一条根本不是服务器的命令——配置文件里最容易写错的那个条目。
     McpConfig.Server broken =
         new McpConfig.Server("broken", "/bin/sh", List.of("-c", "echo 'not an MCP server' >&2; exit 3"), Map.of());
 
@@ -137,7 +135,7 @@ class McpClientTest {
   @Test
   void everyCallGoesThroughTheApproverAndTheToolNameIsTheSubject() {
     McpTools tools = McpTools.discover(null);
-    assertTrue(tools.isEmpty(), "no file, no servers, nothing to start");
+    assertTrue(tools.isEmpty(), "没有文件、没有服务器，就没有可启动的东西");
 
     McpConfig.Server server = fixture("fixture");
     McpTool echo = new McpTool(server, "echo", "Echo back.", "{}");
@@ -157,15 +155,14 @@ class McpClientTest {
                 4096));
 
     assertTrue(denied.error(), denied.content());
-    assertEquals("mcp__fixture__echo", asked.get(0).tool(), "a rule matches on this name");
-    assertTrue(denied.content().contains("rejected"), denied.content());
+    assertEquals("mcp__fixture__echo", asked.get(0).tool(), "规则就是靠这个名字匹配的");
+    assertTrue(denied.content().contains("被用户拒绝"), denied.content());
   }
 
   @Test
   void aConfiguredServerIsWrittenDownRatherThanAssumed() throws IOException {
-    // The file is read per run, and what it says is what is started. Measured: a name with '__' in it
-    // would make the tool names ambiguous, so it is refused rather than producing names nobody can
-    // rule on.
+    // 文件每次运行都会被读取，它写什么就启动什么。实测过：名字里带 '__' 会让工具名产生歧义，
+    // 所以它被拒绝，而不是产出没人能据以立规则的名字。
     Path file = dir.resolve("mcp.json");
     Files.writeString(
         file,
@@ -185,7 +182,7 @@ class McpClientTest {
     Files.writeString(file, "{\"servers\": [{\"name\": \"a__b\", \"command\": \"x\"}]}");
     IllegalArgumentException refused =
         assertThrows(IllegalArgumentException.class, () -> McpConfig.from(file));
-    assertTrue(refused.getMessage().contains("cannot be a server name"), refused.getMessage());
+    assertTrue(refused.getMessage().contains("不能作为服务器名"), refused.getMessage());
 
     Files.writeString(file, "{\"servers\": [{\"name\": \"fs\"}]}");
     IllegalArgumentException noCommand =

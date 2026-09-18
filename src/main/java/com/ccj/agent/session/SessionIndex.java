@@ -9,39 +9,34 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * What the sidebar needs about every session, without reading every session.
+ * 侧栏需要的、关于每个会话的东西，而不必读每个会话。
  *
- * <p>Listing used to parse every session file to find its title, which is the first user message and
- * therefore somewhere in the middle of the file. That is linear in the number of bytes on disk, and
- * the page re-reads the list after every finished turn — so a directory of long sessions made every
- * turn end with a stall measured in hundreds of milliseconds, on a path nobody could see.
+ * <p>列表过去靠解析每个会话文件来找它的标题，也就是第一条用户消息，因此它位于文件的中间某处。这与
+ * 磁盘上的字节数成正比，而页面在每个回合结束后都会重读一次列表——于是装满长会话的目录让每个回合结束时
+ * 都卡上几百毫秒，卡在一条没人看得见的路径上。
  *
- * <p>This is a cache, not a second source of truth. Nothing here reaches the disk: a session the
- * index has never been told about is read once (by {@link SessionStore}) and then remembered, and an
- * entry is dropped the moment its file changes under it — which is what keeps a file deleted or
- * truncated by hand behaving exactly as it did before, since the answer the index would have given
- * no longer matches what is there.
+ * <p>这是缓存，不是第二个真相来源。这里的东西都不碰磁盘：索引从未被告知过的会话被读一次（由
+ * {@link SessionStore} 读）然后被记住，而条目在它下面的文件一变时就被丢掉——正是这一点让被手动删掉或
+ * 截断的文件表现得和从前一模一样，因为索引本来会给出的答案已经和那里的实际内容对不上了。
  *
- * <p>The check is a file's modification time and size together, not either alone: a session that
- * receives a message and is written in the same millisecond keeps its mtime, and only the size
- * betrays it. Both are a stat, which is what makes this worth doing at all.
+ * <p>检查的是文件的修改时间与大小合在一起，而不是其中单独一个：一个收到消息并在同一毫秒内写出的会话
+ * 保持它的 mtime，只有大小会出卖它。两者都只是一次 stat，这正是这件事值得做的原因。
  *
- * <p>Not thread-safe by accident: the map is concurrent because a browser refresh and a finished turn
- * can ask at the same time, and the value under a key is immutable.
+ * <p>不是碰巧线程安全的：这张 map 是并发的，因为浏览器一次刷新和一个刚结束的回合可能同时来问，而一个
+ * 键下的值是不可变的。
  */
 final class SessionIndex {
 
-  /** Everything a row needs: the file it describes and what the listing derived from it. */
+  /** 一行需要的全部东西：它描述的文件，以及列表从该文件推导出的东西。 */
   record Entry(Instant modified, long size, SessionStore.Summary summary) {}
 
   private final Map<Path, Entry> entries = new ConcurrentHashMap<>();
 
   /**
-   * The summary for {@code file}, from the index when the file has not moved, and from
-   * {@code derive} otherwise — which is the only path that reads the file.
+   * {@code file} 的摘要：文件没动过时来自索引，否则来自 {@code derive}——后者是唯一读文件的路径。
    *
-   * @param id the session id, which the file name no longer has to be parsed for
-   * @param derive reads the file and builds its summary; called at most once per change
+   * @param id 会话 id，文件名不必再为了它被解析
+   * @param derive 读文件并构建它的摘要；每次变化至多被调用一次
    */
   SessionStore.Summary summaryFor(Path file, String id, Instant modified, long size, Derive derive) {
     Entry known = entries.get(file);
@@ -53,14 +48,14 @@ final class SessionIndex {
     return summary;
   }
 
-  /** Forgets {@code file}, so the next listing reads it again. */
+  /** 忘掉 {@code file}，好让下次列表重新读它。 */
   void forget(Path file) {
     entries.remove(file);
   }
 
   /**
-   * Forgets everything under {@code directory} that is no longer on disk, so a session deleted while
-   * a listing is not running does not keep its row alive through a stale entry.
+   * 忘掉 {@code directory} 之下所有已不在磁盘上的条目，好让一个在没有列表运行时被删掉的会话，不会
+   * 靠一条过期的条目把自己的行一直留着。
    */
   void retain(Path directory, List<Path> present) {
     if (entries.isEmpty()) {
@@ -70,13 +65,13 @@ final class SessionIndex {
     entries.keySet().removeIf(path -> path.startsWith(directory) && !live.contains(path));
   }
 
-  /** Builds the summary a missing entry needs; separated so tests can count how often it runs. */
+  /** 构建一条缺失条目所需的摘要；单独拎出来是为了让测试能数它跑了几次。 */
   @FunctionalInterface
   interface Derive {
     SessionStore.Summary derive(String id, Path file, Instant modified);
   }
 
-  /** The messages a listing needs from a file, and nothing more than the first user message. */
+  /** 一次列表从文件里需要的消息，且不超过第一条用户消息。 */
   static String titleOf(List<Message> messages) {
     for (Message message : messages) {
       if (message instanceof Message.User user) {

@@ -1,12 +1,12 @@
-# MCP servers
+# MCP 服务器
 
-A Model Context Protocol server is a program that offers tools over a small JSON-RPC conversation. ccj
-can start one and give the model its tools, which is how a capability this program does not have —
-a database, a browser, an internal API — becomes something the agent can call.
+Model Context Protocol 服务器是一个通过一小段 JSON-RPC 对话提供工具的程序。ccj 可以启动
+这样一个服务器，把它的工具交给模型——这个程序本来没有的能力（数据库、浏览器、内部 API）
+于是就成了 agent 可以调用的东西。
 
-## Configuring one
+## 配置一个服务器
 
-`<home>/mcp.json`, beside the approvals file and the config file:
+`<home>/mcp.json`，与审批文件和配置文件放在一起：
 
 ```json
 {
@@ -18,54 +18,50 @@ a database, a browser, an internal API — becomes something the agent can call.
 }
 ```
 
-| Field | Meaning |
+| 字段 | 含义 |
 |---|---|
-| `name` | what the server is called, and the middle of every tool name it contributes. Letters, digits, `-` and `_`; `__` is refused because it is the separator |
-| `command` | the program to run |
-| `args` | its arguments |
-| `env` | extra environment variables, on top of this process's |
+| `name` | 服务器的名字，也是它贡献的每个工具名中间那一段。允许字母、数字、`-` 和 `_`；`__` 会被拒绝，因为它是分隔符 |
+| `command` | 要运行的程序 |
+| `args` | 它的参数 |
+| `env` | 额外的环境变量，叠加在本进程的环境之上 |
 
-**In the application home, never in the project.** A server is a command that gets executed and a set
-of tools the model may then call, so it is not a decision a repository should be able to make on
-somebody's behalf by being cloned.
+**放在应用主目录里，永远不要放在项目里。** 服务器是一条会被执行的命令，也是一组模型随后
+可以调用的工具，所以这不是一个仓库靠「被 clone」就能替别人做出的决定。
 
-## How its tools appear
+## 它的工具长什么样
 
-Every tool is named `mcp__<server>__<tool>` — `mcp__fs__read_file`. Three parts, all load-bearing: the
-model can see where a capability came from, the transcript does not pretend a remote tool is a
-built-in, and an approval rule can name one server's tools (`mcp__fs__*`) or one of them exactly
-(`mcp__fs__read_file`).
+每个工具都叫 `mcp__<server>__<tool>`——例如 `mcp__fs__read_file`。三段都各有作用：模型能看
+出某个能力来自哪里，转录不会把一个远端工具假装成内置工具，审批规则也能点名某个服务器的全部工具
+（`mcp__fs__*`）或其中之一（`mcp__fs__read_file`）。
 
-**Every call goes through the same approver as `bash`.** A server's own idea of what it may do is not
-this program's idea, so a tool it offers is treated as a program that does things: it asks, the prompt
-names the tool and its arguments, and a rule can answer instead. A server cannot run unasked.
+**每次调用都走和 `bash` 相同的审批器。** 服务器自己对「我能做什么」的看法不是本程序的看法，
+所以它提供的工具会被当成一个会做事的程序来对待：先询问，提示里写出工具名和它的参数，也可以由
+规则代为应答。服务器不可能未经询问就运行。
 
-## What this client does and does not implement
+## 这个客户端实现了什么、故意没实现什么
 
-Implements, over the server's standard input and output:
+基于服务器的标准输入输出，已实现：
 
-- `initialize` (with a retry when a server only speaks the older protocol revision),
-  `notifications/initialized`, `tools/list`, `tools/call`.
-- One JSON object per line, answered by id, with a reader thread per server and a deadline per request.
-- Server stderr is drained and its tail is kept for error messages: a server that logs a lot would
-  otherwise block on a full pipe, and the symptom is a hang with nothing to read.
-- A server is started the first time one of its tools is called, and kept for the run. Discovery starts
-  each server once, asks what it has, and closes it again, so an agent that never uses a tool pays
-  nothing for it.
+- `initialize`（当服务器只会说更旧的那版协议时重试一次）、`notifications/initialized`、
+  `tools/list`、`tools/call`。
+- 每行一个 JSON 对象，按 id 应答，每个服务器一个读取线程，每个请求一个截止时间。
+- 服务器的 stderr 会被持续排空，并保留末尾内容用于错误消息：否则日志很多的服务器会阻塞在写满
+  的管道上，症状就是卡住且没有任何可读的信息。
+- 某个服务器的工具第一次被调用时才启动它，并在本次运行中一直保留。发现流程会把每个服务器启动
+  一次、问它有什么工具、再关掉，所以从不使用某个工具的 agent 不必为它付出任何代价。
 
-Not implemented, deliberately:
+以下则故意没有实现：
 
-- **HTTP/SSE transport.** A local process needs no ports, tokens or network, and half-supporting a
-  second transport is worse than saying plainly which one this is.
-- **Resources, prompts, sampling, notifications from the server.** This client is a tool client: the
-  loop gives the model tools, and everything else in the protocol would need somewhere to go that this
-  agent does not have.
-- **OAuth and the other authentication flows.** A server that needs a token gets it from `env`.
+- **HTTP/SSE 传输。** 本地进程不需要端口、token 或网络，而半吊子地支持第二种传输，比直接说
+  清楚它是哪一种更糟。
+- **服务器侧的 resources、prompts、sampling、通知。** 这个客户端是工具客户端：循环交给模型的
+  是工具，而协议里其余的部分需要有地方安放，本 agent 没有这样的地方。
+- **OAuth 及其它认证流程。** 需要 token 的服务器从 `env` 里取。
 
-## What was verified
+## 验证了什么
 
-`McpClientTest` runs a real server process out of the test classpath and checks discovery, a call, a
-tool that reports failure, a server one protocol revision behind, a server that logs until its pipe
-fills, one that never answers, one that is gone, and one that cannot start at all. Then, live: a
-server configured in `mcp.json`, its tool discovered at startup, called by the model through an
-approval prompt, and allowed by a rule that names the server.
+`McpClientTest` 会从测试 classpath 里跑起一个真实的服务器进程，检查：发现流程、一次调用、
+一个会上报失败的工具、一个协议版本落后一版的服务器、一个一直打日志直到管道写满的服务器、一个
+从不作答的服务器、一个已经不在的服务器，以及一个根本起不来的服务器。之后还有实机验证：在
+`mcp.json` 里配置一个服务器，启动时发现它的工具，由模型经审批提示调用，并由一条点名该服务器的
+规则放行。

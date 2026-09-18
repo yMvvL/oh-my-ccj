@@ -59,10 +59,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Drives the web API the way a browser does: real HTTP, real SSE, real tool execution.
+ * 像浏览器那样驱动 web API：真实的 HTTP、真实的 SSE、真实的工具执行。
  *
- * <p>The model is scripted, so what is under test is the web layer itself — event ordering, the
- * approval handshake, busy refusal, session switching and the token gate.
+ * <p>模型是脚本化的，所以被测的就是 web 层本身——事件顺序、审批握手、忙碌拒绝、会话切换和
+ * token 关卡。
  */
 class WebApiTest {
 
@@ -74,7 +74,7 @@ class WebApiTest {
   private Path sessions;
   private Path configFile;
   private final AtomicInteger factoryCalls = new AtomicInteger();
-  /** The behaviour the tests change; the hub holds {@link #chooser}, which delegates to it. */
+  /** 测试会改动的行为；hub 持有 {@link #chooser}，由它委托到这里。 */
   private com.ccj.agent.provider.ProviderStore providerStore;
   private volatile FolderChooser chooserBehaviour = title -> Optional.empty();
   private final FolderChooser chooser = title -> chooserBehaviour.choose(title);
@@ -83,7 +83,7 @@ class WebApiTest {
   private AgentHub hub;
   private HttpApi api;
   private String origin;
-  /** The stand-in vision endpoint, when a test starts one. */
+  /** 替身的视觉端点，仅在某个测试启动了它时存在。 */
   private HttpServer vision;
 
   @BeforeEach
@@ -113,7 +113,7 @@ class WebApiTest {
     start(token, new Wallpapers(null));
   }
 
-  /** A server whose wallpaper directory is a directory of the test's own choosing. */
+  /** 启动一个服务器，其壁纸目录由测试自己选定。 */
   private void start(String token, Wallpapers wallpapers) throws IOException {
     if (api != null) {
       api.close();
@@ -124,7 +124,7 @@ class WebApiTest {
   }
 
 
-  /** A registry whose default workspace is the test's working directory. */
+  /** 一个注册表，其默认工作区是测试的工作目录。 */
   private WorkspaceStore store() {
     return WorkspaceStore.open(tmp, cwd);
   }
@@ -137,21 +137,21 @@ class WebApiTest {
   }
 
   /**
-   * Mirrors what the CLI injects: a factory that validates like the real one and hands back a
-   * provider named after the model, so a runtime swap is observable from the outside.
+   * 镜像 CLI 注入的东西：一个像真货那样做校验的工厂，返回以模型命名的提供方，这样运行时的
+   * 切换从外部就观察得到。
    */
   private AgentHub hub(Provider initial, Config config) {
     return hub(initial, config, SessionStore.create(sessions));
   }
 
-  /** The approvals file these tests write rules into; the chain reads it on every decision. */
+  /** 这些测试写入规则的审批文件；决策链在每次判定时都会读它。 */
   private Path approvalsFile() {
     return tmp.resolve("approvals.json");
   }
 
   private AgentHub hub(Provider initial, Config config, FileSession session) {
     AgentHub built = hubWithoutRules(initial, config, session);
-    // Wired exactly as the CLI does it: rules for this project, in the application home.
+    // 严格按 CLI 的接法接线：本项目的规则，放在应用主目录里。
     built.setApprovalRules(ApprovalRules.open(approvalsFile(), cwd));
     return built;
   }
@@ -169,12 +169,12 @@ class WebApiTest {
             Map.of(),
             (candidate, env) -> {
               factoryCalls.incrementAndGet();
-              // Mirrors the real factory: built-ins plus whatever the user defined.
+              // 镜像真实的工厂：内置提供方，加上用户自定义的那些。
               String requested = candidate.provider();
               if (requested == null
                   || (!List.of("openai", "anthropic").contains(requested)
                       && providerStore.find(requested).isEmpty())) {
-                throw new IllegalArgumentException("unknown provider '" + requested + "'");
+                throw new IllegalArgumentException("未知的提供方 '" + requested + "'");
               }
               lastBuilt =
                   new MockProvider(candidate.model() == null ? "mock-model" : candidate.model());
@@ -187,18 +187,18 @@ class WebApiTest {
         session);
   }
 
-  // ------------------------------------------------------------------ tests
+  // ------------------------------------------------------------------ 测试
 
   @Test
   void servesThePageAndItsAssetsFromTheClasspath() throws Exception {
     String page = body("/");
     assertTrue(page.contains("<html"), page);
-    assertTrue(page.contains("/app.js"), "the page must reference its script");
-    assertTrue(page.contains("/style.css"), "the page must reference its stylesheet");
+    assertTrue(page.contains("/app.js"), "页面必须引用它自己的脚本");
+    assertTrue(page.contains("/style.css"), "页面必须引用它自己的样式表");
 
     String script = body("/app.js");
-    assertTrue(script.contains("EventSource"), "the page must actually listen to the event stream");
-    assertTrue(script.contains("/api/message"), "the page must be able to send a message");
+    assertTrue(script.contains("EventSource"), "页面必须真的监听事件流");
+    assertTrue(script.contains("/api/message"), "页面必须能发送消息");
     assertFalse(body("/style.css").isBlank());
   }
 
@@ -215,7 +215,7 @@ class WebApiTest {
 
     String listed = body("/api/wallpapers");
     assertTrue(listed.contains("\"1.png\""), listed);
-    assertTrue(listed.indexOf("1.png") < listed.indexOf("2.png"), "listed in reading order: " + listed);
+    assertTrue(listed.indexOf("1.png") < listed.indexOf("2.png"), "按阅读顺序列出：" + listed);
 
     HttpResponse<byte[]> image =
         client.send(
@@ -223,16 +223,16 @@ class WebApiTest {
             HttpResponse.BodyHandlers.ofByteArray());
     assertEquals(200, image.statusCode());
     assertEquals("image/png", image.headers().firstValue("content-type").orElse(""));
-    assertArrayEquals(png, image.body(), "the bytes are the file's own");
+    assertArrayEquals(png, image.body(), "这些字节就是文件本身的字节");
 
-    assertEquals(404, get("/wallpaper/../config.json").statusCode(), "a traversal is not a name");
-    assertEquals(404, get("/wallpaper/nope.png").statusCode(), "and nor is a file that is not there");
+    assertEquals(404, get("/wallpaper/../config.json").statusCode(), "目录穿越不是一个名字");
+    assertEquals(404, get("/wallpaper/nope.png").statusCode(), "不存在的文件也不是");
   }
 
   @Test
   void aServerWithNoWallpaperDirectoryOffersNone() throws Exception {
-    // The page hides its control on an empty list, so "no directory" has to be an empty list rather
-    // than an error it would then have to interpret.
+    // 列表为空时页面会把自己的控件藏起来，所以「没有目录」必须是一个空列表，而不是一个它
+    // 还得去解读的错误。
     start(null, new Wallpapers(tmp.resolve("nothing-here")));
 
     assertEquals("{\"wallpapers\":[]}", body("/api/wallpapers"));
@@ -248,8 +248,8 @@ class WebApiTest {
     assertEquals("http://mock.invalid/v1", status.path("baseUrl").asText());
     assertEquals(cwd.toString(), status.path("cwd").asText());
     assertFalse(status.path("sessionId").asText().isBlank());
-    assertFalse(status.path("busy").asBoolean(), "nothing should be running yet");
-    assertEquals(8, status.path("tools").size(), "every standard tool must be advertised");
+    assertFalse(status.path("busy").asBoolean(), "此刻还不该有任何东西在运行");
+    assertEquals(8, status.path("tools").size(), "每个标准工具都必须被公布出来");
     assertEquals("read", status.path("tools").get(0).path("name").asText());
   }
 
@@ -289,7 +289,7 @@ class WebApiTest {
       assertEquals("bash", approval.path("title").asText());
       assertTrue(approval.path("detail").asText().contains("made.txt"), approval.toString());
       assertFalse(
-          Files.exists(cwd.resolve("made.txt")), "nothing may happen while the approval is pending");
+          Files.exists(cwd.resolve("made.txt")), "审批还挂着的时候什么都不能发生");
 
       JsonNode start = sse.await("tool", 1000);
       assertEquals("start", start.path("state").asText());
@@ -312,47 +312,43 @@ class WebApiTest {
 
   @Test
   void theStreamSendsARealKeepAliveRatherThanAComment() throws Exception {
-    // The bug this pins, measured on a session waiting for an approval: the keep-alive was `: ping`,
-    // an SSE *comment*. A comment is delivered to nobody — EventSource dispatches only frames with a
-    // data field — so the page's `lastEventAt` never moved, its 20-second "the stream is dead" timer
-    // fired on a perfectly healthy connection, and the page reconnected underneath a prompt that was
-    // still open. To the user that is a prompt that flickers and then disappears.
+    // 这里钉住的 bug，是在一个等待审批的会话上测出来的：保活曾经是 `: ping`，一个 SSE 的
+    // *注释*。注释不会投递给任何人——EventSource 只派发带 data 字段的帧——所以页面的
+    // `lastEventAt` 从不更新，它那个 20 秒的「流已死」计时器在一条完全健康的连接上开火，页面
+    // 就在一个仍然开着的提示底下重连了。对用户来说，那就是一个闪一下然后消失的提示。
     //
-    // Asserted on the frame the server actually writes, because the failure was invisible to both
-    // sides: the server believed it was keeping the connection alive and the page believed the
-    // connection was gone.
+    // 断言针对的是服务器真正写出的那个帧，因为这次失败对双方都是不可见的：服务器以为自己在
+    // 保活，页面以为连接已经没了。
     try (Sse sse = watch()) {
       JsonNode ping = sse.awaitRaw("event", "ping", 25_000);
-      assertNotNull(ping, "a keep-alive must arrive within the heartbeat interval");
+      assertNotNull(ping, "保活必须在心跳间隔内到达");
     }
   }
 
   @Test
   void thePageListensForTheKeepAlive() throws Exception {
-    // The other half: a named event does not reach `onmessage`, so the server's frame is delivered
-    // only when the page registers a listener for it. One half without the other is the same bug.
+    // 另一半：具名事件不会到达 `onmessage`，所以服务器的帧只有在页面为它注册了监听器时才会
+    // 被投递。只有一半没有另一半，就是同一个 bug。
     String app = Files.readString(Path.of("src", "main", "resources", "web", "app.js"));
 
     assertTrue(
         app.contains("addEventListener('ping'"),
-        "the page must listen for the keep-alive the server sends");
+        "页面必须监听服务器发出的保活");
     int listener = app.indexOf("addEventListener('ping'");
     int body = app.indexOf("lastEventAt = Date.now()", listener);
     assertTrue(
         body > listener && body - listener < 400,
-        "and it must refresh the staleness clock, which is the whole point of sending it");
+        "而且它必须刷新那个陈旧度时钟，这正是发送它的全部意义");
   }
 
   @Test
   void anUnansweredApprovalWaitsRatherThanExpiring() throws Exception {
-    // The behaviour, pinned: a question to a person does not expire. The old 120-second cap ended the
-    // turn and left the page showing a prompt that had already been withdrawn — the work abandoned
-    // and the user unable to tell why.
+    // 这里钉住的行为：向人提出的问题不会过期。旧的 120 秒上限会终结回合，并让页面显示一个
+    // 早已被撤回的提示——活儿被丢下了，而用户说不出为什么。
     //
-    // Waited past the old timeout on purpose. Two minutes would make the suite unusable, so the
-    // assertion is that the turn is still waiting well after the *page* would have given up on a
-    // silent stream (20s), which is the window in which the old design failed: a prompt that never
-    // reached the browser in time. Still waiting here means the request survived it.
+    // 故意等过了旧的超时时间。两分钟会让整个测试套件没法用，所以断言的是：在*页面*对一条沉默
+    // 的流放弃（20 秒）很久之后，回合仍然在等；旧设计失败的窗口正是这一段：提示没能及时到达
+    // 浏览器。这里仍在等，就说明请求撑过来了。
     provider.reply(bashCall("printf hi > waiting.txt"));
     provider.reply(Message.Assistant.text("done"));
 
@@ -363,12 +359,12 @@ class WebApiTest {
 
       Thread.sleep(21_000); // past the page's stale-stream window
 
-      // Still pending, not answered for the user.
+      // 仍然挂着，并没有替用户作答。
       JsonNode status = json("/api/status");
       assertEquals(1, status.path("approvals").size(), status.toString());
-      assertFalse(Files.exists(cwd.resolve("waiting.txt")), "nothing ran while nobody had answered");
+      assertFalse(Files.exists(cwd.resolve("waiting.txt")), "没人作答时什么也没跑");
 
-      // And the two ways out still work: answering it.
+      // 两条出路仍然有效：作答。
       post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
       sse.await("done", 5000);
       assertEquals("hi", Files.readString(cwd.resolve("waiting.txt")));
@@ -377,8 +373,8 @@ class WebApiTest {
 
   @Test
   void abortingAnswersAPendingApproval() throws Exception {
-    // The way out that does not depend on a timer: a turn waiting for a person used to need the
-    // timeout to end it, and without one abort has to be the thing that answers.
+    // 一条不依赖计时器的出路：等一个活人的回合以前要靠超时来终结，没有超时之后，中止就得是
+    // 那个作答的东西。
     provider.reply(bashCall("printf hi > never.txt"));
     provider.reply(Message.Assistant.text("stopped"));
 
@@ -388,10 +384,10 @@ class WebApiTest {
 
       assertEquals(200, post("/api/abort", "{}").statusCode());
 
-      // The turn ends rather than waiting for ever, and nothing ran.
+      // 回合结束了，而不是永远等下去；而且什么也没跑。
       sse.await("done", 5000);
       assertFalse(Files.exists(cwd.resolve("never.txt")));
-      assertEquals(0, json("/api/status").path("approvals").size(), "the question is withdrawn");
+      assertEquals(0, json("/api/status").path("approvals").size(), "问题已被撤回");
     }
   }
 
@@ -406,21 +402,19 @@ class WebApiTest {
       post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":false}");
 
       sse.await("done", 5000);
-      assertFalse(Files.exists(cwd.resolve("nope.txt")), "a denied call must not touch the disk");
-      assertFalse(lastOf(sse, "tool").path("ok").asBoolean(), "the tool must report failure");
-      assertFalse(hub.autoApprove(), "denying must not turn the gate off");
+      assertFalse(Files.exists(cwd.resolve("nope.txt")), "被拒绝的调用绝不能碰磁盘");
+      assertFalse(lastOf(sse, "tool").path("ok").asBoolean(), "工具必须报告失败");
+      assertFalse(hub.autoApprove(), "拒绝不能把闸门关掉");
     }
   }
 
   @Test
   void allowingForTheSessionStopsAskingAboutThatCommandAndNothingElse() throws Exception {
-    // What "remember" means now, and the difference is the point. It used to switch the whole
-    // session to auto-approve — so answering a question about one command decided every future
-    // question — which is why the toggle that did that was the one nobody dared touch. The answer is
-    // now as narrow as the button the user pressed: this command, for this session, and the gate
-    // stays on for everything else.
-    // Replies are enqueued per turn rather than all at once: the turns are different commands, and a
-    // queue filled up front would hand the second turn the third turn's answer.
+    // 「记住」现在意味着什么，而区别正是重点。它过去会把整个会话切到自动批准——于是替一条
+    // 命令作答就决定了此后每一个问题——所以干这事的那个开关成了谁也不敢碰的那一个。现在作答
+    // 的范围和用户按下的按钮一样窄：这条命令，本会话，其他所有东西的闸门照旧开着。
+    // 回复是按回合入队的，而不是一次全排好：这些回合是不同的命令，而一次排满的队列会把第三个
+    // 回合的答案递给第二个回合。
     provider.reply(bashCall("printf a > one.txt"));
     provider.reply(Message.Assistant.text("first"));
 
@@ -431,35 +425,34 @@ class WebApiTest {
           "/api/approval",
           "{\"id\":\"" + approval.path("id").asText() + "\",\"answer\":\"session\"}");
       sse.await("done", 5000);
-      assertFalse(hub.autoApprove(), "the question was about one command, not about every command");
+      assertFalse(hub.autoApprove(), "这个问题问的是一条命令，不是每一条命令");
 
-      // The same command again: answered by what was remembered, so no second prompt.
+      // 同一条命令再来一次：由记住的东西作答，所以不会有第二次提示。
       provider.reply(bashCall("printf a > one.txt"));
       provider.reply(Message.Assistant.text("same command"));
       post("/api/message", "{\"text\":\"same again\"}");
       sse.awaitAtLeast("done", 2, 5000);
-      assertEquals(1, sse.ofType("approval").size(), "the same command must not ask twice");
+      assertEquals(1, sse.ofType("approval").size(), "同一条命令不得问两次");
 
-      // A different command is a different question, and it is still asked.
+      // 不同的命令就是不同的问题，它仍然会被问到。
       provider.reply(bashCall("printf c > three.txt"));
       provider.reply(Message.Assistant.text("different command"));
       post("/api/message", "{\"text\":\"something else\"}");
       JsonNode second = sse.awaitAtLeast("approval", 2, 5000);
-      assertNotNull(second, "a command nobody allowed must still be asked about");
+      assertNotNull(second, "没人放行过的命令仍然必须问一次");
       assertEquals("bash", second.path("tool").asText());
       assertEquals("printf c > three.txt", second.path("command").asText(),
-          "and the prompt carries the command as a field, so it can be matched by a rule");
+          "而且提示把命令作为一个字段带上，这样才能被规则匹配");
       post("/api/approval", "{\"id\":\"" + second.path("id").asText() + "\",\"answer\":\"deny\"}");
       sse.awaitAtLeast("done", 3, 5000);
-      assertFalse(Files.exists(cwd.resolve("three.txt")), "the denied command must not have run");
+      assertFalse(Files.exists(cwd.resolve("three.txt")), "被拒绝的命令绝不能跑过");
     }
   }
 
   @Test
   void alwaysAllowWritesARuleAndAProjectPicksItUp() throws Exception {
-    // The "Always allow" answer is a file write, so it is the one to be careful about: what is
-    // written has to be no wider than what was asked about, and it has to actually work afterwards —
-    // including for a process that starts later and reads the file fresh.
+    // 「总是允许」这个答案是一次文件写入，所以正是要小心的那一个：写进去的东西不能比被问到的
+    // 范围更宽，而且事后必须真的管用——包括对后来才启动、重新读这个文件的进程。
     provider.reply(bashCall("printf a > one.txt"));
     provider.reply(Message.Assistant.text("first"));
 
@@ -474,15 +467,15 @@ class WebApiTest {
 
     String written = Files.readString(approvalsFile());
     assertTrue(written.contains("printf a > one.txt"), written);
-    assertTrue(written.contains(cwd.toString()), "filed under the project it was granted in: " + written);
+    assertTrue(written.contains(cwd.toString()), "归档在它被授予的那个项目下：" + written);
     assertTrue(
         written.contains("one.txt"),
-        "the rule is the command that was approved, verbatim: " + written);
+        "规则就是被批准的那条命令，逐字照录：" + written);
     assertFalse(
         written.contains("\"command\" : \"*\"") || written.contains("\"tool\" : \"bash\"\n    }"),
-        "and nothing that would allow every command: " + written);
+        "并且没有任何会放行所有命令的东西：" + written);
 
-    // A fresh hub over the same file, as the next process would have: the command is not asked about.
+    // 同一个文件上重建一个全新的 hub，如下一个进程会做的那样：这条命令不会再被问到。
     api.close();
     hub.close();
     hub = hub(provider, testConfig());
@@ -494,14 +487,14 @@ class WebApiTest {
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"again\"}");
       sse.await("done", 5000);
-      assertEquals(0, sse.ofType("approval").size(), "the rule in the file answers for it now");
+      assertEquals(0, sse.ofType("approval").size(), "文件里的规则现在就替它作答");
       assertTrue(Files.exists(cwd.resolve("one.txt")));
     }
   }
 
   @Test
   void aRuleThatForbidsIsRefusedWithoutAskingAnybody() throws Exception {
-    // Deny wins, and it must not turn into a prompt: the point of writing a rule is that it decides.
+    // 拒绝优先，而且它绝不能变成一次提示：写规则的意义就在于它自己说了算。
     Files.createDirectories(approvalsFile().getParent());
     Files.writeString(
         approvalsFile(),
@@ -514,27 +507,27 @@ class WebApiTest {
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"one\"}");
       JsonNode done = sse.await("done", 5000);
-      assertEquals(0, sse.ofType("approval").size(), "the rule answers, so nobody is asked");
-      assertFalse(Files.exists(cwd.resolve("one.txt")), "and the command did not run");
+      assertEquals(0, sse.ofType("approval").size(), "规则作答了，所以不用问任何人");
+      assertFalse(Files.exists(cwd.resolve("one.txt")), "而且这条命令没有跑");
       assertTrue(done.toString().contains("tried"), done.toString());
     }
-    // The transcript says a rule said no, rather than reporting a person's refusal: the two are
-    // different events in a session nobody was watching.
+    // 转录里说的是规则说了不行，而不是报告某个人的拒绝：在一个没人看着的会话里，这是两种
+    // 不同的事件。
     assertTrue(
-        sseText().contains("denied by a rule"),
-        "a rule's refusal has to read as one: " + sseText());
+        sseText().contains("被审批文件中的某条规则拒绝（可运行 ccj --help、查看 SECURITY.md 了解如何改规则）"),
+        "规则的拒绝读起来必须就是规则的拒绝：" + sseText());
   }
 
   private String sseText() throws Exception {
-    // Whatever the transcript holds for this session, as the page would have rendered it.
+    // 本次会话的转录里有什么就返回什么，如同页面会渲染出的样子。
     return json("/api/history").toString();
   }
 
   @Test
   void aMessageSentWhileBusyWaitsAndThenRuns() throws Exception {
-    // It used to be refused with 409, which is what made a thinking pause a dead stop: the composer
-    // was disabled until the turn ended and whatever you thought of while waiting was lost. Now it is
-    // queued, and it runs as a turn of its own — with its own user event and its own done.
+    // 它以前会被 409 拒绝，这让一次思考中的停顿变成了彻底卡死：输入框一直禁用，直到回合结束，
+    // 而你在等待时想到的东西全都丢了。现在它会被排队，并且作为自己的一个回合运行——有自己的
+    // user 事件和自己的 done。
     provider.reply(Message.Assistant.text("slow answer"));
     provider.reply(Message.Assistant.text("the queued answer"));
     provider.gate(new CountDownLatch(1));
@@ -547,11 +540,11 @@ class WebApiTest {
       assertEquals(
           List.of("second"),
           queuedTexts(),
-          "the status says what is waiting, so the composer can show it");
+          "状态说明了什么在排队，这样输入框才能把它显示出来");
 
       provider.release();
       sse.await("done", 5000);
-      // The queued message starts on its own, and the queue is empty once it has.
+      // 排队的消息会自己开始，它开始后队列就空了。
       assertEquals("second", sse.await("user", 5000).path("text").asText());
       assertEquals("the queued answer", sse.awaitAtLeast("done", 2, 5000).path("finalText").asText());
       assertEquals(List.of(), queuedTexts());
@@ -560,9 +553,8 @@ class WebApiTest {
 
   @Test
   void abortDropsWhatWasQueuedBehindTheTurn() throws Exception {
-    // Abort is the button pressed when something is going wrong. Leaving four messages waiting to
-    // start the moment the aborted turn lets go is the opposite of stopping, and the count is
-    // published so a dropped message is visible rather than silent.
+    // 中止是出了岔子时按下的按钮。让四条消息等着在被中止的回合松手的那一刻开始，是「停下」的
+    // 反面；而那个计数会被公布出来，这样被丢弃的消息是看得见的，而不是悄无声息的。
     provider.reply(Message.Assistant.text("slow answer"));
     provider.gate(new CountDownLatch(1));
     try (Sse sse = watch()) {
@@ -575,17 +567,17 @@ class WebApiTest {
 
       provider.release();
       JsonNode notice = sse.await("notice", 5000);
-      assertTrue(notice.path("text").asText().contains("2 queued messages dropped"), notice.toString());
+      assertTrue(notice.path("text").asText().contains("已中止；丢掉了 2 条排队的消息"), notice.toString());
       assertEquals(List.of(), queuedTexts());
       assertFalse(
           sse.ofType("user").stream().anyMatch(event -> event.path("text").asText().equals("second")),
-          "a dropped message must not start later");
+          "被丢弃的消息不得之后再启动");
     }
   }
 
   @Test
   void aQueueHasABoundAndSaysSo() throws Exception {
-    // A queue with no limit is a way to lose control of a session that is already running something.
+    // 没有上限的队列，是一种对已经在跑东西的会话失去控制的方式。
     provider.reply(Message.Assistant.text("slow answer"));
     provider.gate(new CountDownLatch(1));
     try (Sse sse = watch()) {
@@ -598,7 +590,7 @@ class WebApiTest {
       HttpResponse<String> over = post("/api/message", "{\"text\":\"one too many\"}");
 
       assertEquals(409, over.statusCode(), over.body());
-      assertTrue(over.body().contains("waiting"), over.body());
+      assertTrue(over.body().contains("这个对话已经有 16 条消息在等了；请等回合结束，或者中止它"), over.body());
       assertEquals(16, queuedTexts().size());
       provider.release();
     }
@@ -612,10 +604,9 @@ class WebApiTest {
 
   @Test
   void anotherSessionRunsWhileOneIsStillBusy() throws Exception {
-    // The whole point of the change: a turn in session b must not lock the server, or "start a task
-    // in another conversation" is a sentence about nothing. A *second* turn in the *same* session is
-    // still refused — one writer per conversation is what keeps a transcript from being two of them.
-    // b is held at an approval, which is the realistic way a turn occupies the server for a while.
+    // 这次改动的全部意义：b 会话里的一个回合不得锁住服务器，否则「在另一个对话里开个任务」就是
+    // 一句空话。*同一个*会话里的*第二个*回合仍然被拒——每个对话一个写入者，才让转录不会变成两
+    // 份。b 被扣在一次审批上，这是回合长时间占住服务器的最真实方式。
     provider.reply(
         new Message.Assistant(
             "", List.of(new Message.ToolCall("call_b", "bash", "{\"command\":\"echo b\"}"))));
@@ -625,37 +616,35 @@ class WebApiTest {
     try (Sse sse = watch()) {
       assertEquals(202, post("/api/message", "{\"text\":\"b: first\"}").statusCode());
       String b = json("/api/status").path("sessionId").asText();
-      assertFalse(b.isEmpty(), "the running session must be identifiable");
+      assertFalse(b.isEmpty(), "正在运行的会话必须可辨认");
       JsonNode approval = sse.awaitInSession(b, "approval", 1, 5000);
 
-      assertTrue(json("/api/status").path("busy").asBoolean(), "b is running");
-      // One turn at a time per conversation is unchanged — what changed is that the second message
-      // waits for it instead of being refused.
+      assertTrue(json("/api/status").path("busy").asBoolean(), "b 正在运行");
+      // 每个对话同一时刻只有一个回合，这一点没变——变的是第二条消息会等它，而不是被拒。
       HttpResponse<String> queuedBehindB = post("/api/message", "{\"text\":\"b: second\"}");
       assertEquals(202, queuedBehindB.statusCode(), queuedBehindB.body());
       assertTrue(Json.parse(queuedBehindB.body()).path("queued").asBoolean(), queuedBehindB.body());
 
-      // Open another conversation and deploy a task in it, while b is still waiting for a human.
+      // 另开一个对话并在里面派一个任务，而 b 还在等人作答。
       String a = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
       assertNotEquals(b, a);
       assertFalse(
           json("/api/status").path("busy").asBoolean(),
-          "the session being looked at is idle even though b is running");
+          "正在看的会话是空闲的，尽管 b 在运行");
       assertTrue(
           json("/api/status").path("running").toString().contains(b),
-          "and the status names the session that is running");
+          "而且状态里点名了正在运行的那个会话");
 
       assertEquals(
           202,
           post("/api/message", "{\"text\":\"a: hello\"}").statusCode(),
-          "a turn in another session must be accepted");
+          "另一个会话里的回合必须被接受");
       assertEquals("a finished", sse.awaitInSession(a, "done", 1, 5000).path("finalText").asText());
 
-      // b was never disturbed: its approval is still pending, and answering it finishes b.
+      // b 从未被打扰：它的审批仍然挂着，作答就结束了 b。
       post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
-      // Both of b's turns, in order: the one that was waiting for a human, then the message that was
-      // queued behind it. Read as a list rather than twice through `awaitInSession`, which answers
-      // with the newest event that matches and would race the queued turn's own `done`.
+      // b 的两个回合按顺序：先是那个等人作答的，然后是排在它后面的消息。按列表来读，而不是
+      // 调两次 `awaitInSession`——后者返回最新匹配的事件，会和排队回合自己的 `done` 抢。
       sse.awaitInSession(b, "done", 2, 5000);
       assertEquals(
           List.of("b finished", "b's queued answer"),
@@ -668,15 +657,15 @@ class WebApiTest {
 
   @Test
   void everyEventSaysWhichSessionItBelongsTo() throws Exception {
-    // One stream carries every conversation, so an event that does not name its session is an event
-    // one page would render into another conversation's transcript.
+    // 一条流承载所有对话，所以一个不点名自己会话的事件，就是一个页面会渲染进另一个对话转录里
+    // 的事件。
     provider.reply(Message.Assistant.text("ok"));
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"hello\"}");
       sse.await("done", 5000);
       assertFalse(
           sse.anyEventWithoutSession(),
-          "every event must carry a sessionId: " + sse.snapshot());
+          "每个事件都必须带上 sessionId：" + sse.snapshot());
       assertEquals(1, sse.ofType("user").size(), sse.snapshot().toString());
       assertFalse(sse.ofType("user").get(0).path("sessionId").asText().isEmpty());
     }
@@ -684,9 +673,8 @@ class WebApiTest {
 
   @Test
   void anApprovalInAnotherSessionIsVisibleAndAnswerableFromHere() throws Exception {
-    // A background turn that needs a human must not wait forever because the user is looking at
-    // another conversation: the request is published with its session, and answering it works from
-    // anywhere.
+    // 一个需要活人的后台回合，不能因为用户正在看另一个对话就永远等下去：请求会带着它的会话一起
+    // 发布，而在哪儿都能作答。
     provider.reply(
         new Message.Assistant(
             "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
@@ -699,7 +687,7 @@ class WebApiTest {
       assertNotEquals(b, a);
 
       JsonNode approval = sse.awaitInSession(b, "approval", 1, 5000);
-      assertEquals(b, approval.path("sessionId").asText(), "the request names its session");
+      assertEquals(b, approval.path("sessionId").asText(), "请求里点名了它属于哪个会话");
       assertEquals("bash", approval.path("title").asText());
 
       post(
@@ -711,10 +699,9 @@ class WebApiTest {
 
   @Test
   void whatTouchesOneConversationIsRefusedOnlyWhileThatOneRuns() throws Exception {
-    // Which operations care about concurrency is a decision, not a habit. Showing a conversation
-    // changes nothing and is always allowed — including the one that is working, which is the whole
-    // point of leaving a turn running. Operations that would pull the ground out from under a turn —
-    // deleting its file, changing the model — wait for it.
+    // 哪些操作在意并发是一个决定，而不是习惯。显示一个对话什么都不改变，永远允许——包括正在
+    // 工作的那个，让回合继续跑的全部意义就在这。会把回合脚下的地抽走的操作——删它的文件、改
+    // 模型——要等它。
     provider.reply(
         new Message.Assistant(
             "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
@@ -724,12 +711,12 @@ class WebApiTest {
       String b = json("/api/status").path("sessionId").asText();
       JsonNode approval = sse.awaitInSession(b, "approval", 1, 5000);
 
-      // Looking at the busy conversation is fine, and so is looking at it repeatedly.
+      // 看着那个忙碌的对话没问题，反复地看也没问题。
       assertEquals(
           200,
           post("/api/session", "{\"action\":\"resume\",\"id\":\"" + b + "\"}").statusCode(),
-          "the running conversation can be displayed");
-      // Its file cannot be deleted, though: that would pull the transcript out from under the turn.
+          "正在运行的对话可以被显示");
+      // 但它的文件不能被删：那会把转录从回合脚底下抽走。
       assertEquals(
           409,
           client
@@ -739,17 +726,17 @@ class WebApiTest {
                       .build(),
                   HttpResponse.BodyHandlers.ofString())
               .statusCode(),
-          "nor deleted while it is being written");
+          "也不能在它正被写入时删除");
 
-      // The settings are the ground under every conversation, so they stay refused.
+      // 设置是每个对话脚下的地，所以它们继续被拒。
       assertEquals(
           409,
           post("/api/config", "{\"model\":\"other-model\"}").statusCode(),
-          "changing the model under a running turn is what has to wait");
+          "在回合运行时改模型，正是必须等待的那种操作");
 
-      // Switching *away* from it is how the user keeps working, so that is allowed.
+      // *切走*是用户继续干活的方式，所以那是允许的。
       String a = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
-      assertNotEquals(b, a, "a new conversation can be started beside a running one");
+      assertNotEquals(b, a, "可以在正在运行的对话旁边新开一个对话");
 
       post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
       sse.awaitInSession(b, "done", 1, 5000);
@@ -758,7 +745,7 @@ class WebApiTest {
 
   @Test
   void anAbortStopsTheSessionOnScreenAndLeavesTheOtherAlone() throws Exception {
-    // Abort is per conversation: stopping the job you are looking at must not stop the other one.
+    // 中止是按对话来的：停下你正在看的那个任务，绝不能把另一个也停下。
     provider.reply(
         new Message.Assistant(
             "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
@@ -771,21 +758,21 @@ class WebApiTest {
       String a = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
       assertNotEquals(b, a);
 
-      // The session on screen is a, and a is not running: there is nothing to abort here.
+      // 屏幕上这个会话是 a，而 a 没有在运行：这里没有什么可中止的。
       assertFalse(
           postJson("/api/abort", "{}").path("aborted").asBoolean(),
-          "abort acts on the conversation on screen, which is idle");
+          "中止作用于屏幕上那个对话，而它是空闲的");
 
       JsonNode aborted = postJson("/api/abort?id=" + b, "{}");
-      assertTrue(aborted.path("aborted").asBoolean(), "the running session can still be stopped");
+      assertTrue(aborted.path("aborted").asBoolean(), "正在运行的会话仍然可以被停下");
       JsonNode stopped = sse.awaitInSession(b, "done", 1, 5000);
-      assertTrue(stopped.path("aborted").asBoolean(), "and it ends as aborted: " + stopped);
+      assertTrue(stopped.path("aborted").asBoolean(), "而且它以被中止结束：" + stopped);
     }
   }
 
   @Test
   void theSidebarCanTellWhichSessionsAreRunning() throws Exception {
-    // Without this the page cannot mark the row the user started and switched away from.
+    // 没有这个，页面就无法标记用户启动后又切走的那一行。
     provider.reply(
         new Message.Assistant(
             "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
@@ -804,13 +791,13 @@ class WebApiTest {
       assertNotEquals(b, a);
       assertTrue(
           json("/api/sessions").path("sessions").get(0).path("running").asBoolean(),
-          "switching away does not stop it");
+          "切走并不会把它停下");
 
       postJson("/api/abort?id=" + b, "{}");
       sse.awaitInSession(b, "done", 1, 5000);
       assertFalse(
           json("/api/sessions").path("sessions").get(0).path("running").asBoolean(),
-          "a finished turn stops being running");
+          "回合结束后就不再是运行中");
     }
   }
 
@@ -828,7 +815,7 @@ class WebApiTest {
     assertEquals(1, list.size(), list.toString());
     assertEquals("remember me", list.get(0).path("preview").asText());
     assertEquals("remember me", list.get(0).path("title").asText(),
-        "the sidebar labels a session by what was asked, not by its timestamp id");
+        "侧边栏用被问的第一句话给会话打标签，而不是用它的时间戳 id");
     assertEquals(first, list.get(0).path("id").asText());
 
     JsonNode created = postJson("/api/session", "{\"action\":\"new\"}");
@@ -836,14 +823,13 @@ class WebApiTest {
 
     JsonNode resumed = postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + first + "\"}");
     assertEquals(first, resumed.path("sessionId").asText());
-    assertEquals(2, resumed.path("messageCount").asInt(), "history must be replayed from disk");
+    assertEquals(2, resumed.path("messageCount").asInt(), "历史必须从磁盘回放");
   }
 
   @Test
   void aRunningConversationCanStillBeOpened() throws Exception {
-    // Reported bug: with a turn running in a, clicking a in the sidebar bounced. Switching which
-    // conversation is *displayed* changes nothing about the turn that is running — the point of
-    // leaving a job running is being able to look at it.
+    // 有人报的 bug：a 里有回合在跑时，在侧边栏点 a 会被弹回来。切换*显示*哪个对话，对正在运行
+    // 的回合什么都没改变——让任务继续跑的意义就在于你还能看着它。
     provider.reply(
         new Message.Assistant(
             "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
@@ -853,18 +839,17 @@ class WebApiTest {
       String a = json("/api/status").path("sessionId").asText();
       sse.awaitInSession(a, "approval", 1, 5000);
 
-      // Look away…
+      // 把目光移开……
       String b = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
       assertNotEquals(a, b);
-      // …and back at the one that is working.
+      // ……再回到正在工作的那个。
       JsonNode back = postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + a + "\"}");
-      assertEquals(a, back.path("sessionId").asText(), "the running session is the one to look at");
-      assertTrue(back.path("busy").asBoolean(), "and it is still shown as running");
+      assertEquals(a, back.path("sessionId").asText(), "正在运行的会话就是该看的那个");
+      assertTrue(back.path("busy").asBoolean(), "而且它仍然显示为运行中");
 
       postJson("/api/abort?id=" + a, "{}");
       sse.awaitInSession(a, "done", 1, 5000);
-      // The turn's result landed in a's own file, once: opening a again must not have started a
-      // second writer on it.
+      // 回合的结果落进了 a 自己的文件，且只落了一次：再次打开 a 绝不能在那上面又起一个写入者。
       List<String> lines = Files.readAllLines(sessions.resolve(a + ".jsonl"));
       assertTrue(lines.stream().anyMatch(line -> line.contains("tool_result")), lines.toString());
     }
@@ -872,9 +857,8 @@ class WebApiTest {
 
   @Test
   void openingARunningSessionAgainDoesNotOpenASecondWriter() throws Exception {
-    // The reason the old check existed. It has to be answered by reusing the file the turn is
-    // writing, not by refusing to show the conversation: two FileSessions appending to one JSONL is
-    // exactly the corruption the per-session rule is for.
+    // 旧检查存在的理由。它必须靠复用回合正在写的那个文件来回答，而不是靠拒绝显示对话：两个
+    // FileSession 往同一个 JSONL 里追加，正是「每会话一条」规则要防的那种损坏。
     provider.reply(
         new Message.Assistant(
             "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
@@ -884,14 +868,14 @@ class WebApiTest {
       String a = json("/api/status").path("sessionId").asText();
       sse.awaitInSession(a, "approval", 1, 5000);
 
-      // A second conversation that exists on disk, to switch to and away from.
+      // 磁盘上存在的第二个对话，用来切过去再切回来。
       String b = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
       assertNotEquals(a, b);
       assertEquals(202, post("/api/message", "{\"text\":\"b: hello\"}").statusCode());
       sse.awaitInSession(b, "done", 1, 5000);
 
-      // Going back and forth is what a user does while waiting, and each return to a must be the
-      // same file its turn is using rather than a second writer on it.
+      // 来回切换是用户在等待时会做的事，而每次回到 a 都必须回到它那个回合正在用的同一个文件，
+      // 而不是在它上面多一个写入者。
       for (int i = 0; i < 3; i++) {
         assertEquals(
             a,
@@ -907,9 +891,9 @@ class WebApiTest {
 
       postJson("/api/abort?id=" + a, "{}");
       sse.awaitInSession(a, "done", 1, 5000);
-      // Every line is still one whole JSON object: a second writer would have interleaved bytes.
+      // 每一行仍然是一个完整的 JSON 对象：多一个写入者会把字节交错进去。
       for (String line : Files.readAllLines(sessions.resolve(a + ".jsonl"))) {
-        assertFalse(line.isBlank(), "no torn lines");
+        assertFalse(line.isBlank(), "没有撕裂的行");
         Json.parse(line);
       }
     }
@@ -917,9 +901,8 @@ class WebApiTest {
 
   @Test
   void anotherWorkspacesConversationCanBeOpenedWhileATurnRuns() throws Exception {
-    // Reported bug: a turn in one workspace blocked opening a conversation in another. A turn owns
-    // its working directory and its own session file from the moment it starts, so looking at a
-    // different workspace while it runs cannot disturb it.
+    // 有人报的 bug：一个工作区里的回合挡住了打开另一个工作区的对话。回合从启动那一刻起就拥有
+    // 自己的工作目录和自己的会话文件，所以在它运行时看别的工作区不可能打扰到它。
     Path other = Files.createDirectories(tmp.resolve("other-ws"));
 
     provider.reply(
@@ -935,42 +918,42 @@ class WebApiTest {
       String a = json("/api/status").path("sessionId").asText();
       JsonNode approval = sse.awaitInSession(a, "approval", 1, 5000);
 
-      // Registering the workspace is a registry entry, and it must be possible while a is running —
-      // otherwise the second workspace is unreachable exactly when the user wants to go there.
+      // 注册工作区只是加一条注册表条目，而且必须在 a 运行时也能做——否则第二个工作区恰好在用户
+      // 想去的时候够不着。
       postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + other + "\"}");
 
-      // Switch to it: a change of namespace, not of what is running.
+      // 切过去：换的是命名空间，不是正在运行的东西。
       JsonNode switched = postJson("/api/workspace", "{\"name\":\"other\"}");
       assertEquals("other", switched.path("workspace").path("name").asText());
       String c = switched.path("sessionId").asText();
-      assertNotEquals(a, c, "a fresh session there");
+      assertNotEquals(a, c, "那边是个新会话");
 
-      // …and it is usable while the first workspace's turn keeps running.
+      // ……而且在第一个工作区的回合继续跑时它就能用。
       assertEquals(202, post("/api/message", "{\"text\":\"c: in the other workspace\"}").statusCode());
       assertEquals("c finished", sse.awaitInSession(c, "done", 1, 5000).path("finalText").asText());
       assertTrue(
           json("/api/status").path("running").toString().contains(a),
-          "the turn in the first workspace is untouched: " + json("/api/status"));
+          "第一个工作区里的回合未受影响：" + json("/api/status"));
 
-      // The turn in a still runs in the directory it started in, not in the one now on screen: the
-      // command writes a file, and the file has to land in the first workspace.
+      // a 里的回合仍然在它启动时所在的目录里运行，而不是现在屏幕上那个：命令会写一个文件，
+      // 而这个文件必须落在第一个工作区。
       post("/api/approval", "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
       assertEquals("a finished", sse.awaitInSession(a, "done", 1, 5000).path("finalText").asText());
       assertTrue(
           Files.exists(cwd.resolve("made-by-a.txt")),
-          "a's tool ran in a's own workspace, which is where it was started: " + cwd);
+          "a 的工具在 a 自己的工作区里运行，也就是它启动时所在的地方：" + cwd);
       assertFalse(
           Files.exists(other.resolve("made-by-a.txt")),
-          "and not in the workspace that is merely on screen now");
+          "而不是当前只是显示在屏幕上的那个工作区");
     }
   }
 
 
   @Test
   void eachConversationsOwnRulesFollowItsWorkingDirectory() throws Exception {
-    // The rules come from the directory the conversation's tools run in, which in the web UI is a
-    // property of the *session*, not of the server: a page can hold one conversation in a project and
-    // another in a sibling, and each request must carry its own project's rules.
+    // 规则来自对话的工具所运行的目录，在 web UI 里这是*会话*的属性，不是服务器的属性：一个
+    // 页面可以让一个对话在一个项目里、另一个在它的兄弟目录里，而每个请求都必须带上自己项目的
+    // 规则。
     Files.writeString(
         cwd.resolve(ProjectPrompt.FILE_NAME), "Rule for the first workspace: run `make check`.\n");
     Path other = Files.createDirectories(tmp.resolve("second-ws"));
@@ -995,38 +978,37 @@ class WebApiTest {
       assertTrue(secondPrompt.contains("use tabs"), secondPrompt);
       assertFalse(
           secondPrompt.contains("run `make check`"),
-          "and not the other workspace's rule: " + secondPrompt);
+          "而不是另一个工作区的规则：" + secondPrompt);
     }
   }
 
-  /** The system prompt of the nth request the mock provider received. */
+  /** 模拟提供方收到的第 n 个请求的系统提示词。 */
   private String lastSystemPrompt(int index) {
     List<Provider.Request> seen = provider.requests();
     assertTrue(seen.size() > index, "only " + seen.size() + " requests so far");
     String system = seen.get(index).system();
-    assertTrue(system != null, "every request must carry a system prompt");
+    assertTrue(system != null, "每个请求都必须带上系统提示词");
     return system;
   }
 
   @Test
   void aReplayedConversationKeepsItsReasoning() throws Exception {
-    // Reported bug: switch away from a conversation while it is thinking, switch back, and the
-    // reasoning is gone — because historyJson replayed only prose and tool calls. The reasoning is in
-    // the session file, so a replay that drops it is a replay of a different conversation.
+    // 有人报的 bug：在一个对话思考时切走，再切回来，推理内容就没了——因为 historyJson 只回放
+    // 散文和工具调用。推理内容就在会话文件里，所以丢掉它的回放是在回放另一个对话。
     provider.reply(Message.Assistant.text("answered"));
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"think about it\"}");
       sse.await("done", 5000);
       String session = json("/api/status").path("sessionId").asText();
 
-      // The reasoning arrives on the stream and is persisted with the assistant turn.
+      // 推理内容从流上到达，并随助手回合一起被持久化。
       provider.emitReasoning("considering the problem");
       post("/api/message", "{\"text\":\"and again\"}");
       sse.awaitAtLeast("done", 2, 5000);
       String file = Files.readString(sessions.resolve(session + ".jsonl"));
-      assertTrue(file.contains("considering the problem"), "the reasoning is on disk:\n" + file);
+      assertTrue(file.contains("considering the problem"), "推理内容就在磁盘上：\n" + file);
 
-      // So replaying that conversation must show it again.
+      // 所以回放那个对话时必须把它再显示出来。
       JsonNode history = json("/api/history");
       assertEquals(session, history.path("sessionId").asText());
       List<String> reasoning = new ArrayList<>();
@@ -1036,21 +1018,21 @@ class WebApiTest {
         }
       });
       assertEquals(List.of("considering the problem"), reasoning,
-          "a replay must carry the reasoning, or switching away and back loses it: "
+          "回放必须带上推理内容，否则切走再切回来就丢了："
               + history.path("events"));
     }
   }
 
   @Test
   void aRedactedReasoningBlockIsNotReplayedAsText() throws Exception {
-    // A redacted block's payload is opaque and must go back to the *model* unchanged; showing it as
-    // prose would put a wall of base64 in the transcript, which is worse than showing nothing.
+    // 被遮蔽块的载荷是不透明的，必须原封不动地送回*模型*；把它当散文显示会在转录里堆一堵
+    // base64 的墙，那比什么都不显示更糟。
     provider.reply(Message.Assistant.text("done"));
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"go\"}");
       sse.await("done", 5000);
       String session = json("/api/status").path("sessionId").asText();
-      // Write one by hand: only Anthropic produces these, and this test is about the projection.
+      // 手写一个：只有 Anthropic 会产生这种东西，而这个测试针对的是那层投影。
       Files.writeString(
           sessions.resolve(session + ".jsonl"),
           Files.readString(sessions.resolve(session + ".jsonl"))
@@ -1065,16 +1047,15 @@ class WebApiTest {
       history.path("events").forEach(event ->
           assertFalse(
               event.path("delta").asText().contains("b3BhcXVl"),
-              "the opaque payload must not be rendered as prose: " + event));
+              "不透明的载荷绝不能被渲染成散文：" + event));
     }
   }
 
   @Test
   void aPendingApprovalSurvivesLeavingAndComingBack() throws Exception {
-    // Reported bug: a turn waiting for approval lost its prompt as soon as the user looked at
-    // another conversation, leaving only abort. The approval is a request blocked in memory, not a
-    // message, so replaying the history does not bring it back — it has to be visible in the status
-    // of the conversation that is waiting, and the page has to render it again on the way in.
+    // 有人报的 bug：一个等待审批的回合，在用户一看别的对话时就把提示丢了，只剩中止。审批是
+    // 阻塞在内存里的请求，不是一条消息，所以回放历史并不能把它带回来——它必须在等待中的那个
+    // 对话的状态里可见，而页面在进入时必须把它重新渲染出来。
     provider.reply(
         new Message.Assistant(
             "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
@@ -1085,35 +1066,34 @@ class WebApiTest {
       JsonNode approval = sse.awaitInSession(a, "approval", 1, 5000);
       String approvalId = approval.path("id").asText();
 
-      // Looking away and back: the request is still outstanding, so the page must be told about it.
+      // 看向别处再回来：请求仍然未决，所以必须把这件事告诉页面。
       String b = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
       assertNotEquals(a, b);
       JsonNode back = postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + a + "\"}");
       assertEquals(a, back.path("sessionId").asText());
 
-      // The status of the conversation that is waiting names the pending request, with everything the
-      // prompt needs to be drawn again.
+      // 等待中的那个对话的状态点名了未决的请求，并带上把提示重新画出来所需的一切。
       JsonNode pending = back.path("approvals");
       assertTrue(pending.isArray(), back.toString());
-      assertEquals(1, pending.size(), "the outstanding request is reported: " + back);
+      assertEquals(1, pending.size(), "未决的请求被报告了出来：" + back);
       assertEquals(approvalId, pending.get(0).path("id").asText());
       assertEquals("bash", pending.get(0).path("title").asText());
       assertTrue(pending.get(0).path("detail").asText().contains("echo hi"), pending.toString());
 
-      // And answering it still works from the other conversation.
+      // 而且从另一个对话里作答仍然有效。
       post("/api/approval", "{\"id\":\"" + approvalId + "\",\"allow\":true}");
       assertEquals("ran it", sse.awaitInSession(a, "done", 1, 5000).path("finalText").asText());
       assertEquals(
           0,
           json("/api/status").path("approvals").size(),
-          "a resolved request is no longer pending");
+          "已解决的请求不再挂着");
     }
   }
 
   @Test
   void anApprovalBelongsToOneConversationOnly() throws Exception {
-    // Two turns can be waiting at once. Each page must be offered only its own conversation's
-    // requests, or answering the one on screen would resolve the other's.
+    // 可以有两个回合同时等待。每个页面只能被提供它自己那个对话的请求，否则作答屏幕上那个就会
+    // 解决掉另一个的。
     provider.reply(
         new Message.Assistant(
             "", List.of(new Message.ToolCall("call_1", "bash", "{\"command\":\"echo hi\"}"))));
@@ -1123,13 +1103,13 @@ class WebApiTest {
       String a = json("/api/status").path("sessionId").asText();
       JsonNode approval = sse.awaitInSession(a, "approval", 1, 5000);
 
-      // A fresh conversation has no pending request of its own.
+      // 一个全新的对话没有属于它自己的未决请求。
       String b = postJson("/api/session", "{\"action\":\"new\"}").path("sessionId").asText();
       assertEquals(
           0,
           json("/api/status").path("approvals").size(),
-          "b has nothing pending; a's request is not b's: " + json("/api/status"));
-      // a is still waiting, and still says so.
+          "b 没有任何未决请求；a 的请求不是 b 的：" + json("/api/status"));
+      // a 仍在等待，而且仍然这么说着。
       postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + a + "\"}");
       assertEquals(1, json("/api/status").path("approvals").size());
 
@@ -1143,9 +1123,8 @@ class WebApiTest {
     api.close();
     start("s3cret");
 
-    // The token is for reaching this server from somewhere else, and a request that names a host
-    // other than loopback is that case even when it was made on this machine — which is the half that
-    // answers a page whose own domain resolves to 127.0.0.1.
+    // token 是为了从别处够到这台服务器，而一个点名了非 loopback 主机的请求就属于这种情况，
+    // 哪怕它是在本机上发出的——这正是回答「自己域名解析到 127.0.0.1 的页面」的那一半。
     String denied = rawResponse("rebind.example", "/api/status");
     assertTrue(denied.startsWith("HTTP/1.1 401"), denied);
     assertTrue(denied.contains("token"), denied);
@@ -1153,9 +1132,9 @@ class WebApiTest {
     String refused = rawResponse("rebind.example", "/api/status?token=wrong");
     assertTrue(refused.startsWith("HTTP/1.1 401"), refused);
 
-    // This machine is not "somewhere else": reaching the page at 127.0.0.1 is how the user at the
-    // keyboard uses ccj, and a secret to type there would be a password on their own command line.
-    assertEquals(200, get("/api/status").statusCode(), "the machine itself is let in");
+    // 本机不算「别处」：在 127.0.0.1 上打开页面，就是坐在键盘前的用户使用 ccj 的方式，在那里
+    // 还要输一个秘密，等于在人家自己的命令行上加了个密码。
+    assertEquals(200, get("/api/status").statusCode(), "本机自己被放行");
 
     HttpResponse<String> allowed = get("/api/status?token=s3cret");
     assertEquals(200, allowed.statusCode());
@@ -1163,9 +1142,9 @@ class WebApiTest {
     HttpResponse<String> page = get("/?token=s3cret");
     assertEquals(200, page.statusCode());
     String cookie = page.headers().firstValue("Set-Cookie").orElse("");
-    assertTrue(cookie.startsWith("ccj_token=s3cret"), "the page load must remember the token");
+    assertTrue(cookie.startsWith("ccj_token=s3cret"), "页面加载必须记住 token");
     assertTrue(cookie.contains("HttpOnly"), cookie);
-    assertTrue(page.body().contains("<html"), "the page itself must still be served");
+    assertTrue(page.body().contains("<html"), "页面本身仍然必须被提供");
 
     HttpResponse<String> withCookie =
         client.send(
@@ -1174,7 +1153,7 @@ class WebApiTest {
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, withCookie.statusCode(), "the browser must not need the token again");
+    assertEquals(200, withCookie.statusCode(), "浏览器不必再要一次 token");
 
     HttpResponse<String> withHeader =
         client.send(
@@ -1186,7 +1165,7 @@ class WebApiTest {
     assertEquals(200, withHeader.statusCode());
   }
 
-  // ------------------------------------------------------------------ settings
+  // ------------------------------------------------------------------ 设置
 
   @Test
   void anUnconfiguredServerStillServesAndExplainsItself() throws Exception {
@@ -1199,11 +1178,11 @@ class WebApiTest {
     JsonNode status = json("/api/status");
     assertFalse(status.path("configured").asBoolean());
     assertTrue(status.path("provider").asText().isEmpty());
-    assertTrue(status.path("cwd").asText().endsWith("ws"), "the UI still needs its context");
+    assertTrue(status.path("cwd").asText().endsWith("ws"), "UI 仍然需要它的上下文");
 
     HttpResponse<String> refused = post("/api/message", "{\"text\":\"hi\"}");
     assertEquals(409, refused.statusCode());
-    assertTrue(refused.body().contains("Settings"), refused.body());
+    assertTrue(refused.body().contains("没有配置模型——打开「设置」添加一个"), refused.body());
 
     JsonNode config = json("/api/config");
     assertFalse(config.path("configured").asBoolean());
@@ -1230,26 +1209,26 @@ class WebApiTest {
     assertEquals("claude-test", saved.path("model").asText());
     assertEquals("anthropic", saved.path("provider").asText());
     assertTrue(saved.path("configured").asBoolean());
-    assertEquals("claude-test", lastBuilt.name(), "the new provider must be the one in use");
+    assertEquals("claude-test", lastBuilt.name(), "新提供方必须是正在使用的那个");
 
     JsonNode file = Json.parse(Files.readString(configFile));
     assertEquals("anthropic", file.path("provider").asText());
     assertEquals("claude-test", file.path("model").asText());
     assertEquals("sk-written", file.path("apiKey").asText());
     assertEquals(900, file.path("maxTokens").asInt());
-    assertEquals("keep me", file.path("systemPrompt").asText(), "unmanaged keys must survive");
+    assertEquals("keep me", file.path("systemPrompt").asText(), "未接管的键必须留得住");
     assertEquals(4096, file.path("outputLimitBytes").asInt());
     assertEquals(
         "rw-------",
         java.nio.file.attribute.PosixFilePermissions.toString(
             Files.getPosixFilePermissions(configFile)),
-        "the file may hold a key");
+        "这个文件可能存有密钥");
 
     JsonNode config = json("/api/config");
     assertEquals("config", config.path("apiKeySource").asText());
-    assertFalse(config.toString().contains("sk-written"), "the key must never leave the server");
+    assertFalse(config.toString().contains("sk-written"), "密钥绝不能离开服务器");
 
-    // and the next turn really goes to the rebuilt provider
+    // 而且下一个回合真的会走重建后的提供方
     lastBuilt.reply(Message.Assistant.text("answered by the new model"));
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"hello\"}");
@@ -1259,11 +1238,10 @@ class WebApiTest {
 
   @Test
   void aHandWrittenConfigCanBeSavedFromTheForm() throws Exception {
-    // Reported defect: a configuration file somebody typed by hand — an endpoint and a key, no
-    // `settingsFor` mark, which is what a hand-written file is — could not be saved from the settings
-    // form at all. The form always posts its key-variable field, pre-filled with the provider's
-    // default, and that was read as "this change names its own credential": the unmarked pair in the
-    // file was dropped and the provider build then failed with `no API key for provider 'openai'`.
+    // 有人报的缺陷：一份手敲出来的配置文件——一个端点加一把密钥，没有 `settingsFor` 标记，手写
+    // 文件就是这样——根本没法从设置表单里保存。表单总会提交它的密钥变量字段，并预填了提供方的
+    // 默认值，而这一点被读成了「这次改动自己指定了凭据」：文件里那对没有标记的值被丢掉，随后
+    // 构建提供方就失败于 `no API key for provider 'openai'`。
     Files.writeString(
         configFile,
         "{\"provider\":\"openai\",\"model\":\"hand-written\",\"apiKey\":\"sk-hand-written\"}");
@@ -1276,13 +1254,13 @@ class WebApiTest {
     assertEquals(
         "sk-hand-written",
         Config.fromFile(configFile).apiKey(),
-        "the key that was already there must survive a save that did not replace it");
+        "原本就在那儿的密钥必须挺过一次没有替换它的保存");
   }
 
   @Test
   void namingANonDefaultKeyVariableStillCountsAsNamingACredential() throws Exception {
-    // The other half of the same rule: a form save that does say where the key comes from is still a
-    // deliberate act, and the pair it replaces is dropped rather than inherited.
+    // 同一条规则的另一半：一次说清了密钥来自哪里的表单保存仍然是一个刻意的动作，它替换掉的那
+    // 一对会被丢弃，而不是被继承。
     Files.writeString(
         configFile,
         "{\"provider\":\"openai\",\"model\":\"hand-written\",\"apiKey\":\"sk-hand-written\"}");
@@ -1294,7 +1272,7 @@ class WebApiTest {
     assertEquals("MY_OWN_KEY_VARIABLE", Config.fromFile(configFile).apiKeyEnv());
     assertNull(
         Config.fromFile(configFile).apiKey(),
-        "a save that names its own credential does not inherit the one that was there");
+        "一次自己指定了凭据的保存，不会继承原本在那儿的那个");
   }
 
   @Test
@@ -1305,7 +1283,7 @@ class WebApiTest {
 
     assertEquals(400, rejected.statusCode(), rejected.body());
     assertTrue(rejected.body().contains("gemini"), rejected.body());
-    assertFalse(Files.exists(configFile), "a rejected change must not create a config file");
+    assertFalse(Files.exists(configFile), "被拒的改动绝不能创建配置文件");
     assertEquals(before.path("provider").asText(), json("/api/config").path("provider").asText());
     assertEquals("openai", json("/api/status").path("provider").asText());
   }
@@ -1327,7 +1305,7 @@ class WebApiTest {
     JsonNode cleared = postJson("/api/config", "{\"clearApiKey\":true}");
 
     assertTrue(cleared.path("configured").asBoolean(), cleared.toString());
-    assertFalse(Files.readString(configFile).contains("sk-temp"), "the key must be gone");
+    assertFalse(Files.readString(configFile).contains("sk-temp"), "密钥必须没了");
     assertEquals("none", json("/api/config").path("apiKeySource").asText());
   }
 
@@ -1339,9 +1317,9 @@ class WebApiTest {
 
     assertTrue(result.path("ok").asBoolean(), result.toString());
     assertTrue(result.path("elapsedMs").asInt() >= 0);
-    assertEquals(1, factoryCalls.get(), "the probe must build a throwaway provider");
-    assertFalse(Files.exists(configFile), "testing must not persist anything");
-    assertEquals("openai", json("/api/config").path("provider").asText(), "in-memory config unchanged");
+    assertEquals(1, factoryCalls.get(), "探测必须构建一个用完就丢的提供方");
+    assertFalse(Files.exists(configFile), "测试绝不能持久化任何东西");
+    assertEquals("openai", json("/api/config").path("provider").asText(), "内存中的配置未变");
     assertEquals("openai", json("/api/status").path("provider").asText());
   }
 
@@ -1354,11 +1332,11 @@ class WebApiTest {
     assertTrue(failure.body().contains("gemini"), failure.body());
   }
 
-  // ------------------------------------------------------------------ history and usage
+  // ------------------------------------------------------------------ 历史与用量
 
   @Test
   void usageTotalsAndCacheHitRateAccumulateAcrossATurn() throws Exception {
-    // The double reports the same accounting every turn, so two turns double both sides.
+    // 替身每个回合都报告同一笔账，所以两个回合就把两边都翻倍。
     provider.usage(100, 5, 40).reply(Message.Assistant.text("one"));
     provider.reply(Message.Assistant.text("two"));
 
@@ -1390,7 +1368,7 @@ class WebApiTest {
 
     JsonNode usage = json("/api/status").path("usage");
     assertTrue(usage.path("cachedInputTokens").isNull(), usage.toString());
-    assertTrue(usage.path("cacheHitRate").isNull(), "unknown must not render as 0%");
+    assertTrue(usage.path("cacheHitRate").isNull(), "未知绝不能渲染成 0%");
     assertEquals(1, usage.path("turns").asInt());
   }
 
@@ -1416,15 +1394,15 @@ class WebApiTest {
     assertEquals("start", start.path("state").asText());
     assertEquals("read", start.path("name").asText());
     assertEquals("note.txt", start.path("summary").asText());
-    assertEquals(start.path("id").asText(), end.path("id").asText(), "cards pair by call id");
+    assertEquals(start.path("id").asText(), end.path("id").asText(), "卡片按调用 id 配对");
     assertTrue(end.path("ok").asBoolean());
     assertTrue(end.path("output").asText().contains("on disk"), end.toString());
-    assertTrue(end.path("elapsedMs").isNull(), "history stores no timing, so none is invented");
+    assertTrue(end.path("elapsedMs").isNull(), "历史不存计时，所以也不编造计时");
     history
         .path("events")
         .forEach(event -> assertTrue(event.path("replay").asBoolean(), event.toString()));
-    assertEquals(1, history.path("usage").path("turns").asInt(), "one user turn");
-    assertEquals(2, history.path("usage").path("steps").asInt(), "tool call, then the answer");
+    assertEquals(1, history.path("usage").path("turns").asInt(), "一个用户回合");
+    assertEquals(2, history.path("usage").path("steps").asInt(), "先工具调用，再答案");
   }
 
   @Test
@@ -1441,10 +1419,10 @@ class WebApiTest {
 
     try (Sse sse = watch()) {
       JsonNode response = postJson("/api/session", "{\"action\":\"new\"}");
-      assertEquals(before, response.path("sessionId").asText(), "the id must not change");
-      assertTrue(sse.await("notice", 3000).path("text").asText().contains("already empty"));
+      assertEquals(before, response.path("sessionId").asText(), "id 不得改变");
+      assertTrue(sse.await("notice", 3000).path("text").asText().contains("这个会话已经是空的——先随便说点什么"));
     }
-    assertTrue(SessionStore.list(sessions).isEmpty(), "no session file may appear for an empty session");
+    assertTrue(SessionStore.list(sessions).isEmpty(), "空会话不得冒出任何会话文件");
   }
 
   @Test
@@ -1459,8 +1437,8 @@ class WebApiTest {
     JsonNode created = postJson("/api/session", "{\"action\":\"new\"}");
 
     assertNotEquals(before, created.path("sessionId").asText());
-    assertEquals(0, json("/api/history").path("events").size(), "the new session is empty");
-    assertEquals(0, json("/api/status").path("usage").path("inputTokens").asInt(), "totals reset");
+    assertEquals(0, json("/api/history").path("events").size(), "新会话是空的");
+    assertEquals(0, json("/api/status").path("usage").path("inputTokens").asInt(), "总计已重置");
   }
 
   @Test
@@ -1473,18 +1451,18 @@ class WebApiTest {
       lastIdOfTheTurn = done.id();
     }
 
-    // A fresh page has no gap to fill: it renders the conversation from /api/history, so replaying
-    // the buffer here would draw every recent event a second time.
+    // 全新的页面没有缺口要补：它从 /api/history 渲染对话，所以在这里回放缓冲区会把每个最近的
+    // 事件都画第二遍。
     try (Sse fresh = watch()) {
       fresh.await("status", 3000);
       Thread.sleep(300);
       assertEquals(
           List.of("status"),
           fresh.types(),
-          "a fresh connection gets its state, not the live events of turns it never saw");
+          "全新的连接拿到的是它的状态，而不是它从未见过的那些回合的实时事件");
     }
 
-    // A reconnecting page does have a gap, and only that gap.
+    // 重连的页面确实有缺口，而且只有那个缺口。
     try (Sse resumed = watchWithLastEventId(lastIdOfTheTurn - 1)) {
       assertEquals("done", resumed.await("done", 3000).path("type").asText());
     }
@@ -1507,10 +1485,10 @@ class WebApiTest {
     postJson("/api/session", "{\"action\":\"resume\",\"id\":\"" + sessionId + "\"}");
 
     JsonNode usage = json("/api/status").path("usage");
-    assertEquals(1, usage.path("turns").asInt(), "the earlier turn is part of this session");
+    assertEquals(1, usage.path("turns").asInt(), "更早的那个回合属于本会话");
     assertEquals(100, usage.path("inputTokens").asInt());
     assertEquals(0.4, usage.path("cacheHitRate").asDouble(), 0.001);
-    assertEquals(2, json("/api/history").path("events").size(), "and so is its conversation");
+    assertEquals(2, json("/api/history").path("events").size(), "它的对话也一样");
   }
 
   @Test
@@ -1526,14 +1504,14 @@ class WebApiTest {
     origin = "http://127.0.0.1:" + api.port();
 
     JsonNode usage = json("/api/status").path("usage");
-    assertEquals(1, usage.path("turns").asInt(), "restarting must not forget the turns");
+    assertEquals(1, usage.path("turns").asInt(), "重启绝不能把回合数忘掉");
     assertEquals(200, usage.path("inputTokens").asInt());
     assertEquals(150, usage.path("cachedInputTokens").asInt());
     assertEquals(0.75, usage.path("cacheHitRate").asDouble(), 0.001);
     assertEquals(1, json("/api/history").path("events").size());
   }
 
-  // ------------------------------------------------------------------ workspaces
+  // ------------------------------------------------------------------ 工作区
 
   @Test
   void listsTheStartingDirectoryAsTheActiveWorkspace() throws Exception {
@@ -1561,13 +1539,13 @@ class WebApiTest {
 
     JsonNode switched = postJson("/api/workspace", "{\"name\":\"other\"}");
     assertEquals("other", switched.path("workspace").path("name").asText());
-    assertEquals(other.toString(), switched.path("cwd").asText(), "tools now work in that directory");
+    assertEquals(other.toString(), switched.path("cwd").asText(), "工具现在在那个目录里工作");
 
-    // A session written before the switch belongs to the old workspace and must not show up here.
+    // 切换之前写下的会话属于旧工作区，绝不能在这里出现。
     assertEquals(0, json("/api/sessions").path("sessions").size());
     assertEquals(0, json("/api/history").path("events").size());
 
-    // And a relative tool path really resolves there: this file exists only in the new workspace.
+    // 而且相对的工具路径真的在那里解析：这个文件只存在于新工作区里。
     provider.reply(call("read", "path", "note.txt"));
     provider.reply(Message.Assistant.text("read it"));
     try (Sse sse = watch()) {
@@ -1592,7 +1570,7 @@ class WebApiTest {
     postJson("/api/workspaces", "{\"name\":\"second\",\"path\":\"" + tmp.resolve("second") + "\"}");
     postJson("/api/workspace", "{\"name\":\"second\"}");
     assertEquals(
-        0, json("/api/sessions").path("sessions").size(), "another workspace is another history");
+        0, json("/api/sessions").path("sessions").size(), "另一个工作区就是另一段历史");
 
     postJson("/api/workspace", "{\"name\":\"ws\"}");
 
@@ -1612,7 +1590,7 @@ class WebApiTest {
                 .build(),
             HttpResponse.BodyHandlers.ofString());
     assertEquals(400, refusal.statusCode(), refusal.body());
-    assertTrue(refusal.body().contains("active"), refusal.body());
+    assertTrue(refusal.body().contains("无法移除活动工作区 'ws'；请先切换到另一个"), refusal.body());
 
     HttpResponse<String> removed =
         client.send(
@@ -1642,7 +1620,7 @@ class WebApiTest {
     JsonNode entry = added.path("workspaces").get(1);
     assertEquals("picked-thing", entry.path("name").asText());
     assertEquals(picked.toString(), entry.path("path").asText());
-    assertEquals("ws", added.path("active").asText(), "picking a folder does not switch");
+    assertEquals("ws", added.path("active").asText(), "挑一个文件夹不会切换");
   }
 
   @Test
@@ -1651,8 +1629,8 @@ class WebApiTest {
 
     assertEquals("twice", postJson("/api/workspaces", "{\"path\":\"" + project + "\"}").path("workspaces").get(1).path("name").asText());
 
-    // Same directory, different spelling: normalising is what makes this a refusal and not a second
-    // entry with a competitor's session history.
+    // 同一个目录，不同的写法：正是归一化让这里变成一次拒绝，而不是多出一条带着竞争对手会话
+    // 历史的条目。
     HttpResponse<String> refusal =
         post("/api/workspaces", "{\"path\":\"" + project.resolve(".") + "\"}");
 
@@ -1665,10 +1643,10 @@ class WebApiTest {
   void aPathIsRequiredAndAnUnusableFolderNameIsRefused() throws Exception {
     HttpResponse<String> noPath = post("/api/workspaces", "{\"path\":\"\"}");
     assertEquals(400, noPath.statusCode(), noPath.body());
-    assertTrue(noPath.body().contains("directory"), noPath.body());
+    assertTrue(noPath.body().contains("工作区需要一个目录"), noPath.body());
 
-    // A folder named "my project" is added, not refused — but one whose name cannot be a single path
-    // segment (a leading dash would read as a flag) comes back with the reason.
+    // 名为 "my project" 的文件夹会被添加，而不是被拒——但名字没法当单独一个路径段的（开头的
+    // 短横会读成一个 flag）会带着原因退回来。
     Path spaced = Files.createDirectories(tmp.resolve("my project"));
     assertEquals(
         "my project",
@@ -1678,10 +1656,10 @@ class WebApiTest {
     Path odd = Files.createDirectories(tmp.resolve("-dashed"));
     HttpResponse<String> oddName = post("/api/workspaces", "{\"path\":\"" + odd + "\"}");
     assertEquals(400, oddName.statusCode(), oddName.body());
-    assertTrue(oddName.body().contains("path separator"), oddName.body());
+    assertTrue(oddName.body().contains("文件夹名 '-dashed' 不能作为工作区名：工作区名称必须为 1-40 个字符，不能包含路径分隔符，不能以连字符开头，也不能是 '.' 或 '..'"), oddName.body());
   }
 
-  // ------------------------------------------------------------------ deletion and the chooser
+  // ------------------------------------------------------------------ 删除与选择器
 
   @Test
   void deletingASessionRemovesItAndLeavesTheRest() throws Exception {
@@ -1708,7 +1686,7 @@ class WebApiTest {
 
     assertEquals(200, response.statusCode(), response.body());
     assertEquals(1, Json.parse(response.body()).path("sessions").size());
-    assertEquals(newer, json("/api/status").path("sessionId").asText(), "the other one stays active");
+    assertEquals(newer, json("/api/status").path("sessionId").asText(), "另一个保持活动状态");
   }
 
   @Test
@@ -1728,8 +1706,8 @@ class WebApiTest {
             HttpResponse.BodyHandlers.ofString());
 
     assertEquals(200, response.statusCode(), response.body());
-    assertFalse(Files.exists(sessions.resolve(active + ".jsonl")), "the file is gone");
-    assertNotEquals(active, json("/api/status").path("sessionId").asText(), "somewhere to be next");
+    assertFalse(Files.exists(sessions.resolve(active + ".jsonl")), "文件没了");
+    assertNotEquals(active, json("/api/status").path("sessionId").asText(), "总得有个地方接着待");
     assertEquals(0, json("/api/sessions").path("sessions").size());
   }
 
@@ -1743,7 +1721,7 @@ class WebApiTest {
             HttpResponse.BodyHandlers.ofString());
 
     assertEquals(400, response.statusCode(), response.body());
-    assertTrue(response.body().contains("no session"), response.body());
+    assertTrue(response.body().contains("在 本工作区 里没有会话 '20200101-000000-abcd'"), response.body());
     assertEquals(400, client.send(
             HttpRequest.newBuilder(URI.create(origin + "/api/session"))
                 .DELETE()
@@ -1751,11 +1729,11 @@ class WebApiTest {
             HttpResponse.BodyHandlers.ofString()).statusCode());
   }
 
-  // ------------------------------------------------------------------ compaction
+  // ------------------------------------------------------------------ 压缩
 
   @Test
   void compactingReplacesTheOlderTurnsWithASummaryAndKeepsTheFile() throws Exception {
-    // A conversation long enough to compact: 8 exchanges, so the newest 5 are kept.
+    // 一个长到值得压缩的对话：8 组往来，所以最新的 5 组会被留下。
     for (int i = 0; i < 8; i++) {
       provider.reply(Message.Assistant.text("answer " + i + " " + "detail ".repeat(50)));
       try (Sse sse = watch()) {
@@ -1769,40 +1747,38 @@ class WebApiTest {
     JsonNode usageBefore = json("/api/status").path("usage");
     int stepsBefore = usageBefore.path("steps").asInt();
 
-    // What the model is asked for the summary is a question about the transcript, not a turn.
+    // 向模型索要摘要的东西，是一个关于转录的提问，而不是一个回合。
     provider.reply(Message.Assistant.text("Goal: answer questions. Files: none. Open: nothing."));
     JsonNode result = postJson("/api/compact", "{}");
 
     assertTrue(result.path("compacted").asBoolean(), result.toString());
-    assertEquals(6, result.path("summarised").asInt(), "three exchanges of two messages are replaced");
+    assertEquals(6, result.path("summarised").asInt(), "三组各两条消息的往来被替换掉了");
     assertEquals(10, result.path("kept").asInt());
     assertTrue(result.path("afterTokens").asInt() < result.path("beforeTokens").asInt(), result.toString());
     assertEquals(1, result.path("generation").asInt());
 
-    // The generation file holds the summary plus the kept tail; the original is byte-for-byte intact,
-    // which is the whole reason a compaction is safe to attempt.
+    // 新代文件装着摘要加上留下的尾巴；原文件逐字节完好，这正是压缩可以放心尝试的全部理由。
     Path generation = sessions.resolve(id + ".g1.jsonl");
-    assertTrue(Files.isRegularFile(generation), "the new generation is on disk");
-    assertEquals(originalBytes, Files.readString(original), "the generation it replaced is untouched");
+    assertTrue(Files.isRegularFile(generation), "新的一代已经在磁盘上");
+    assertEquals(originalBytes, Files.readString(original), "它替换掉的那一代未被触碰");
     List<Message> compacted = FileSession.readAll(generation);
     assertTrue(compacted.get(0) instanceof Message.Summary, compacted.get(0).toString());
 
-    // The summarising request is not a turn: no user message was appended and no step was counted.
+    // 这次摘要请求不是一个回合：没有追加用户消息，也没有计入步骤。
     var requests = provider.requests();
     var summariseRequest = requests.get(requests.size() - 1);
-    assertNull(summariseRequest.system(), "the summary request carries no system prompt");
-    assertTrue(summariseRequest.tools().isEmpty(), "and no tools to go and do work with");
-    assertEquals(1, requests.get(requests.size() - 1).messages().size(), "one message: the transcript");
+    assertNull(summariseRequest.system(), "摘要请求不带系统提示词");
+    assertTrue(summariseRequest.tools().isEmpty(), "也没有工具可以去干活");
+    assertEquals(1, requests.get(requests.size() - 1).messages().size(), "只有一条消息：转录本身");
     assertTrue(
         ((Message.User) summariseRequest.messages().get(0)).text().contains(Compaction.INSTRUCTIONS),
-        "the instruction is what turns a transcript into a summary");
-    assertEquals(stepsBefore, json("/api/status").path("usage").path("steps").asInt(), "not a step");
+        "正是那段指令把一份转录变成摘要");
+    assertEquals(stepsBefore, json("/api/status").path("usage").path("steps").asInt(), "不算一步");
 
-    // But it is counted, and separately: it cost tokens and folding it into steps would make that
-    // number mean two things.
+    // 但它会被计入，而且是单独计：它耗了 token，把它折进步骤里会让那个数字同时意味着两件事。
     assertEquals(1, json("/api/status").path("usage").path("compactions").asInt());
 
-    // And the session carries on: the next turn is answered, from the compacted conversation.
+    // 而且会话继续下去：下一个回合会被作答，基于压缩后的对话。
     provider.reply(Message.Assistant.text("continuing"));
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"what next?\"}");
@@ -1811,13 +1787,13 @@ class WebApiTest {
     var nextTurn = provider.requests().get(provider.requests().size() - 1);
     assertTrue(
         nextTurn.messages().stream().anyMatch(m -> m instanceof Message.Summary),
-        "the summary is what the next request carries instead of the old turns: " + nextTurn.messages());
+        "下一个请求带着的就是摘要，而不是那些旧的回合：" + nextTurn.messages());
   }
 
   @Test
   void aCompactionIsRefusedWhileATurnIsRunning() throws Exception {
-    // Two writers on one transcript is the exception the per-conversation turn flag exists to prevent,
-    // and a compaction rewrites what the conversation is.
+    // 一份转录上两个写入者，正是「每对话一个回合」标志存在的意义所在要防的例外，而压缩会
+    // 重写这个对话是什么。
     CountDownLatch gate = new CountDownLatch(1);
     provider.reply(Message.Assistant.text("slow"));
     provider.gate(gate);
@@ -1825,7 +1801,7 @@ class WebApiTest {
 
     HttpResponse<String> refusal = post("/api/compact", "{}");
     assertEquals(409, refusal.statusCode(), refusal.body());
-    assertTrue(refusal.body().contains("turn is still running"), refusal.body());
+    assertTrue(refusal.body().contains("还有回合在跑；请先中止它"), refusal.body());
 
     provider.release();
     gate.countDown();
@@ -1843,8 +1819,8 @@ class WebApiTest {
     HttpResponse<String> refusal = post("/api/compact", "{}");
 
     assertEquals(400, refusal.statusCode(), refusal.body());
-    assertTrue(refusal.body().contains("nothing to compact"), refusal.body());
-    assertEquals(callsBefore, provider.requests().size(), "the model is not asked to summarise nothing");
+    assertTrue(refusal.body().contains("这个对话还没有可压缩的东西——它比压缩会保留的 " + Compaction.KEEP_EXCHANGES + " 组往复还短"), refusal.body());
+    assertEquals(callsBefore, provider.requests().size(), "不会让模型去总结「什么都没有」");
     assertEquals(405, get("/api/compact").statusCode());
   }
 
@@ -1863,8 +1839,8 @@ class WebApiTest {
     HttpResponse<String> refusal = post("/api/compact", "{}");
 
     assertEquals(409, refusal.statusCode(), refusal.body());
-    assertTrue(refusal.body().contains("empty summary"), refusal.body());
-    // Nothing was written, so the session is still its generation 0 and still complete.
+    assertTrue(refusal.body().contains("模型返回了空摘要；什么都没有改动"), refusal.body());
+    // 什么都没写，所以会话仍然是它的第 0 代，也仍然完整。
     assertEquals(16, json("/api/status").path("messageCount").asInt());
     assertFalse(Files.exists(sessions.resolve(id + ".g1.jsonl")));
     assertEquals(0, json("/api/status").path("usage").path("compactions").asInt());
@@ -1942,7 +1918,7 @@ class WebApiTest {
     JsonNode fast =
         lastWhere(catalog.path("models"), entry -> entry.path("model").asText().equals("fast-model"));
     assertEquals("myrelay", fast.path("provider").asText());
-    assertEquals("config", fast.path("source").asText(), "where the entry came from");
+    assertEquals("config", fast.path("source").asText(), "这个条目从哪儿来的");
   }
 
   @Test
@@ -1956,9 +1932,9 @@ class WebApiTest {
     json("/api/config").path("providers").forEach(name -> providers.add(name.asText()));
 
     assertTrue(providers.contains("openai"), providers.toString());
-    assertTrue(providers.contains("myrelay"), "a defined provider must be selectable");
+    assertTrue(providers.contains("myrelay"), "自定义的提供方必须可选");
 
-    // and it is usable immediately: saving it as the active provider must not be rejected
+    // 而且它立刻就能用：把它保存为当前提供方绝不能被拒
     JsonNode saved =
         postJson(
             "/api/config",
@@ -1978,9 +1954,9 @@ class WebApiTest {
     JsonNode relay =
         lastWhere(added.path("providers"), entry -> entry.path("name").asText().equals("myrelay"));
     assertFalse(relay.path("builtIn").asBoolean());
-    assertEquals(List.of("fast", "smart"), modelsOf(relay), "a comma-separated list is understood");
+    assertEquals(List.of("fast", "smart"), modelsOf(relay), "逗号分隔的列表是能被读懂的");
 
-    // it is selectable, and the running session can switch to it immediately
+    // 它可选，而且正在运行的会话可以立刻切到它上面
     JsonNode saved =
         postJson(
             "/api/config",
@@ -2001,16 +1977,15 @@ class WebApiTest {
             .statusCode());
     assertEquals(
         400, post("/api/providers", "{\"name\":\"relay\",\"kind\":\"openai\"}").statusCode());
-    assertTrue(providerStore.list().isEmpty(), "a rejected definition must not be stored");
+    assertTrue(providerStore.list().isEmpty(), "被拒的定义绝不能存下来");
   }
 
   @Test
   void switchingProviderKeepsTheEndpointAndKeyUnderTheProviderItIsLeaving() throws Exception {
-    // What the composer picker posts: provider and model, nothing else. The stored baseUrl and key
-    // belong to the provider being left, so using them for the new one is how a session that says
-    // "myrelay" ends up sending its traffic to the previous provider's address with the previous
-    // provider's key — on the previous provider's bill. They are kept under the name they belong to
-    // instead of being left in the active pair, which is what lets switching back be free.
+    // 输入框上的选择器会提交的东西：提供方和模型，别的什么都没有。存着的 baseUrl 和密钥属于
+    // 正要离开的那个提供方，拿它们去给新提供方用，就是一个自称 "myrelay" 的会话最后拿着上一个
+    // 提供方的密钥、把流量发到上一个提供方的地址上——记在上一个提供方的账上。它们会被留在自己
+    // 所属的名字底下，而不是留在当前那一对里，这才让切回去是免费的。
     postJson(
         "/api/config",
         "{\"provider\":\"openai\",\"model\":\"m\",\"baseUrl\":\"https://previous.example.com/v1\",\"apiKey\":\"sk-previous\"}");
@@ -2025,22 +2000,22 @@ class WebApiTest {
     JsonNode stored = Json.parse(Files.readString(configFile));
     assertNull(
         stored.path("apiKey").isTextual() ? stored.path("apiKey").asText() : null,
-        "nothing of the old pair may stay in the active fields: " + stored);
+        "旧的那一对里任何东西都不能留在当前字段里：" + stored);
     assertFalse(
         stored.path("baseUrl").asText("").contains("previous.example.com"),
-        "the endpoint being left must not stay in the active pair either: " + stored);
+        "正要离开的那个端点也不能留在当前那一对里：" + stored);
     assertEquals(
         "https://relay.example.com/v1",
         switched.path("baseUrl").asText(),
-        "the endpoint reported must be the one the request will use, which is the definition's");
+        "报告出来的端点必须是这次请求将要使用的那个，也就是定义里的那个");
     assertEquals(
         "none",
         json("/api/config").path("apiKeySource").asText(),
-        "the form must not report a key that would not be sent");
+        "表单绝不能报告一个不会被发出去的密钥");
     assertEquals(
         "sk-previous",
         stored.path("remembered").path("openai").path("apiKey").asText(),
-        "it is kept under the provider it was entered for: " + stored);
+        "它被留在当初录入它的那个提供方名下：" + stored);
   }
 
   @Test
@@ -2056,22 +2031,22 @@ class WebApiTest {
     assertEquals(
         List.of("openai", "myrelay"),
         strings(cfg.path("rememberedProviders")),
-        "every provider with a saved key — openai's is remembered, myrelay's is in effect right now."
-            + " Names only, never a key");
+        "每一个存有密钥的提供方——openai 的是被记着的，myrelay 的此刻正在生效。"
+            + " 只给名字，绝不给密钥");
     assertEquals("config", cfg.path("apiKeySource").asText());
 
-    // Back to openai: its own endpoint and key come back without pasting anything.
+    // 回到 openai：它自己的端点和密钥回来了，什么都不用重新粘贴。
     JsonNode back = postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"gpt-x\"}");
     assertEquals("openai", back.path("provider").asText());
     JsonNode stored = Json.parse(Files.readString(configFile));
-    assertEquals("sk-openai", stored.path("apiKey").asText(), "back on its own key: " + stored);
+    assertEquals("sk-openai", stored.path("apiKey").asText(), "回到它自己的密钥上：" + stored);
     assertFalse(
         stored.path("baseUrl").asText("").contains("relay.example.com"),
-        "and not on the endpoint it was switched away from: " + stored);
+        "而不是停在它被切走的那个端点上：" + stored);
     assertEquals(
         "sk-relay",
         stored.path("remembered").path("myrelay").path("apiKey").asText(),
-        "and myrelay's key waits for the way back: " + stored);
+        "而 myrelay 的密钥等着回去的路：" + stored);
   }
 
   @Test
@@ -2087,11 +2062,11 @@ class WebApiTest {
     assertEquals("none", json("/api/config").path("apiKeySource").asText());
     JsonNode stored = Json.parse(Files.readString(configFile));
     assertFalse(
-        stored.path("remembered").has("myrelay"), "a forgotten key must not come back: " + stored);
+        stored.path("remembered").has("myrelay"), "被忘掉的密钥绝不能回来：" + stored);
     assertEquals(
         "sk-openai",
         stored.path("remembered").path("openai").path("apiKey").asText(),
-        "the other provider's key is none of this one's business: " + stored);
+        "另一个提供方的密钥不关这个提供方的事：" + stored);
   }
 
   @Test
@@ -2107,9 +2082,9 @@ class WebApiTest {
     assertEquals(
         "myrelay",
         Json.parse(Files.readString(configFile)).path("settingsFor").asText(),
-        "the file records whose endpoint and key these are");
+        "文件记下了这些端点和密钥是谁的");
 
-    // A later save that says nothing about the key keeps it: it is this provider's.
+    // 之后一次对密钥只字未提的保存会把它留下：它是这个提供方的。
     postJson("/api/config", "{\"reasoning\":\"high\"}");
     assertEquals("config", json("/api/config").path("apiKeySource").asText());
     assertTrue(Files.readString(configFile).contains("sk-mine"));
@@ -2130,10 +2105,10 @@ class WebApiTest {
             HttpResponse.BodyHandlers.ofString());
 
     assertEquals(200, removed.statusCode(), removed.body());
-    assertTrue(providerStore.list().isEmpty(), "the definition is gone");
+    assertTrue(providerStore.list().isEmpty(), "定义没了");
     assertTrue(
         json("/api/status").path("configured").asBoolean(),
-        "the running session keeps its provider: it was built when it was chosen");
+        "正在运行的会话留着它的提供方：它是在被选中时构建的");
   }
 
   @Test
@@ -2147,16 +2122,16 @@ class WebApiTest {
     postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + tmp.resolve("other") + "\"}");
     postJson("/api/workspace", "{\"name\":\"other\"}");
 
-    // Folding a folder must not move the active workspace, only read its contents.
+    // 折叠一个文件夹绝不能挪动当前工作区，只是读它的内容。
     JsonNode others = json("/api/sessions?workspace=ws");
     assertEquals("ws", others.path("workspace").asText());
     assertEquals(1, others.path("sessions").size());
     assertEquals(firstId, others.path("sessions").get(0).path("id").asText());
     assertEquals(
-        "other", json("/api/status").path("workspace").path("name").asText(), "still active: other");
+        "other", json("/api/status").path("workspace").path("name").asText(), "仍然是当前活动：other");
 
     assertEquals(0, json("/api/sessions?workspace=other").path("sessions").size());
-    assertEquals(0, json("/api/sessions").path("sessions").size(), "no parameter means the active one");
+    assertEquals(0, json("/api/sessions").path("sessions").size(), "不带参数就意味着当前活动的那个");
     assertEquals(400, get("/api/sessions?workspace=nope").statusCode());
   }
 
@@ -2165,13 +2140,13 @@ class WebApiTest {
     JsonNode saved = postJson("/api/config", "{\"reasoning\":\"high\"}");
 
     assertEquals("high", saved.path("reasoning").asText());
-    assertEquals(List.of("low", "high", "max"), levels(saved), "the picker offers these");
+    assertEquals(List.of("low", "high", "max"), levels(saved), "选择器提供这些档位");
     assertEquals("high", json("/api/config").path("reasoning").asText());
 
     assertEquals("max", postJson("/api/config", "{\"reasoning\":\"max\"}").path("reasoning").asText());
 
     JsonNode cleared = postJson("/api/config", "{\"reasoning\":\"default\"}");
-    assertTrue(cleared.path("reasoning").isNull(), "default means the provider decides");
+    assertTrue(cleared.path("reasoning").isNull(), "default 意味着由提供方决定");
     assertTrue(json("/api/config").path("reasoning").isNull());
 
     HttpResponse<String> bad = post("/api/config", "{\"reasoning\":\"turbo\"}");
@@ -2182,43 +2157,43 @@ class WebApiTest {
   @Test
   void theThinkingLanguageIsOfferedSavedAndPutInThePrompt() throws Exception {
     JsonNode fresh = json("/api/config");
-    assertEquals("auto", fresh.path("language").asText(), "no choice means the prompt says nothing");
+    assertEquals("auto", fresh.path("language").asText(), "不做选择就意味着提示里什么都不提");
     List<String> offered = languages(fresh);
     assertTrue(offered.contains("Simplified Chinese"), offered.toString());
-    assertEquals(offered.get(0), "Simplified Chinese", "the list is in the order the form shows it");
+    assertEquals(offered.get(0), "Simplified Chinese", "这个列表就是表单显示它们的顺序");
 
-    // POST answers with the status payload, so the form's own value is read back from GET — which is
-    // also the round trip the setting has to survive.
+    // POST 用状态载荷作答，所以表单自己的值要从 GET 读回来——这也正是这项设置必须挺过来的那次
+    // 往返。
     postJson("/api/config", "{\"language\":\"Simplified Chinese\"}");
     assertEquals("Simplified Chinese", json("/api/config").path("language").asText());
 
-    // The point of the setting: the prompt the model is handed asks for it, by name, including the
-    // thinking stream. Checked on the request the loop actually sent.
+    // 这项设置的意义：交给模型的提示会按名字要求它，连思考流也一样。检查的是循环真正发出的那个
+    // 请求。
     provider.reply(Message.Assistant.text("好的"));
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"say hi\"}");
       sse.await("done", 5000);
     }
-    // The prompt names the language the way it names itself — 简体中文, not "Simplified Chinese" — so
-    // the sentence reads as an instruction about a language rather than a label from a form.
+    // 提示里点名这门语言用的是它自己的名字——简体中文，而不是 "Simplified Chinese"——这样那句话
+    // 读起来是关于一门语言的指令，而不是表单上的一个标签。
     var sent = lastBuilt.requests().get(lastBuilt.requests().size() - 1);
     assertTrue(sent.system().contains("think in 简体中文"), sent.system());
     assertTrue(
         sent.system().contains("always reason and reply in 简体中文"),
-        "the answer is asked for in the same sentence as the thinking: " + sent.system());
+        "作答与思考是在同一句话里被要求的：" + sent.system());
 
-    // Clearing it back to auto removes the sentence rather than leaving a stale one behind.
+    // 清回 auto 会把那句话移掉，而不是留下一句过时的。
     postJson("/api/config", "{\"language\":\"auto\"}");
     assertEquals("auto", json("/api/config").path("language").asText());
     assertFalse(
         com.ccj.agent.core.Prompts.DEFAULT_SYSTEM.contains("always reason and reply"),
-        "auto adds nothing to the prompt");
+        "auto 不给提示加任何东西");
   }
 
   @Test
   void aLanguageTheBuildDoesNotListIsStillKept() throws Exception {
-    // The list is a convenience, not a gate: a model can follow a name this build never heard of, and
-    // refusing one would be the form deciding what somebody is allowed to think in.
+    // 这个列表是方便，不是闸门：模型能听从一个这个构建从未听说过的名字，而拒绝它就等于让表单来
+    // 决定一个人被允许用什么语言思考。
     postJson("/api/config", "{\"language\":\"Klingon\"}");
 
     assertEquals("Klingon", json("/api/config").path("language").asText());
@@ -2245,10 +2220,10 @@ class WebApiTest {
 
     assertEquals(200, response.statusCode(), response.body());
     assertEquals(0, Json.parse(response.body()).path("sessions").size());
-    assertEquals(activeNow, json("/api/status").path("sessionId").asText(), "still in 'other'");
+    assertEquals(activeNow, json("/api/status").path("sessionId").asText(), "仍然在 'other' 里");
     assertFalse(Files.exists(sessions.resolve(wsSession + ".jsonl")));
 
-    // and the delete-all route takes the same parameter
+    // 而且全部删除那条路由接受同一个参数
     assertEquals(
         200,
         client.send(
@@ -2270,27 +2245,26 @@ class WebApiTest {
       sse.await("done", 5000);
     }
 
-    // The tier must survive the whole path: settings -> stored config -> the turn's options ->
-    // the request a provider actually receives. Asserting the config alone would not catch a
-    // dropped argument on the way.
+    // 这个档位必须走通整条路径：设置 -> 存下来的配置 -> 回合的选项 -> 提供方真正收到的那个
+    // 请求。只断言配置抓不到路上被丢掉的参数。
     var requests = lastBuilt.requests();
     assertEquals("high", requests.get(requests.size() - 1).reasoning(), requests.toString());
-    assertEquals(1, requests.size(), "one turn, one request");
+    assertEquals(1, requests.size(), "一个回合，一个请求");
   }
 
   @Test
   void aModelAddedToABuiltInProviderIsRemembered() throws Exception {
-    // The exact complaint: type a model under a provider that has no definition of its own.
+    // 原话就是这么抱怨的：在一个自己没有定义的提供方底下敲一个模型名。
     JsonNode after = postJson("/api/models", "{\"provider\":\"openai\",\"model\":\"gpt-5-preview\"}");
 
     JsonNode openai = providerOf(after, "openai");
-    assertEquals(List.of("gpt-4o-mini", "gpt-5-preview"), modelsOf(openai), "added, not replaced");
-    assertTrue(after.path("models").toString().contains("gpt-5-preview"), "offered as a choice");
+    assertEquals(List.of("gpt-4o-mini", "gpt-5-preview"), modelsOf(openai), "是添加，不是替换");
+    assertTrue(after.path("models").toString().contains("gpt-5-preview"), "被提供为一个可选项");
     assertTrue(
         Files.readString(tmp.resolve("providers.json")).contains("gpt-5-preview"),
-        "and written down, so it survives a restart");
+        "而且被记了下来，所以它能挺过一次重启");
 
-    // removing it sticks, because a recorded list is authoritative
+    // 删掉它是算数的，因为记下来的列表才是权威
     HttpResponse<String> removed =
         client.send(
             HttpRequest.newBuilder(
@@ -2303,9 +2277,9 @@ class WebApiTest {
     assertEquals(
         List.of("gpt-4o-mini"),
         modelsOf(providerOf(json("/api/models"), "openai")),
-        "still gone on the next read");
+        "下次读取时仍然是没有的");
 
-    // a restart of the store must not bring it back either
+    // 重建一次存储也不能把它带回来
     assertEquals(List.of("gpt-4o-mini"), modelsOf(providerOf(json("/api/models"), "openai")));
   }
 
@@ -2314,14 +2288,13 @@ class WebApiTest {
     assertEquals(400, post("/api/models", "{\"provider\":\"nope\",\"model\":\"m\"}").statusCode());
     assertEquals(400, post("/api/models", "{\"provider\":\"openai\"}").statusCode());
     assertEquals(400, post("/api/models", "{\"model\":\"m\"}").statusCode());
-    assertEquals(200, get("/api/models?provider=openai&model=x").statusCode(), "GET lists the catalogue");
-    assertTrue(providerStore.modelsFor("openai").isEmpty(), "nothing recorded by the refusals");
+    assertEquals(200, get("/api/models?provider=openai&model=x").statusCode(), "GET 会列出目录");
+    assertTrue(providerStore.modelsFor("openai").isEmpty(), "这些拒绝什么都没记下");
   }
 
   @Test
   void theModelInUseCanStillBeRemovedFromTheOfferList() throws Exception {
-    // The deadlock this replaces: the only model offered was also the one in use, so it could not
-    // be removed and nothing else could be switched to.
+    // 这里替掉的那个死锁：唯一被提供的模型也正是正在用的那个，于是它删不掉，也没有别的可切。
     postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"gpt-4o-mini\"}");
 
     HttpResponse<String> removed =
@@ -2334,19 +2307,19 @@ class WebApiTest {
 
     assertEquals(200, removed.statusCode(), removed.body());
     assertEquals(
-        List.of(), modelsOf(providerOf(Json.parse(removed.body()), "openai")), "no longer suggested");
+        List.of(), modelsOf(providerOf(Json.parse(removed.body()), "openai")), "不再被建议");
     assertEquals(
         "gpt-4o-mini",
         json("/api/status").path("model").asText(),
-        "removing it from the list must not change what the session uses");
+        "把它从列表里删掉绝不能改变会话在用的东西");
 
-    // and it really is gone on the next read
+    // 而且下次读取时它真的没了
     assertEquals(List.of(), modelsOf(providerOf(json("/api/models"), "openai")));
   }
 
   @Test
   void aBuiltInProviderCanBeDeletedAndAddedBack() throws Exception {
-    assertTrue(providerNames(json("/api/models")).contains("groq"), "there to begin with");
+    assertTrue(providerNames(json("/api/models")).contains("groq"), "一开始就在那儿");
 
     HttpResponse<String> deleted =
         client.send(
@@ -2355,16 +2328,16 @@ class WebApiTest {
 
     assertEquals(200, deleted.statusCode(), deleted.body());
     JsonNode afterDelete = Json.parse(deleted.body());
-    assertFalse(providerNames(afterDelete).contains("groq"), "gone from the list");
+    assertFalse(providerNames(afterDelete).contains("groq"), "从列表里没了");
     assertEquals(
         List.of(), afterDelete.path("hidden").findValuesAsText("hidden"),
-        "nothing is remembered as hidden — that is what 'deleted' means");
-    assertTrue(availableBuiltIns(afterDelete).contains("groq"), "but it can be added again");
-    assertFalse(providerNames(json("/api/models")).contains("groq"), "still gone on the next read");
-    assertFalse(providerStore.shown().contains("groq"), "the explicit list no longer has it");
-    assertEquals(6, providerStore.shown().size(), "the rest stayed: " + providerStore.shown());
+        "没有任何东西被记成隐藏——「删掉」就是这个意思");
+    assertTrue(availableBuiltIns(afterDelete).contains("groq"), "但它还能再加回来");
+    assertFalse(providerNames(json("/api/models")).contains("groq"), "下次读取时仍然是没有的");
+    assertFalse(providerStore.shown().contains("groq"), "显式列表里已经没它了");
+    assertEquals(6, providerStore.shown().size(), "其余的都还在：" + providerStore.shown());
 
-    // Adding a built-in back is an ordinary add, not a restore.
+    // 把一个内置提供方加回来就是一次普通的添加，不是一次恢复。
     HttpResponse<String> added =
         client.send(
             HttpRequest.newBuilder(URI.create(origin + "/api/providers"))
@@ -2374,9 +2347,9 @@ class WebApiTest {
             HttpResponse.BodyHandlers.ofString());
     assertEquals(200, added.statusCode(), added.body());
     assertTrue(providerNames(Json.parse(added.body())).contains("groq"));
-    assertFalse(availableBuiltIns(Json.parse(added.body())).contains("groq"), "offered once");
+    assertFalse(availableBuiltIns(Json.parse(added.body())).contains("groq"), "只提供一次");
 
-    // Deleting twice is not an error, and neither is adding what is already there.
+    // 删两次不是错误，添加已经在的东西也不是。
     assertEquals(
         400,
         client.send(
@@ -2410,11 +2383,11 @@ class WebApiTest {
 
     assertEquals(200, removed.statusCode(), removed.body());
     assertFalse(providerNames(Json.parse(removed.body())).contains("mine"));
-    assertTrue(providerStore.list().isEmpty(), "the definition is gone");
+    assertTrue(providerStore.list().isEmpty(), "定义没了");
     assertEquals(
         List.of(),
         providerStore.shown(),
-        "deleting a definition leaves the built-in list alone: there was no list to narrow");
+        "删掉一个定义不会动内置列表：本来就没有一个被缩窄过的列表");
   }
 
   @Test
@@ -2423,7 +2396,7 @@ class WebApiTest {
         HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=openai")).DELETE().build(),
         HttpResponse.BodyHandlers.ofString());
 
-    // Deleting is a list decision, not a capability removal: the configured provider keeps working.
+    // 删除是列表层面的决定，不是能力的移除：已配置的提供方继续工作。
     assertEquals("openai", json("/api/status").path("provider").asText());
     assertTrue(json("/api/status").path("configured").asBoolean());
   }
@@ -2444,53 +2417,53 @@ class WebApiTest {
                 .build(),
             HttpResponse.BodyHandlers.ofString());
     assertEquals(400, notBuiltIn.statusCode(), notBuiltIn.body());
-    assertTrue(notBuiltIn.body().contains("not a built-in"), notBuiltIn.body());
+    assertTrue(notBuiltIn.body().contains("'whatever' 不是内置提供方；请改为自定义一个"), notBuiltIn.body());
   }
 
   @Test
   void aNewDefinitionJoinsAnExplicitListInsteadOfBeingInvisible() throws Exception {
-    // The reported bug: the user had narrowed the list, then defined a provider, and it never
-    // appeared — the definition was saved but the list did not mention it.
+    // 有人报的 bug：用户先把列表缩窄了，然后定义了一个提供方，而它从未出现——定义被保存了，但
+    // 列表没有提到它。
     client.send(
         HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=groq")).DELETE().build(),
         HttpResponse.BodyHandlers.ofString());
-    assertFalse(providerNames(json("/api/models")).contains("groq"), "narrowed to begin with");
+    assertFalse(providerNames(json("/api/models")).contains("groq"), "一开始就是缩窄过的");
 
     JsonNode added =
         postJson(
             "/api/providers",
             "{\"name\":\"myrelay\",\"kind\":\"openai\",\"baseUrl\":\"http://127.0.0.1:9/v1\",\"models\":\"m1\"}");
 
-    assertTrue(providerNames(added).contains("myrelay"), "saved and listed: " + added);
-    assertTrue(providerStore.shown().contains("myrelay"), "and in the explicit list");
-    assertTrue(providerNames(json("/api/models")).contains("myrelay"), "still there on the next read");
+    assertTrue(providerNames(added).contains("myrelay"), "已保存并且列出：" + added);
+    assertTrue(providerStore.shown().contains("myrelay"), "而且在显式列表里");
+    assertTrue(providerNames(json("/api/models")).contains("myrelay"), "下次读取时仍然在");
   }
 
   @Test
   void deletingADefinitionAlsoLeavesTheExplicitList() throws Exception {
-    // Narrow the list first, so "the list" is a real thing rather than the implicit everything.
+    // 先把列表缩窄，好让「这个列表」是一件真东西，而不是隐含的「所有一切」。
     client.send(
         HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=groq")).DELETE().build(),
         HttpResponse.BodyHandlers.ofString());
     postJson(
         "/api/providers",
         "{\"name\":\"mine\",\"kind\":\"openai\",\"baseUrl\":\"http://127.0.0.1:9/v1\",\"models\":\"m\"}");
-    assertTrue(providerStore.shown().contains("mine"), "a definition joins the list: " + providerStore.shown());
+    assertTrue(providerStore.shown().contains("mine"), "一个定义会加入列表：" + providerStore.shown());
 
     client.send(
         HttpRequest.newBuilder(URI.create(origin + "/api/providers?name=mine")).DELETE().build(),
         HttpResponse.BodyHandlers.ofString());
 
-    assertFalse(providerStore.shown().contains("mine"), "a deleted name must not linger");
+    assertFalse(providerStore.shown().contains("mine"), "被删掉的名字绝不能留着");
     assertFalse(
         providerNames(json("/api/models")).contains("mine"),
-        "and must not come back as a phantom built-in");
+        "也不能像一个幽灵内置提供方那样回来");
   }
 
   @Test
   void removingTheLastProviderLeavesTheListEmptyInsteadOfRestoringThemAll() throws Exception {
-    // The bug: the store could not tell "never narrowed" from "I removed everything", so deleting
-    // the final provider read as "no opinion" and the entire catalogue reappeared.
+    // 那个 bug：存储分不清「从未缩窄」和「我把一切都删了」，于是删掉最后一个提供方被读成「没有
+    // 意见」，整个目录又全都冒了出来。
     for (String name : providerNames(json("/api/models"))) {
       assertEquals(
           200,
@@ -2500,14 +2473,14 @@ class WebApiTest {
                       .build(),
               HttpResponse.BodyHandlers.ofString())
               .statusCode(),
-          "deleting " + name);
+          "删除 " + name);
     }
 
     JsonNode emptied = json("/api/models");
-    assertTrue(providerNames(emptied).isEmpty(), "the list stays empty: " + emptied);
-    assertFalse(emptied.path("builtIns").isEmpty(), "and every built-in is still offered as a way back");
+    assertTrue(providerNames(emptied).isEmpty(), "列表保持为空：" + emptied);
+    assertFalse(emptied.path("builtIns").isEmpty(), "而且每个内置提供方仍然作为回去的路被提供");
 
-    // Nothing is remembered as hidden: adding one back is an ordinary add.
+    // 没有任何东西被记成隐藏：加回来就是一次普通的添加。
     JsonNode restored =
         Json.parse(
             client.send(
@@ -2522,19 +2495,19 @@ class WebApiTest {
 
   @Test
   void aTokenlessServerRefusesRequestsAddressedToAnotherHost() throws Exception {
-    // A tokenless server is reachable from any page the user visits; the Host header is what keeps
-    // a name that resolves to 127.0.0.1 (DNS rebinding) from being treated as this server.
+    // 没有 token 的服务器，用户访问的任何页面都够得着；正是 Host 头拦住了「一个解析到
+    // 127.0.0.1 的名字（DNS 重绑定）」被当成这台服务器。
     assertTrue(
         rawResponse("rebind.example", "/api/status").startsWith("HTTP/1.1 403"),
-        "a name that is not loopback is not this server");
+        "不是 loopback 的名字就不是这台服务器");
     assertTrue(
         rawResponse("127.0.0.1:" + api.port(), "/api/status").startsWith("HTTP/1.1 200"),
-        "and the loopback literal is");
+        "而 loopback 字面量是");
   }
 
   /**
-   * A raw request, because {@code HttpClient} will not let a test choose the {@code Host} header — and
-   * that header is the thing under test in three places here.
+   * 一个裸请求，因为 {@code HttpClient} 不让测试自己选 {@code Host} 头——而那个头在这里有三处
+   * 正是被测的东西。
    */
   private String rawResponse(String hostHeader, String path) throws IOException {
     try (Socket socket = new Socket("127.0.0.1", api.port())) {
@@ -2549,12 +2522,11 @@ class WebApiTest {
 
   @Test
   void bothAddressesServeTheSamePageAndOnlyTheNetworkOneAsksForTheToken() throws Exception {
-    // What "just run ccj" means: the machine itself reaches the page at 127.0.0.1 with nothing
-    // attached, and the same server asks the phone for the token — over the same process, the same
-    // hub and the same conversation. A test needs a second address to be one, so a machine whose only
-    // address is loopback skips this rather than pretending.
+    // 「直接跑 ccj」是什么意思：本机在 127.0.0.1 上打开页面，什么都不用附带；而同一个服务器
+    // 会向手机要 token——同一个进程、同一个 hub、同一个对话。这个测试要有第二个地址才成立，所以
+    // 只有 loopback 地址的机器会跳过它，而不是假装通过。
     Optional<InetAddress> elsewhere = anAddressOtherThanLoopback();
-    assumeTrue(elsewhere.isPresent(), "this machine has no address other than loopback");
+    assumeTrue(elsewhere.isPresent(), "这台机器除了 loopback 没有别的地址");
 
     api.close();
     api =
@@ -2569,14 +2541,14 @@ class WebApiTest {
 
     assertEquals(2, urls.size(), urls.toString());
     assertTrue(urls.get(0).startsWith("http://127.0.0.1:"), urls.toString());
-    assertFalse(urls.get(0).contains("token"), "the machine itself is not asked for a secret");
+    assertFalse(urls.get(0).contains("token"), "本机自己不会被索取秘密");
     assertTrue(urls.get(1).contains("?token=s3cret"), urls.toString());
 
     assertEquals(200, plainGet("http://127.0.0.1:" + api.port() + "/api/status"), "loopback");
     assertEquals(
         401,
         plainGet("http://" + elsewhere.get().getHostAddress() + ":" + api.port() + "/api/status"),
-        "the network address without the token");
+        "网络地址不带 token 时");
     assertEquals(
         200,
         plainGet(
@@ -2585,7 +2557,7 @@ class WebApiTest {
                 + ":"
                 + api.port()
                 + "/api/status?token=s3cret"),
-        "and with it");
+        "带上 token 时");
   }
 
   private static int plainGet(String url) throws Exception {
@@ -2598,10 +2570,10 @@ class WebApiTest {
   }
 
   /**
-   * An address this machine has that is not loopback, or empty when it has none.
+   * 本机拥有的一个非 loopback 地址，没有就是空。
    *
-   * <p>Deliberately not a hard-coded one: the point of the test is that a real second address gets a
-   * different answer from the server, and which address that is depends on the machine.
+   * <p>故意不写死一个：这个测试的意义在于一个真实的第二地址会从服务器拿到不同的答案，而那是
+   * 哪个地址取决于机器。
    */
   private static Optional<InetAddress> anAddressOtherThanLoopback() throws Exception {
     java.util.Enumeration<java.net.NetworkInterface> interfaces =
@@ -2628,7 +2600,7 @@ class WebApiTest {
         post("/api/config", "{\"system\":\"" + "x".repeat(1024 * 1024 + 64) + "\"}");
 
     assertEquals(413, response.statusCode(), response.body());
-    assertTrue(response.body().contains("larger than"), response.body());
+    assertTrue(response.body().contains("请求体大于 1048576 字节"), response.body());
   }
 
   @Test
@@ -2636,17 +2608,16 @@ class WebApiTest {
     JsonNode usage = json("/api/status").path("usage");
     assertTrue(usage.has("contextTokens"), usage.toString());
     assertTrue(usage.path("contextLimit").asInt() >= 0, usage.toString());
-    // What a session spent is a token count, not a price: ccj does not carry a
-    // rate table, so a money field would be a number the user cannot check.
+    // 会话花掉的是 token 数，不是价钱：ccj 不携带费率表，所以一个金额字段会是一个用户无从核对
+    // 的数字。
     assertFalse(usage.has("costUsd"), usage.toString());
     assertFalse(usage.has("priceAsOf"), usage.toString());
   }
 
   @Test
   void undoTakesBackWhatTheLastTurnChanged() throws Exception {
-    // The question people ask before letting an agent near their files is "may it be undone", and it
-    // is answered by a turn's writes being recoverable — not by the approval prompt, which only ever
-    // answered "may it run".
+    // 人们在让代理靠近自己的文件之前会问的问题是「这能撤回吗」，而它的答案是一次回合的写入可以
+    // 恢复——不是审批提示给的答案，后者从来只回答「这能跑吗」。
     hub.setAutoApprove(true);
     Path file = cwd.resolve("Notes.java");
     Files.writeString(file, "class Notes {\n  int a = 1;\n}\n");
@@ -2666,18 +2637,18 @@ class WebApiTest {
     try (Sse sse = watch()) {
       post("/api/message", "{\"text\":\"edit the notes\"}");
       sse.await("done", 5000);
-      assertTrue(Files.readString(file).contains("int a = 2;"), "the edit happened");
+      assertTrue(Files.readString(file).contains("int a = 2;"), "编辑确实发生了");
       assertEquals(
           "class Notes implements Cloneable {\n  int a = 2;\n}\n",
           Files.readString(file),
-          "both hunks, each where it belongs");
+          "两个块都改了，各自落在该在的位置");
 
       undone = postJson("/api/undo", "{}");
 
-      // A notice rather than history: undo is about the files, not about the conversation, and the
-      // transcript says what was put back where a reader is already looking.
+      // 用通知而不是历史：undo 管的是文件，不是对话，而转录会说出放回了什么——读者本来就在看
+      // 那块地方。
       JsonNode notice = sse.await("notice", 5000);
-      assertTrue(notice.path("text").asText().startsWith("undone: 1 file"), notice.toString());
+      assertTrue(notice.path("text").asText().startsWith("已退回：1 个文件恢复到上一回合之前的样子 ——"), notice.toString());
       assertTrue(notice.path("text").asText().contains("Notes.java"), notice.toString());
     }
 
@@ -2685,8 +2656,8 @@ class WebApiTest {
     assertEquals(
         "class Notes {\n  int a = 1;\n}\n",
         Files.readString(file),
-        "the file is what the turn found");
-    assertEquals(0, undone.path("remaining").asInt(), "that turn is spent");
+        "文件变回了那个回合起初看到的样子");
+    assertEquals(0, undone.path("remaining").asInt(), "那个回合已经用完了");
   }
 
   @Test
@@ -2710,13 +2681,13 @@ class WebApiTest {
 
     postJson("/api/undo", "{}");
 
-    assertFalse(Files.exists(cwd.resolve("Brand.java")), "a created file is deleted, not emptied");
+    assertFalse(Files.exists(cwd.resolve("Brand.java")), "新建的文件是被删掉，而不是被清空");
   }
 
   @Test
   void undoIsRefusedWhileATurnIsRunning() throws Exception {
-    // Undoing underneath a running turn would restore files the model is in the middle of reasoning
-    // about, which is a worse state than either.
+    // 在一个正在运行的回合底下撤回，会把模型正推理到一半的文件恢复回去，那比两种状态里的任何
+    // 一种都糟。
     provider.reply(Message.Assistant.text("slow"));
     provider.gate(new CountDownLatch(1));
     try (Sse sse = watch()) {
@@ -2725,7 +2696,7 @@ class WebApiTest {
       HttpResponse<String> refused = post("/api/undo", "{}");
 
       assertEquals(409, refused.statusCode(), refused.body());
-      assertTrue(refused.body().contains("abort it before undoing"), refused.body());
+      assertTrue(refused.body().contains("还有回合在跑；退回上一个回合之前请先中止它"), refused.body());
       provider.release();
       sse.await("done", 5000);
     }
@@ -2733,19 +2704,17 @@ class WebApiTest {
 
   @Test
   void aConversationOverItsBudgetIsCompactedBetweenTurns() throws Exception {
-    // Past `maxContextTokens` the projection starts eliding tool output and dropping whole exchanges,
-    // and its notices say so ("context: 213 → 26 tokens, 5 earlier exchange(s) dropped") without ever
-    // saying what went. A summary that names what it replaced is the better loss, and it happens
-    // between turns — never inside one, where the model is mid-thought about a history that would
-    // change under it.
+    // 越过 `maxContextTokens` 之后，投影会开始省略工具输出、丢掉整组往来，而它的通知会说明这
+    // 一点（"context: 213 → 26 tokens, 5 earlier exchange(s) dropped"），却从不说什么被丢了。
+    // 一份点名自己替换了什么的摘要是更好的损失，而且它发生在回合之间——绝不在回合之内，那会让
+    // 模型正想到一半的历史在它脚下变样。
     startWithBudget(50);
-    // Twelve exchanges: a compaction keeps the newest five and summarises the rest, so the part it
-    // replaces has to be larger than the summary prompt itself — measured, one summarised exchange
-    // (52 tokens) against a summary of 74, which is refused with "nothing to gain".
+    // 十二组往来：一次压缩留下最新的五组、总结其余，所以它替换掉的那部分必须比摘要提示本身更大
+    // ——实测下来，一组被总结的往来（52 token）对上 74 的摘要，会以 "nothing to gain" 被拒。
     for (int i = 0; i < 12; i++) {
       provider.reply(Message.Assistant.text("answer " + i));
     }
-    // The seventh call is the summarising one, which asks for no tools and a single message.
+    // 第七次调用就是那次摘要调用，它不要工具、只要一条消息。
     provider.reply(Message.Assistant.text("Summary."));
 
     List<String> notices = new java.util.ArrayList<>();
@@ -2764,18 +2733,18 @@ class WebApiTest {
       sse.ofType("notice").forEach(notice -> notices.add(notice.path("text").asText()));
     }
 
-    // The summarising call is recognisable in the recorded requests: no tools, one message — the
-    // compaction prompt carries the transcript itself.
+    // 那次摘要调用在记录下来的请求里认得出来：没有工具，只有一条消息——压缩提示自己就带着
+    // 转录。
     assertTrue(
         provider.requests().stream()
             .anyMatch(request -> request.tools().isEmpty() && request.messages().size() == 1),
-        "a summarising call should have been made: " + notices);
+        "本该发出过一次摘要调用：" + notices);
     assertTrue(
         conversationWasCompacted(),
-        "the session file should have a second generation; notices: " + notices);
+        "会话文件本该有第二代；通知：" + notices);
     assertTrue(
-        notices.stream().anyMatch(text -> text.startsWith("compacted automatically")),
-        "and the transcript should say it happened: " + notices);
+        notices.stream().anyMatch(text -> text.startsWith("已自动压缩：")),
+        "而且转录里该说这件事发生了：" + notices);
   }
 
   private boolean conversationWasCompacted() throws Exception {
@@ -2785,11 +2754,11 @@ class WebApiTest {
     }
   }
 
-  /** The hub again, with a prompt budget small enough that a few turns pass it. */
+  /** 再次建起 hub，带一个足够小的提示预算，好让几个回合就能越过它。 */
   private void startWithBudget(int maxContextTokens) throws IOException {
     api.close();
     hub.close();
-    // The twelve-argument shape ends in maxContextTokens, which is the only field this test sets.
+    // 十二个参数的那个构造以 maxContextTokens 收尾，而它是这个测试唯一设置的东西。
     Config budgeted =
         testConfig()
             .merge(
@@ -2803,10 +2772,9 @@ class WebApiTest {
 
   @Test
   void aTurnIsOverBeforeTheDoneEventAnnouncesIt() throws Exception {
-    // A page reacts to `done` by letting the user send again. If the server were still busy at that
-    // moment, the next message would be refused with 409 — and the composer would stay disabled
-    // until something else happened to publish a status. So the status a client sees immediately
-    // before `done` must already say the turn is over.
+    // 页面收到 `done` 就会让用户再次发送。如果服务器在那一刻还忙着，下一条消息就会被 409 拒
+    // ——而输入框会一直禁用，直到有别的事发生、发布出一个状态。所以客户端在 `done` 之前一瞬间
+    // 看到的状态，必须已经说回合结束了。
     List<AgentHub.Event> seen = new CopyOnWriteArrayList<>();
     hub.subscribe(seen::add);
     provider.reply(new Message.Assistant("all done", List.of()));
@@ -2825,13 +2793,13 @@ class WebApiTest {
         break;
       }
     }
-    assertTrue(done > 0, "the turn must finish: " + seen.stream().map(AgentHub.Event::type).toList());
+    assertTrue(done > 0, "回合必须结束：" + seen.stream().map(AgentHub.Event::type).toList());
     AgentHub.Event before = seen.get(done - 1);
-    assertEquals("status", before.type(), "the state is settled before the turn says it is");
+    assertEquals("status", before.type(), "状态在回合宣布之前就已经定下来了");
     assertFalse(before.payload().path("busy").asBoolean(true), before.payload().toString());
   }
 
-  // ------------------------------------------------------------------ helpers
+  // ------------------------------------------------------------------ 辅助方法
 
   private static Message.Assistant call(String name, String field, String value) {
     return new Message.Assistant(
@@ -2857,7 +2825,7 @@ class WebApiTest {
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.ofInputStream());
-    assertEquals(200, response.statusCode(), "the event stream must open");
+    assertEquals(200, response.statusCode(), "事件流必须能打开");
     return new Sse(response.body());
   }
 
@@ -2871,7 +2839,7 @@ class WebApiTest {
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.ofInputStream());
-    assertEquals(200, response.statusCode(), "the event stream must open");
+    assertEquals(200, response.statusCode(), "事件流必须能打开");
     return new Sse(response.body());
   }
 
@@ -2881,7 +2849,7 @@ class WebApiTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  /** A POST carrying an Origin, the way a browser page sends one. */
+  /** 一个带 Origin 的 POST，就像浏览器页面发出的那样。 */
   private HttpResponse<String> postFrom(HttpExchangeOrigin origin, String path, String json)
       throws Exception {
     HttpRequest.Builder request =
@@ -2894,7 +2862,7 @@ class WebApiTest {
     return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
   }
 
-  /** Where a request claims to have come from. */
+  /** 一个请求声称自己从哪里来。 */
   private record HttpExchangeOrigin(String value) {
     static final HttpExchangeOrigin EVIL = new HttpExchangeOrigin("https://evil.example");
     static final HttpExchangeOrigin SELF = new HttpExchangeOrigin("http://127.0.0.1:8080");
@@ -2904,10 +2872,10 @@ class WebApiTest {
 
   @Test
   void aCrossOriginRequestCannotChangeState() throws Exception {
-    // The attack this closes, reproduced before the check existed: a page on another site POSTed to
-    // /api/auto-approve, the loopback and Host checks both passed — the browser runs on this machine,
-    // so its connection *is* loopback and its Host *is* 127.0.0.1 — and auto-approval really did
-    // switch on. After that the agent stops asking before it runs commands.
+    // 这里堵上的攻击，是在这道检查存在之前复现出来的：另一个站点上的页面 POST 到
+    // /api/auto-approve，loopback 和 Host 两道检查都通过了——浏览器跑在这台机器上，所以它的连接
+    // *就是* loopback、它的 Host *就是* 127.0.0.1——于是自动批准真的被打开了。从那以后代理在跑
+    // 命令之前就不再问了。
     assertFalse(json("/api/status").path("autoApprove").asBoolean());
 
     HttpResponse<String> refused =
@@ -2917,12 +2885,12 @@ class WebApiTest {
     assertTrue(refused.body().contains("cross-origin"), refused.body());
     assertFalse(
         json("/api/status").path("autoApprove").asBoolean(),
-        "the guard is still on: the page changed nothing");
+        "守卫仍然开着：那个页面什么都没改变");
   }
 
   @Test
   void theSameOriginTheServerItselfServesIsAccepted() throws Exception {
-    // The page ccj serves has to keep working: it sends Origin on its own POSTs.
+    // ccj 提供的页面必须继续能用：它自己的 POST 会带 Origin。
     assertEquals(
         200, postFrom(HttpExchangeOrigin.SELF, "/api/auto-approve", "{\"enabled\":true}").statusCode());
     assertTrue(json("/api/status").path("autoApprove").asBoolean());
@@ -2931,8 +2899,8 @@ class WebApiTest {
 
   @Test
   void everyLoopbackSpellingIsAcceptedAsSelf() throws Exception {
-    // A user who opened localhost and a server on 127.0.0.1 are the same person on the same machine;
-    // refusing one of them would be a bug that reads as a security feature.
+    // 打开 localhost 的用户和监听 127.0.0.1 的服务器，是同一台机器上的同一个人；拒绝其中一种
+    // 写法会是一个读起来像安全功能的 bug。
     assertEquals(
         200,
         postFrom(HttpExchangeOrigin.LOCALHOST, "/api/auto-approve", "{\"enabled\":true}")
@@ -2942,8 +2910,8 @@ class WebApiTest {
 
   @Test
   void anOpaqueOriginIsRefused() throws Exception {
-    // A sandboxed iframe or a file:// page sends Origin: null. It is not this server, and it is
-    // exactly the shape an injected frame would have.
+    // 沙箱化的 iframe 或 file:// 页面会发送 Origin: null。它不是这台服务器，而它恰恰就是一个
+    // 被注入的框架会有的形状。
     assertEquals(
         403,
         postFrom(HttpExchangeOrigin.OPAQUE, "/api/auto-approve", "{\"enabled\":true}").statusCode());
@@ -2952,9 +2920,8 @@ class WebApiTest {
 
   @Test
   void aCallerThatSendsNoOriginIsStillServed() throws Exception {
-    // curl, a test, the CLI: not a browser page, and the browser would not have delivered a
-    // cross-origin request without the header. Refusing these would break every legitimate caller to
-    // defend against one that cannot arrive this way.
+    // curl、测试、CLI：都不是浏览器页面，而没有这个头，浏览器也不会把跨源请求递过来。拒绝它们
+    // 会为了防一个不可能这样到达的调用者，而弄坏每一个正当的调用者。
     assertEquals(200, post("/api/auto-approve", "{\"enabled\":true}").statusCode());
     assertTrue(json("/api/status").path("autoApprove").asBoolean());
     post("/api/auto-approve", "{\"enabled\":false}");
@@ -2963,8 +2930,8 @@ class WebApiTest {
 
   @Test
   void readingIsNotBlockedByOrigin() throws Exception {
-    // The check is for requests that change something. A GET leaks nothing a cross-origin page can
-    // read anyway — the browser withholds the response — so blocking it would cost without buying.
+    // 这道检查针对的是会改变东西的请求。GET 反正也漏不出跨源页面读得到的东西——浏览器会把响应
+    // 扣下——所以拦它只有代价，没有收获。
     HttpResponse<String> response =
         client.send(
             HttpRequest.newBuilder(URI.create(origin + "/api/status"))
@@ -2978,28 +2945,26 @@ class WebApiTest {
 
   @Test
   void aPageServedFromTheAddressItWasOpenedOnMayChangeState() throws Exception {
-    // The phone, and this was broken: a page reached at the tailnet address sends that address as its
-    // Origin, which is neither loopback nor anything this server can know in advance — so every
-    // state-changing request from the phone was refused. Measured against a real server started the
-    // way the phone reaches it: sending a message, aborting a turn, saving settings, answering an
-    // approval and uploading a picture all came back 403, while the same request with a loopback
-    // Origin was served. Nothing about the picture was special; it was simply the first one the user
-    // tried from a phone.
+    // 手机这条，而且它曾经是坏的：从 tailnet 地址打开页面时，页面会把这个地址当作自己的 Origin
+    // 发出来，而它既不是 loopback，也不是这台服务器能事先知道的任何东西——于是来自手机的每一个
+    // 会改变状态的请求都被拒了。对着一个按手机接入方式启动的真实服务器量过：发消息、中止回合、
+    // 保存设置、作答审批、上传图片全都返回 403，而同样一个请求只要带上 loopback 的 Origin 就被
+    // 服务了。那张图片本身没有任何特别之处；它只是用户从手机上试的第一件事。
     start("t0ken");
 
     Raw ok = postByHand("100.72.92.41:6767", "http://100.72.92.41:6767", "/api/auto-approve",
         "{\"enabled\":true}", "t0ken");
 
     assertEquals(200, ok.status(), ok.body());
-    assertTrue(json("/api/status").path("autoApprove").asBoolean(), "the change really happened");
+    assertTrue(json("/api/status").path("autoApprove").asBoolean(), "这个改动真的发生了");
     postByHand("100.72.92.41:6767", "http://100.72.92.41:6767", "/api/auto-approve",
         "{\"enabled\":false}", "t0ken");
   }
 
   @Test
   void anotherSiteIsStillRefusedWhenTheRequestNamesARealHost() throws Exception {
-    // What keeps the rule above from being a hole: a page on another site sends its own origin, and
-    // that is not the host this request was aimed at.
+    // 让上面那条规则不成为一个漏洞的东西：另一个站点上的页面发的是它自己的源，而那并不是这个
+    // 请求所瞄准的主机。
     start("t0ken");
 
     Raw refused = postByHand("100.72.92.41:6767", "https://evil.example", "/api/auto-approve",
@@ -3011,10 +2976,10 @@ class WebApiTest {
 
   @Test
   void aRebindingNameAgreesWithItselfAndStillGetsNowhere() throws Exception {
-    // Through a name that resolves here, Origin and Host are both dead.beef — so the agreement is
-    // deliberately not the only guard. A tokenless server has already refused the non-loopback Host
-    // before the origin check runs, and a token server refuses the request for arriving without the
-    // proof, which a page on another site cannot have for a name it does not own.
+    // 经由一个解析到这里的名字，Origin 和 Host 都是 dead.beef——所以这个一致性故意不是唯一的
+    // 守卫。没有 token 的服务器在 origin 检查跑之前就已经拒掉了非 loopback 的 Host；而有 token
+    // 的服务器会因为这个请求没带凭证而拒掉它，而另一个站点上的页面拿不到它并不拥有的名字的
+    // 凭证。
     Raw tokenless =
         postByHand("dead.beef:6767", "http://dead.beef:6767", "/api/auto-approve",
             "{\"enabled\":true}", null);
@@ -3028,15 +2993,15 @@ class WebApiTest {
     assertFalse(json("/api/status").path("autoApprove").asBoolean());
   }
 
-  /** A response read off a socket: whatever arrived, without a client library's opinion of it. */
+  /** 从 socket 上读到的响应：来的是什么就是什么，不掺客户端库的意见。 */
   private record Raw(int status, String body) {}
 
   /**
-   * One request written by hand.
+   * 一个手写的请求。
    *
-   * <p>{@code Host} is a restricted header in {@code HttpClient} — it cannot be set, and a request
-   * whose {@code Origin} names the host it was aimed at is exactly the shape a phone sends. There is
-   * no way to ask a Java HTTP client for that shape, so the bytes are written.
+   * <p>{@code Host} 在 {@code HttpClient} 里是受限的头——设不了，而一个 {@code Origin} 点名了
+   * 自己所瞄准主机的请求，恰恰就是手机发出来的形状。没法让 Java HTTP 客户端给出那种形状，所以
+   * 只能把字节写出来。
    */
   private Raw postByHand(String host, String origin, String path, String json, String token)
       throws IOException {
@@ -3064,7 +3029,7 @@ class WebApiTest {
     }
   }
 
-  // ------------------------------------------------------------------ pictures
+  // ------------------------------------------------------------------ 图片
 
   @Test
   void aPictureBecomesATurnOnItsDescription() throws Exception {
@@ -3083,8 +3048,7 @@ class WebApiTest {
           "a whiteboard with a red arrow and the words 'ship it'",
           response.path("description").asText());
 
-      // The message the model is asked about is the description plus where the picture is, so a
-      // detail the description dropped can be read back with the read tool.
+      // 交给模型的那条消息是描述加上图片所在的位置，这样描述漏掉的细节还能用 read 工具读回来。
       JsonNode user = sse.await("user", 5000);
       String text = user.path("text").asText();
       assertTrue(text.contains("a whiteboard with a red arrow"), text);
@@ -3092,26 +3056,26 @@ class WebApiTest {
       assertTrue(text.contains(response.path("attachment").asText()), text);
       assertTrue(
           sse.await("done", 5000).path("finalText").asText().contains("arrow"),
-          "the description is what the turn ran on");
+          "这个回合靠的就是这段描述");
 
-      // No image ever reaches the main model: the request holds text and nothing else.
+      // 没有任何图像到达主模型：请求里只有文本，别无其他。
       String toMainModel = provider.requests().get(0).messages().toString();
       assertTrue(toMainModel.contains("a whiteboard with a red arrow"), toMainModel);
-      assertFalse(toMainModel.contains("base64"), "the picture itself stays out of the conversation");
+      assertFalse(toMainModel.contains("base64"), "图片本身留在对话之外");
     }
 
-    assertEquals(1, visionCalls.get(), "one picture, one description");
+    assertEquals(1, visionCalls.get(), "一张图片，一次描述");
     assertEquals(1, asked.size());
     assertTrue(asked.get(0).contains("data:image/png;base64,"), asked.get(0));
     assertTrue(
         asked.get(0).contains("not from the user"),
-        "the picture is described as data, so text inside it is not a turn from the user");
+        "图片是作为数据被描述的，所以它里面的文字不是一个来自用户的回合");
 
     Path stored = Path.of(response.path("attachment").asText());
-    assertTrue(Files.exists(stored), "the picture is kept: " + stored);
+    assertTrue(Files.exists(stored), "图片被留存了：" + stored);
     assertTrue(
         stored.getParent().getFileName().toString().endsWith(".attachments"),
-        "beside the session, not in the project: " + stored);
+        "放在会话旁边，而不是项目里：" + stored);
   }
 
   @Test
@@ -3125,8 +3089,8 @@ class WebApiTest {
 
     assertEquals(400, posted.statusCode(), posted.body());
     assertTrue(posted.body().contains("magic number"), posted.body());
-    assertEquals(0, visionCalls.get(), "the bytes decide, before the vision endpoint is asked");
-    assertEquals(List.of(), attachmentDirectories(), "nothing was written");
+    assertEquals(0, visionCalls.get(), "是字节说了算，而且是在问视觉端点之前");
+    assertEquals(List.of(), attachmentDirectories(), "什么都没写");
   }
 
   @Test
@@ -3135,11 +3099,10 @@ class WebApiTest {
     startVision("never asked", visionCalls, new CopyOnWriteArrayList<>());
     restartWithVision();
 
-    // Nine megabytes, which the endpoint refuses on the advertised length. What this pins is that
-    // the refusal is a refusal and not a crash, and that nothing is written or described on the way
-    // to it; that the limit applies to the read rather than to what was already buffered is pinned
-    // in AttachmentStoreTest, where a stream that fails the test if it is read at all makes it
-    // checkable.
+    // 九兆字节，端点会按公布的长度拒掉它。这里钉住的是：这个拒绝是一次拒绝而不是一次崩溃，而且
+    // 在走到它的路上什么都没写、什么都没描述；至于上限作用在「读」上而不是作用在已经缓冲下来的
+    // 东西上，是 AttachmentStoreTest 钉住的——在那里，一条只要被读就会让测试失败的流让这件事
+    // 变得可检查。
     byte[] big = new byte[(int) AttachmentStore.MAX_BYTES + 1];
     System.arraycopy(pngBytes(), 0, big, 0, 8);
 
@@ -3148,7 +3111,7 @@ class WebApiTest {
     assertEquals(413, posted.statusCode(), posted.body());
     assertTrue(posted.body().contains("8 MB"), posted.body());
     assertEquals(0, visionCalls.get());
-    assertEquals(List.of(), attachmentDirectories(), "and nothing was written");
+    assertEquals(List.of(), attachmentDirectories(), "而且什么都没写");
   }
 
   @Test
@@ -3163,33 +3126,33 @@ class WebApiTest {
       assertEquals(202, post("/api/message", "{\"text\":\"first\"}").statusCode());
       HttpResponse<String> posted = postPicture("photo.png", pngBytes());
       assertEquals(409, posted.statusCode(), posted.body());
-      assertTrue(posted.body().contains("still running"), posted.body());
+      assertTrue(posted.body().contains("这个对话里还有回合在跑；请先中止它"), posted.body());
 
       provider.release();
       sse.await("done", 5000);
     }
-    // Claiming the conversation first is what makes this true: describing first would spend a
-    // multi-megabyte upload and a vision call on a turn that can never start.
+    // 先把这个对话占下来，才让这一点成立：先描述的话，就会为一个永远开不起来的回合花掉一次
+    // 几兆字节的上传和一次视觉调用。
     assertEquals(0, visionCalls.get());
-    assertEquals(List.of(), attachmentDirectories(), "and nothing was written either");
+    assertEquals(List.of(), attachmentDirectories(), "而且什么都没写");
   }
 
   @Test
   void withoutAVisionModelAPictureIsRefusedWithWhatToSet() throws Exception {
-    // The default test configuration has no vision block: the feature reports itself off, and the
-    // refusal names the block and the flags that turn it on rather than failing obscurely.
+    // 默认的测试配置没有 vision 块：这个功能报告自己是关的，而拒绝会点名那个块和打开它的那些
+    // flag，而不是含混地失败。
     HttpResponse<String> posted = postPicture("photo.png", pngBytes());
 
     assertEquals(409, posted.statusCode(), posted.body());
-    assertTrue(posted.body().contains("no vision model is configured"), posted.body());
+    assertTrue(posted.body().contains("没有配置视觉模型，所以图片没法被描述——请设置 " + configFile + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
     assertTrue(posted.body().contains("--vision-base-url"), posted.body());
-    assertEquals(List.of(), attachmentDirectories(), "and nothing was written");
+    assertEquals(List.of(), attachmentDirectories(), "而且什么都没写");
   }
 
   @Test
   void theVisionBlockIsConfiguredFromTheSettingsFormAndUsed() throws Exception {
-    // The whole panel path: what the form posts is what the file keeps, and the picture that follows
-    // goes to the model that was just entered — not to the provider, and not to a stale block.
+    // 整条面板路径：表单提交什么文件就留什么，而随后那张图片会去刚录入的那个模型——不去提供方，
+    // 也不去一个过时的块。
     AtomicInteger visionCalls = new AtomicInteger();
     startVision("described by the model the form saved", visionCalls, new CopyOnWriteArrayList<>());
     String port = String.valueOf(vision.getAddress().getPort());
@@ -3203,7 +3166,7 @@ class WebApiTest {
                 + "/v1\",\"visionModel\":\"mock-vision\","
                 + "\"visionApiKey\":\"sk-vision\",\"visionMaxTokens\":4096}");
 
-    // The save answers with the status, so what the form would read back is the config endpoint.
+    // 保存用状态作答，所以表单会读回来的就是 config 端点。
     assertEquals("mock-model", saved.path("model").asText());
     JsonNode vision = json("/api/config").path("vision");
     assertTrue(vision.path("on").asBoolean(), vision.toString());
@@ -3212,16 +3175,16 @@ class WebApiTest {
     assertEquals(
         "mock-vision",
         Json.parse(Files.readString(configFile)).path("vision").path("model").asText(),
-        "and it is in the file, not only in memory");
+        "而且它在文件里，不只在内存里");
 
     assertEquals(202, postPicture("whiteboard.png", pngBytes()).statusCode());
-    assertEquals(1, visionCalls.get(), "the picture went to the model the form saved");
+    assertEquals(1, visionCalls.get(), "图片去了表单保存的那个模型");
   }
 
   @Test
   void theVisionKeyIsNeverReturnedToTheBrowser() throws Exception {
-    // The same rule as the provider's key: the form is told whether one exists and where it comes
-    // from, never what it is.
+    // 和提供方密钥同一条规则：表单只会被告知有没有这么一个东西、它从哪里来，绝不被告知它是
+    // 什么。
     Files.writeString(
         configFile,
         "{\"vision\":{\"baseUrl\":\"http://127.0.0.1:1/v1\",\"model\":\"m\","
@@ -3242,11 +3205,10 @@ class WebApiTest {
         configFile,
         "{\"vision\":{\"baseUrl\":\"http://127.0.0.1:1/v1\",\"model\":\"m\","
             + "\"apiKey\":\"sk-vision-secret\",\"maxTokens\":4096}}");
-    // The running configuration is built from the file at startup, so the file has to exist before
-    // the hub does — which is what the CLI does too.
+    // 运行时的配置在启动时从文件构建，所以文件必须在 hub 之前就存在——CLI 也是这么做的。
     restartFromConfigFile();
 
-    // Forgetting the key is not forgetting the endpoint the user looked up.
+    // 忘掉密钥不等于忘掉用户查出来的那个端点。
     postJson("/api/config", "{\"clearVisionApiKey\":true}");
     assertFalse(Files.readString(configFile).contains("sk-vision-secret"));
     JsonNode cleared = json("/api/config").path("vision");
@@ -3254,31 +3216,31 @@ class WebApiTest {
     assertEquals(4096, cleared.path("maxTokens").asInt());
     assertEquals("none", cleared.path("apiKeySource").asText());
 
-    // And turning it off is not "clearing a field": an empty field means "leave it alone", which is
-    // why the form sends a flag for this one.
+    // 而关掉它也不是「清空一个字段」：空字段意味着「别动它」，所以表单为这一项发的是一个
+    // flag。
     postJson("/api/config", "{\"clearVision\":true}");
     assertFalse(json("/api/config").path("vision").path("configured").asBoolean());
-    assertFalse(Files.readString(configFile).contains("\"vision\""), "the block is gone from the file");
+    assertFalse(Files.readString(configFile).contains("\"vision\""), "那个块从文件里没了");
 
     HttpResponse<String> posted = postPicture("photo.png", pngBytes());
     assertEquals(409, posted.statusCode(), posted.body());
-    assertTrue(posted.body().contains("no vision model is configured"), posted.body());
+    assertTrue(posted.body().contains("没有配置视觉模型，所以图片没法被描述——请设置 " + configFile + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
   }
 
   @Test
   void aBudgetOfZeroIsRefusedRatherThanSaved() throws Exception {
-    // It would mean "write nothing", and the refusal has to arrive before the file is written.
+    // 它会意味着「什么都不写」，而拒绝必须在文件被写之前就到达。
     Files.writeString(configFile, "{}");
 
     HttpResponse<String> refused =
         post("/api/config", "{\"visionBaseUrl\":\"http://127.0.0.1:1/v1\",\"visionMaxTokens\":0}");
 
     assertEquals(400, refused.statusCode(), refused.body());
-    assertTrue(refused.body().contains("at least 1 token"), refused.body());
-    assertFalse(Files.readString(configFile).contains("vision"), "nothing was written");
+    assertTrue(refused.body().contains("视觉补全预算至少要有 1 个 token"), refused.body());
+    assertFalse(Files.readString(configFile).contains("vision"), "什么都没写");
   }
 
-  /** The hub again, on whatever the config file now says — the way the CLI starts it. */
+  /** 再次建起 hub，用配置文件现在说的东西——就像 CLI 启动它的方式。 */
   private void restartFromConfigFile() throws IOException {
     api.close();
     hub.close();
@@ -3287,7 +3249,7 @@ class WebApiTest {
     origin = "http://127.0.0.1:" + api.port();
   }
 
-  /** A stand-in vision endpoint on loopback: one canned description, and a count of the calls. */
+  /** 一个 loopback 上的替身视觉端点：一句备好的描述，外加调用计数。 */
   private void startVision(String description, AtomicInteger calls, List<String> asked)
       throws IOException {
     if (vision != null) {
@@ -3309,13 +3271,13 @@ class WebApiTest {
               out.write(body);
             }
           } catch (IOException ignored) {
-            // The client hung up; the count is what this stub is for.
+            // 客户端把连接挂了；这个桩存在的意义就是那个计数。
           }
         });
     vision.start();
   }
 
-  /** The hub again, on a configuration that carries a vision block, as the config file would. */
+  /** 再次建起 hub，用一份带 vision 块的配置，就像配置文件会写的那样。 */
   private void restartWithVision() throws IOException {
     Files.writeString(
         configFile,
@@ -3347,7 +3309,7 @@ class WebApiTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  /** Every {@code <id>.attachments} directory under the sessions directory, by name. */
+  /** 会话目录下每一个 {@code <id>.attachments} 目录的名字。 */
   private List<String> attachmentDirectories() throws IOException {
     if (!Files.isDirectory(sessions)) {
       return List.of();
@@ -3366,14 +3328,14 @@ class WebApiTest {
         new java.awt.image.BufferedImage(4, 4, java.awt.image.BufferedImage.TYPE_INT_RGB);
     image.setRGB(0, 0, 0xFF0000);
     java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-    assertTrue(javax.imageio.ImageIO.write(image, "png", out), "the test needs a real PNG");
+    assertTrue(javax.imageio.ImageIO.write(image, "png", out), "这个测试需要一张真正的 PNG");
     return out.toByteArray();
   }
 
   @Test
   void everyStateChangingEndpointRefusesAnotherSite() throws Exception {
-    // The defence is by method, not by a list of paths, precisely so a new endpoint cannot forget to
-    // opt in. This checks the ones that exist today actually behave that way.
+    // 这道防御是按方法来的，不是按一张路径清单来的，正是为了让新端点没法忘记加入。这里检查的是
+    // 今天已经存在的那些端点确实就是这样表现的。
     for (String path : List.of("/api/message", "/api/attachment", "/api/abort", "/api/compact",
         "/api/session", "/api/workspaces", "/api/workspace", "/api/config", "/api/auto-approve",
         "/api/approval")) {
@@ -3381,7 +3343,7 @@ class WebApiTest {
       assertEquals(
           403,
           refused.statusCode(),
-          "a page on another site must not reach " + path + ": " + refused.body());
+          "另一个站点上的页面绝不能碰到 " + path + ": " + refused.body());
     }
   }
 
@@ -3418,7 +3380,7 @@ class WebApiTest {
         return entry;
       }
     }
-    throw new AssertionError("no entry matched in " + array);
+    throw new AssertionError("没有任何条目匹配 " + array);
   }
 
   private static List<String> languages(JsonNode config) {
@@ -3465,12 +3427,12 @@ class WebApiTest {
 
   private static JsonNode lastOf(Sse sse, String type) {
     List<JsonNode> events = sse.ofType(type);
-    assertFalse(events.isEmpty(), "expected at least one " + type + " event");
+    assertFalse(events.isEmpty(), "至少要有一个 " + type + " 事件");
     return events.get(events.size() - 1);
   }
 
-  /** Collects the SSE stream in the background so tests can await individual events. */
-  /** One received event: the SSE id and its payload. */
+  /** 在后台收集 SSE 流，好让测试能等待单个事件。 */
+  /** 一个收到的事件：SSE 的 id 和它的载荷。 */
   private record SseEvent(long id, JsonNode payload, String name) {}
 
   private static final class Sse implements AutoCloseable {
@@ -3492,10 +3454,9 @@ class WebApiTest {
                     if (line.startsWith("id: ")) {
                       id = Long.parseLong(line.substring("id: ".length()).strip());
                     } else if (line.startsWith("event: ")) {
-                      // Kept, not skipped. The reader used to drop everything that was not `id:` or
-                      // `data:`, which is why a keep-alive sent as a *comment* went unnoticed for so
-                      // long: the test could not see the difference between a frame that reaches the
-                      // page and one that does not.
+                      // 保留，而不是跳过。这个读取器过去会丢掉一切不是 `id:` 或 `data:` 的
+                      // 行，所以一个以*注释*形式发出的保活能这么久没被发现：测试看不出一个能到
+                      // 达页面的帧和一个到不了的帧有什么区别。
                       name = line.substring("event: ".length()).strip();
                     } else if (line.startsWith("data: ")) {
                       events.add(
@@ -3506,7 +3467,7 @@ class WebApiTest {
                     }
                   }
                 } catch (IOException | RuntimeException ignored) {
-                  // The test closed the stream, or the server stopped; either way we are done.
+                  // 测试把流关了，或者服务器停了；无论哪种我们都完事了。
                 }
               },
               "web-api-test-sse");
@@ -3519,9 +3480,9 @@ class WebApiTest {
     }
 
     /**
-     * Waits for a frame carrying the given SSE {@code event} name, which is a different thing from the
-     * {@code type} inside the payload: an unnamed frame never reaches the page's {@code onmessage},
-     * and a named one reaches it only when a listener is registered for that name.
+     * 等待一个带着给定 SSE {@code event} 名字的帧，这和载荷里面的 {@code type} 是两回事：无名
+     * 的帧永远到不了页面的 {@code onmessage}，而有名的帧只有在为那个名字注册了监听器时才到
+     * 得了。
      */
     JsonNode awaitRaw(String field, String value, long millis) throws InterruptedException {
       long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
@@ -3536,7 +3497,7 @@ class WebApiTest {
       return null;
     }
 
-    /** The same as {@link #await} but with the SSE id, for tests about replay and reconnects. */
+    /** 和 {@link #await} 一样，只是还带上 SSE 的 id，供关于回放和重连的测试使用。 */
     SseEvent awaitEvent(String type, long millis) throws InterruptedException {
       long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
       while (System.nanoTime() < deadline) {
@@ -3547,7 +3508,7 @@ class WebApiTest {
         }
         Thread.sleep(10);
       }
-      throw new AssertionError("no '" + type + "' event with an id; saw " + snapshot());
+      throw new AssertionError("没有带 id 的 '" + type + "' 事件；看到的是 " + snapshot());
     }
 
     List<SseEvent> raw() {
@@ -3560,7 +3521,7 @@ class WebApiTest {
       return raw().stream().map(event -> event.payload().path("type").asText()).toList();
     }
 
-    /** Waits until at least {@code count} events of {@code type} have arrived. */
+    /** 等到至少到达 {@code count} 个 {@code type} 事件为止。 */
     JsonNode awaitAtLeast(String type, int count, long millis) throws InterruptedException {
       long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
       while (System.nanoTime() < deadline) {
@@ -3571,13 +3532,13 @@ class WebApiTest {
         Thread.sleep(10);
       }
       throw new AssertionError(
-          "fewer than "
+          "少于 "
               + count
-              + " '"
+              + " 个 '"
               + type
-              + "' events within "
+              + "' 事件，在 "
               + millis
-              + "ms; saw "
+              + "ms 内；看到的是 "
               + snapshot());
     }
 
@@ -3591,7 +3552,7 @@ class WebApiTest {
       return matches;
     }
 
-    /** All streamed prose, concatenated — what the transcript would show. */
+    /** 所有流式散文拼在一起——转录会显示出来的东西。 */
     String text() {
       StringBuilder out = new StringBuilder();
       for (JsonNode event : ofType("text")) {
@@ -3604,7 +3565,7 @@ class WebApiTest {
       return raw().stream().map(SseEvent::payload).toList();
     }
 
-    /** The events that belong to one session, which is what one page renders. */
+    /** 属于某一个会话的事件，也就是一个页面会渲染的东西。 */
     List<JsonNode> forSession(String sessionId) {
       List<JsonNode> matches = new ArrayList<>();
       for (JsonNode event : snapshot()) {
@@ -3615,7 +3576,7 @@ class WebApiTest {
       return matches;
     }
 
-    /** Waits until {@code sessionId} has at least {@code count} events of {@code type}. */
+    /** 等到 {@code sessionId} 至少有 {@code count} 个 {@code type} 事件为止。 */
     JsonNode awaitInSession(String sessionId, String type, int count, long millis)
         throws InterruptedException {
       long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
@@ -3630,19 +3591,19 @@ class WebApiTest {
         Thread.sleep(10);
       }
       throw new AssertionError(
-          "fewer than "
+          "少于 "
               + count
-              + " '"
+              + " 个 '"
               + type
-              + "' events for session "
+              + "' 事件，属于会话 "
               + sessionId
-              + " within "
+              + "，在 "
               + millis
-              + "ms; saw "
+              + "ms 内；看到的是 "
               + snapshot());
     }
 
-    /** True when any event was published without saying which session it belongs to. */
+    /** 只要有事件被发布时没说它属于哪个会话，就为真。 */
     boolean anyEventWithoutSession() {
       return snapshot().stream().anyMatch(event -> event.path("sessionId").asText().isEmpty());
     }
@@ -3652,12 +3613,12 @@ class WebApiTest {
       try {
         body.close();
       } catch (IOException ignored) {
-        // Nothing useful to do while tearing down a test.
+        // 拆掉一个测试的时候，没什么有用的事可做。
       }
     }
   }
 
-  /** Scripted provider: one queued assistant turn per request, optionally delayed by a latch. */
+  /** 脚本化的提供方：每个请求一个排好队的助手回合，可选地由一个闩锁延迟。 */
   private static final class MockProvider implements Provider {
 
     private final String name;
@@ -3665,7 +3626,7 @@ class WebApiTest {
     private final List<Provider.Request> requests = new CopyOnWriteArrayList<>();
     private volatile CountDownLatch gate;
     private int[] usage;
-    /** Reasoning the next turn should emit and carry, or null for a turn that does not think. */
+    /** 下一个回合应当发出并携带的推理内容，不思考的回合为 null。 */
     private String reasoning;
 
     MockProvider(String name) {
@@ -3673,10 +3634,10 @@ class WebApiTest {
     }
 
     /**
-     * Makes the coming turns think out loud.
+     * 让接下来的回合出声地思考。
      *
-     * <p>Both halves matter: the deltas go to the listener (so the page renders them live) and the
-     * same text goes into the returned turn (so it is persisted, which is what a later replay reads).
+     * <p>两半都重要：增量发给监听器（这样页面会实时渲染它们），同一段文本又会进入返回的回合
+     * （这样它被持久化，而后来的一次回放读的就是它）。
      */
     MockProvider emitReasoning(String text) {
       this.reasoning = text;
@@ -3688,7 +3649,7 @@ class WebApiTest {
       return this;
     }
 
-    /** Reports this token accounting after every turn; cached may be null for "not reported". */
+    /** 每个回合之后报告这笔 token 账；cached 可以是 null，表示「没有报告」。 */
     MockProvider usage(int inputTokens, int outputTokens, Integer cachedInputTokens) {
       this.usage =
           new int[] {inputTokens, outputTokens, cachedInputTokens == null ? -1 : cachedInputTokens};

@@ -11,21 +11,19 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * Compaction: which part of a conversation a summary replaces, and what it is told about the rest.
+ * 压缩：摘要替换掉对话的哪一部分，以及关于其余部分它被告知了什么。
  *
- * <p>The rule that matters most is the one it shares with {@link ContextBudget} and
- * {@link SessionRepair} — a tool result never loses the assistant turn that asked for it, because both
- * wire formats reject that shape — plus the one that is its own: the tail a model is about to act on is
- * quoted, not compressed.
+ * <p>最重要的一条规则，是它和 {@link ContextBudget}、{@link SessionRepair} 共有的那条 —— 工具结果
+ * 永远不会失去请求它的那个 assistant 回合，因为两种线上格式都拒绝那种形状 —— 外加它自己的那条：
+ * 模型即将据以行动的那段尾部是被原样引用，而不是被压缩的。
  */
 class CompactionTest {
 
   /**
-   * {@code exchanges} user turns, each with an answer and (for the first ones) a tool round.
+   * {@code exchanges} 个用户回合，每个回合带一个回答，前几个还带一轮工具调用。
    *
-   * <p>Messages carry realistic bulk: a compaction is a trade between a summary and the text it
-   * replaces, and a conversation of two-word messages has nothing to trade. The filler makes each
-   * exchange cost what a real file read and a real answer cost.
+   * <p>消息带有接近真实的体量：压缩是摘要在与它所替换的文本之间做的一笔交易，而一段只有两个词的消息
+   * 组成的对话没有东西可交易。填充内容让每个回合的花费等同于一次真实的文件读取和一次回答。
    */
   private static List<Message> conversation(int exchanges, boolean withTools) {
     List<Message> messages = new ArrayList<>();
@@ -45,10 +43,10 @@ class CompactionTest {
   }
 
   /**
-   * A summary of a plausible length — long enough to be useful, short enough to be a saving.
+   * 一份长度可信的摘要 —— 长到有用，又短到确实省下东西。
    *
-   * <p>Already stripped, because {@code apply} strips what the model wrote: a constant with a trailing
-   * space would make every {@code contains} assertion below fail against text that does contain it.
+   * <p>已经 strip 过，因为 {@code apply} 会去掉模型写出的首尾空白：一个带尾随空格的常量会让下面
+   * 每个 {@code contains} 断言，在明明包含它的文本上失败。
    */
   private static final String SUMMARY =
       "goal: do the thing. files: f0. open: nothing. ".repeat(10).strip();
@@ -59,52 +57,51 @@ class CompactionTest {
 
     Compaction.Result result = Compaction.apply(before, SUMMARY, "/sessions/s.jsonl", null);
 
-    // 8 exchanges of two messages; the newest 5 exchanges are kept, so 3 exchanges — 6 messages — go.
-    assertEquals(6, result.summarised(), "the three oldest exchanges are replaced");
-    assertEquals(10, result.kept(), "five exchanges of two messages each stay");
-    assertEquals(before.size(), result.summarised() + result.kept(), "nothing is lost or invented");
+    // 8 个回合、每回合两条消息；最新的 5 个回合保留，所以有 3 个回合 —— 6 条消息 —— 被替换掉。
+    assertEquals(6, result.summarised(), "最旧的三个回合被替换");
+    assertEquals(10, result.kept(), "五个回合、每回合两条消息留下");
+    assertEquals(before.size(), result.summarised() + result.kept(), "没有丢失，也没有凭空多出");
 
     Message.Summary head = (Message.Summary) result.messages().get(0);
     assertTrue(head.text().contains(SUMMARY), head.text());
-    assertEquals(6, head.covers(), "the count is messages, which is what the transcript reports");
+    assertEquals(6, head.covers(), "这个数目是消息数，也就是转录所报告的");
     assertEquals("/sessions/s.jsonl", head.source());
 
-    // The tail is the original messages, unchanged and in order — quoted, never rewritten.
+    // 尾部就是原始消息，未作改动、顺序不变 —— 被引用，从不被改写。
     assertEquals(
         before.subList(6, before.size()),
         result.messages().subList(1, result.messages().size()),
-        "the kept part must be the original messages themselves");
+        "保留的那部分必须就是原始消息本身");
   }
 
   @Test
   void aCutNeverSeparatesAToolCallFromItsResult() {
-    // Six exchanges with tool rounds. Whichever way the count lands, the tail has to start at a user
-    // message: a tool_result whose assistant turn was summarised away is a request both APIs reject.
+    // 六个带工具轮次的回合。无论计数落在哪里，尾部都必须从一个用户消息开始：一个其 assistant
+    // 回合已被摘要掉的 tool_result，是两个 API 都会拒绝的请求。
     List<Message> before = conversation(6, true);
 
     Compaction.Result result = Compaction.apply(before, SUMMARY, "s.jsonl", null);
 
     assertTrue(result.messages().get(1) instanceof Message.User, result.messages().get(1).toString());
-    // And every kept call still has its result, immediately after it — the shape both wire formats
-    // validate, checked on the projection rather than on the rule that produced it.
+    // 而且每个保留下来的调用仍紧接在它后面带着自己的结果 —— 两种线上格式都会校验的形状，
+    // 检查的是投影本身，而不是产生它的那条规则。
     List<Message> kept = result.messages();
     for (int i = 1; i < kept.size(); i++) {
       if (kept.get(i) instanceof Message.ToolResult result0) {
         assertTrue(
             kept.get(i - 1) instanceof Message.Assistant assistant
                 && assistant.toolCalls().stream().anyMatch(call -> call.id().equals(result0.toolCallId())),
-            "a tool result at " + i + " answers no call right before it: " + kept);
+            "第 " + i + " 位的工具结果没有回应它紧前面的任何调用：" + kept);
       }
     }
     long calls = kept.stream().filter(m -> m instanceof Message.Assistant a && a.hasToolCalls()).count();
     long results = kept.stream().filter(m -> m instanceof Message.ToolResult).count();
-    assertEquals(calls, results, "every kept call has its result: " + kept);
+    assertEquals(calls, results, "每个保留下来的调用都有它的结果：" + kept);
   }
 
   @Test
   void aConversationWithNothingToCutCannotBeCompacted() {
-    // Fewer exchanges than the tail keeps: compacting would replace nothing with a summary and lose
-    // the detail for no saving at all.
+    // 回合数比尾部所要保留的还少：压缩会拿一份摘要去替换「什么都没有」，白白丢掉细节而毫无节省。
     assertFalse(Compaction.possible(conversation(Compaction.KEEP_EXCHANGES, false)));
     assertFalse(Compaction.possible(List.of()));
     assertEquals(0, Compaction.cutPoint(conversation(Compaction.KEEP_EXCHANGES, false)));
@@ -115,8 +112,8 @@ class CompactionTest {
 
   @Test
   void compactingTwiceDoesNotCompressAnEarlierCompression() {
-    // The second pass must treat the first summary as the start of an exchange, so it summarises the
-    // work that came after it rather than feeding its own output back through itself.
+    // 第二遍必须把第一份摘要当作一个回合的开头，这样它总结的是它之后的工作，而不是把自己的输出
+    // 又喂回给自己。
     List<Message> first = Compaction.apply(conversation(8, false), SUMMARY, "s.jsonl", null).messages();
 
     assertTrue(Compaction.possible(first));
@@ -129,9 +126,8 @@ class CompactionTest {
         first.get(cut) instanceof Message.User || first.get(cut) instanceof Message.Summary,
         first.get(cut).toString());
 
-    // The earlier summary is part of what gets summarised again (it is old work now), but it is inside
-    // the transcript the model reads rather than silently dropped — which is what keeps a second pass
-    // from losing what the first one preserved.
+    // 先前那份摘要也是会被再次总结的内容之一（它如今是旧工作了），但它在模型读到的转录里，
+    // 而不是被悄悄丢掉 —— 这正是第二遍不会丢掉第一遍所保全之物的原因。
     String transcript = Compaction.transcript(first);
     assertTrue(transcript.contains(SUMMARY), transcript);
     assertTrue(transcript.contains("summary of still earlier work"), transcript);
@@ -139,10 +135,9 @@ class CompactionTest {
 
   @Test
   void aSummaryThatSavesNothingIsRefusedRatherThanWritten() {
-    // The failure this exists for: a conversation whose early exchanges were mostly tool-call plumbing
-    // summarises into something *longer* than the text it removed — measured, on a real session, at
-    // 4239 → 4236 tokens. A compaction that frees nothing is a cost with no benefit, so the result is
-    // refused and the caller can say the conversation has not grown enough yet.
+    // 这个测试所针对的失败：一段早期回合大多是工具调用管道的对话，总结出来的东西比它移除的文本
+    // *更长* —— 在真实会话上实测为 4239 → 4236 tokens。什么都腾不出来的压缩是有成本无收益的，
+    // 所以结果会被拒绝，调用方也就能说这段对话还没长到值得压缩。
     List<Message> thin = conversation(8, false);
     String enormous = "detail ".repeat(4000);
 
@@ -151,7 +146,7 @@ class CompactionTest {
             Compaction.NotWorthIt.class, () -> Compaction.apply(thin, enormous, "s.jsonl", null));
 
     assertTrue(refused.summaryTokens() >= refused.replacedTokens(), refused.getMessage());
-    assertTrue(refused.getMessage().contains("would not free anything"), refused.getMessage());
+    assertTrue(refused.getMessage().contains("压缩腾不出任何空间"), refused.getMessage());
   }
 
   @Test
@@ -160,7 +155,7 @@ class CompactionTest {
 
     Compaction.Result result = Compaction.apply(before, SUMMARY, "s.jsonl", null);
 
-    assertTrue(result.savedPercent() > 0, "a useful summary saves a measurable amount");
+    assertTrue(result.savedPercent() > 0, "一份有用的摘要能省下可测量的量");
     assertTrue(result.savedPercent() <= 100, String.valueOf(result.savedPercent()));
     assertTrue(result.summaryTokens() < result.replacedTokens());
   }
@@ -175,15 +170,14 @@ class CompactionTest {
 
     assertTrue(head.text().contains("/home/me/.oh-my-ccj/sessions/abc.jsonl"), head.text());
     assertTrue(head.text().contains("read it if you need a detail"), head.text());
-    // The summary is marked as a summary, so a model does not read it as its own earlier words.
+    // 摘要被标记为摘要，这样模型不会把它读成自己先前说过的话。
     assertTrue(head.text().contains("written by the model when the conversation was compacted"), head.text());
   }
 
   @Test
   void aCompactionShrinksWhatTheNextRequestCarries() {
-    // Sized like a real session rather than a toy one: the point of the feature is that the *next*
-    // turn is cheaper, and a summary carries a preamble of its own, so a conversation of two-word
-    // messages would save nothing and prove nothing.
+    // 体量按真实会话来，而不是玩具会话：这个特性要的是*下一个*回合更便宜，而摘要本身也带一段
+    // 前言，所以一段只有两个词的消息组成的对话什么也省不下，什么也证明不了。
     List<Message> before = new ArrayList<>();
     for (int i = 0; i < 8; i++) {
       before.add(new Message.User("question " + i + " " + "context ".repeat(200)));
@@ -195,7 +189,7 @@ class CompactionTest {
 
     assertTrue(
         TokenEstimate.of(result.messages()) < TokenEstimate.of(before),
-        "a compaction must leave a smaller request: "
+        "一次压缩必须留下更小的请求："
             + TokenEstimate.of(before)
             + " -> "
             + TokenEstimate.of(result.messages()));
@@ -211,7 +205,7 @@ class CompactionTest {
     assertTrue(transcript.contains("called read"), transcript);
     assertTrue(transcript.contains("tool result"), transcript);
     assertTrue(transcript.contains("answer 0"), transcript);
-    // Only the part being replaced: the tail is not in what is sent to be summarised.
+    // 只包含被替换的那部分：尾部不在送去总结的内容里。
     assertFalse(transcript.contains("question 7"), transcript);
   }
 }

@@ -10,7 +10,7 @@
   <packaging>jar</packaging>
 
   <name>oh-my-ccj</name>
-  <description>A from-scratch coding agent runtime in plain Java 21.</description>
+  <description>从零写成的纯 Java 21 编码代理运行时。</description>
   <url>https://github.com/ArchCCJ/oh-my-ccj</url>
 
   <licenses>
@@ -30,10 +30,9 @@
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
-    <!-- The jar a build writes. Overridable on purpose: `mvn package` truncates this file, and
-         truncating a jar that a JVM is executing kills that JVM. So a rebuild of this project while
-         it is running is done as `-Djar.name=ccj-next`, which never touches the live jar, and the
-         new one is renamed into place afterwards. See docs/BOOTSTRAP.md. -->
+    <!-- 构建写出的那个 jar。刻意做成可覆盖：`mvn package` 会截断这个文件，而截断一个 JVM 正在执行的
+         jar 会杀掉那个 JVM。所以在本项目正在运行时重新构建，要用 `-Djar.name=ccj-next`，它绝不碰
+         正在使用的 jar，新 jar 之后再改名到位。见 docs/BOOTSTRAP.md。 -->
     <jar.name>ccj</jar.name>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <jackson.version>2.18.2</jackson.version>

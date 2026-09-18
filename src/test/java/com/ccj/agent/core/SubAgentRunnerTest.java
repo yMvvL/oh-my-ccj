@@ -20,31 +20,30 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * A sub-agent, actually run.
+ * 一次真正跑起来的子代理。
  *
- * <p>Everything here is a claim the design rests on, checked against a real {@link AgentLoop} and a
- * real file system rather than argued in a comment:
+ * <p>这里的每一条都是设计所依赖的断言，并且是对着一个真实的 {@link AgentLoop} 和真实的文件系统
+ * 检验过的，而不是在注释里争论出来的：
  *
  * <ul>
- *   <li>it cannot delegate further — no {@code task} in its registry, so recursion is impossible
- *       rather than merely limited;
- *   <li>its reading does not reach the caller, and neither do its events;
- *   <li>a writing role's changes ask the same person the main agent asks;
- *   <li>it stops when the main turn is cancelled.
+ *   <li>它不能再往下委派 —— 它的注册表里没有 {@code task}，所以递归是不可能，而不只是受限；
+ *   <li>它的阅读不会到达调用方，它的事件也不会；
+ *   <li>写入角色的改动会去问主代理所问的同一个人；
+ *   <li>主回合被取消时它会停下。
  * </ul>
  */
 class SubAgentRunnerTest {
 
   @TempDir Path project;
 
-  /** A provider that answers from a script and records what it was asked. */
+  /** 一个按脚本作答、并记录自己被问了什么的提供方。 */
   private static final class ScriptedProvider implements Provider {
 
     private final Deque<Message.Assistant> script = new ArrayDeque<>();
     /**
-     * What each scripted reply cost, aligned with {@code script}. An empty array means "this reply
-     * reported nothing", which is what a case that is not about tokens wants; a real provider always
-     * sends usage, so the tally that reaches the caller is checked with the other form.
+     * 每个脚本化回复的花费，与 {@code script} 对齐。空数组意味着「这个回复什么都没报告」，这正是
+     * 一个与 token 无关的用例想要的；真实的提供方总会送来用量，所以到达调用方的计数用另一种形式
+     * 来检验。
      */
     private final Deque<int[]> costs = new ArrayDeque<>();
     private final List<Provider.Request> requests = new ArrayList<>();
@@ -63,12 +62,12 @@ class SubAgentRunnerTest {
       return reply(Message.Assistant.text(text));
     }
 
-    /** A text reply that also reports what it cost: input, output, cached input. */
+    /** 一个同时报告自己花费的文本回复：输入、输出、缓存输入。 */
     ScriptedProvider text(String text, int input, int output, int cached) {
       return reply(Message.Assistant.text(text), new int[] {input, output, cached});
     }
 
-    /** A turn that asks for one tool call. */
+    /** 一个请求一次工具调用的回合。 */
     ScriptedProvider calls(String id, String name, String arguments) {
       return reply(
           new Message.Assistant("", List.of(new Message.ToolCall(id, name, arguments)), List.of()));
@@ -103,7 +102,7 @@ class SubAgentRunnerTest {
     return runner(provider, cancelled, null);
   }
 
-  /** With no approver given, a sub-agent runs without asking — what a caller with no user wants. */
+  /** 没有给出审批者时，子代理不问任何人就运行 —— 这正是没有用户的调用方想要的。 */
   private SubAgentRunner runner(
       Provider provider, BooleanSupplierLike cancelled, java.time.Duration deadline) {
     return runner(provider, cancelled, deadline, null);
@@ -125,7 +124,7 @@ class SubAgentRunnerTest {
         approver);
   }
 
-  /** A tiny seam so the tests can pass a lambda without importing BooleanSupplier everywhere. */
+  /** 一个小小的接缝，让测试能传 lambda，而不必到处 import BooleanSupplier。 */
   @FunctionalInterface
   interface BooleanSupplierLike extends java.util.function.BooleanSupplier {}
 
@@ -149,22 +148,21 @@ class SubAgentRunnerTest {
     assertEquals("done", report.status());
     assertTrue(report.summary().contains("Found the answer"), report.summary());
     assertTrue(report.findings().contains("answer.txt:1"), report.findings());
-    // The reading it did is nowhere in what came back: that is the whole point of the feature.
+    // 它做过的阅读不在回来的东西里的任何地方：那正是这个特性的全部意义。
     assertFalse(report.findings().contains("def "), report.findings());
   }
 
   @Test
   void aSubAgentIsNotOfferedTheTaskTool() {
-    // Recursion is refused by construction: the tool is simply not in the registry, so there is no
-    // depth limit to get wrong and no way for a sub-agent to ask for one.
+    // 递归被构造性地拒绝：那个工具干脆不在注册表里，所以既没有会弄错的深度上限，子代理也没有
+    // 办法去要求一个。
     ScriptedProvider provider = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nnone");
-    // The tool named in the request is what the model can see; asserting on the request is asserting
-    // on what was offered.
+    // 请求里点名的工具，就是模型能看到的东西；对请求做断言，就是对接供的东西做断言。
     runner(provider, null).run(SubAgentRole.of("explore").get(), "look around", null);
 
     List<String> offered =
         provider.requests().get(0).tools().stream().map(ToolSpec::name).toList();
-    assertFalse(offered.contains("task"), "a sub-agent must not be able to delegate: " + offered);
+    assertFalse(offered.contains("task"), "子代理绝不能往下委派：" + offered);
     assertTrue(offered.contains("read"), offered.toString());
     assertTrue(offered.contains("grep"), offered.toString());
   }
@@ -176,9 +174,9 @@ class SubAgentRunnerTest {
 
     List<String> offered =
         provider.requests().get(0).tools().stream().map(ToolSpec::name).toList();
-    assertFalse(offered.contains("write"), "a verifier cannot change what it checks: " + offered);
+    assertFalse(offered.contains("write"), "核查者不能改动它所核查的东西：" + offered);
     assertFalse(offered.contains("edit"), offered.toString());
-    assertFalse(offered.contains("bash"), "and cannot run commands either: " + offered);
+    assertFalse(offered.contains("bash"), "也不能运行命令：" + offered);
   }
 
   @Test
@@ -191,14 +189,13 @@ class SubAgentRunnerTest {
         provider.requests().get(0).tools().stream().map(ToolSpec::name).toList();
     assertTrue(offered.contains("write"), offered.toString());
     assertTrue(offered.contains("edit"), offered.toString());
-    assertFalse(offered.contains("task"), "still no delegation: " + offered);
+    assertFalse(offered.contains("task"), "仍然没有委派：" + offered);
   }
 
   @Test
   void theSubAgentsTokensReachTheConversationThatPaid() {
-    // The reading stays private; the bill does not. A sub-agent's model calls are the same model on
-    // the same account, so a report that came back without its cost would make the usage panel
-    // understate what was spent — and a number that is quietly wrong is worse than no number.
+    // 阅读保持私密；账单不是。子代理的模型调用，是同一个账号上的同一个模型，所以一份不带花费就
+    // 回来的报告，会让用量面板低报实际花掉的东西 —— 而一个悄悄出错的数字比没有数字更糟。
     ScriptedProvider provider =
         new ScriptedProvider().text("STATUS: done\nFINDINGS:\nok", 120, 30, 100);
 
@@ -208,7 +205,7 @@ class SubAgentRunnerTest {
     assertEquals(120, report.usage().inputTokens(), report.render("."));
     assertEquals(30, report.usage().outputTokens());
     assertEquals(100, report.usage().cachedInputTokens());
-    assertEquals(1, report.usage().userTurns(), "the task text is one user turn");
+    assertEquals(1, report.usage().userTurns(), "任务文本就是一个用户回合");
   }
 
   @Test
@@ -222,18 +219,17 @@ class SubAgentRunnerTest {
     SubAgentReport report =
         runner(provider, null).run(SubAgentRole.of("explore").get(), "read it", null);
 
-    // Two model calls: the one that asked for the read, and the one that wrote the report.
+    // 两次模型调用：请求读取的那次，和撰写报告的那次。
     assertEquals(2, report.usage().modelTurns(), report.render("."));
     assertEquals(1, report.usage().toolCalls());
-    assertEquals(10, report.usage().inputTokens(), "the second turn's usage is the one reported");
+    assertEquals(10, report.usage().inputTokens(), "被报告的是第二个回合的用量");
   }
 
   @Test
   void aBuildSubAgentWritesWhereTheMainAgentWrites() throws Exception {
-    // A sub-agent is not a second kind of agent: it works in the session's directory and its file is
-    // there immediately, with no promote step. The staging directory this replaces existed only to
-    // keep an unapprovable writer away from the project, and it cost more than it bought: a finished
-    // file whose promotion did not happen in the same turn was discarded, silently.
+    // 子代理不是另一种代理：它在会话自己的目录里工作，它的文件立刻就在那里，没有提升这一步。
+    // 它所取代的那个暂存目录，存在的唯一目的就是让一个无法审批的写入者远离项目，而它花的比赚的
+    // 多：一个没能在同一回合里完成提升的成品文件，被悄悄丢弃了。
     ScriptedProvider provider =
         new ScriptedProvider()
             .calls("c1", "write", "{\"path\":\"std.cpp\",\"content\":\"int main(){}\"}")
@@ -244,15 +240,15 @@ class SubAgentRunnerTest {
 
     assertTrue(
         Files.exists(project.resolve("std.cpp")),
-        "the file is in the project, where the main agent would have put it");
+        "文件就在项目里，也就是主代理会把它放的地方");
     assertEquals(1, report.keepable().size());
     assertEquals("std.cpp", report.keepable().get(0).path());
   }
 
   @Test
   void theProjectRulesStillReachASubAgent() throws Exception {
-    // A sub-agent reads files like any other run, so dropping the project's own CCJ.md because the
-    // work was delegated would make it behave worse than the agent that sent it.
+    // 子代理像任何一次运行那样读取文件，所以因为工作被委派出去就丢掉项目自己的 CCJ.md，会让它的
+    // 表现比派它出去的那个代理还差。
     Files.writeString(project.resolve(ProjectPrompt.FILE_NAME), "PROJECT RULE: this tree uses tabs.");
     ScriptedProvider provider = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nok");
 
@@ -262,7 +258,7 @@ class SubAgentRunnerTest {
     assertNotNull(system);
     assertTrue(system.contains("PROJECT RULE"), system);
     assertTrue(system.contains("BASE PROMPT"), system);
-    assertTrue(system.contains("sub-agent"), "and it is told what it is: " + system);
+    assertTrue(system.contains("sub-agent"), "而且它被告知了自己是什么：" + system);
   }
 
   @Test
@@ -272,13 +268,13 @@ class SubAgentRunnerTest {
 
     String system = provider.requests().get(0).system();
     assertTrue(system.contains("report what you find"), system);
-    assertTrue(system.contains("STATUS:"), "and the report format it must use: " + system);
+    assertTrue(system.contains("STATUS:"), "以及它必须使用的报告格式：" + system);
   }
 
   @Test
   void aCancelledMainTurnStopsTheSubAgent() {
-    // Aborting the turn has to reach the work the turn delegated, or the user's stop button leaves a
-    // sub-agent running with nothing on screen to say so.
+    // 中止这个回合，必须触达这个回合委派出去的工作，否则用户按下停止之后，会留下一个仍在运行的
+    // 子代理，而屏幕上没有任何东西说明这一点。
     ScriptedProvider provider =
         new ScriptedProvider()
             .calls("c1", "bash", "{\"command\":\"sleep 30\"}")
@@ -293,8 +289,8 @@ class SubAgentRunnerTest {
 
   @Test
   void aRunThatProducesNoReportIsReportedAsAFailure() {
-    // Nothing back at all is a run that produced nothing. Calling that "done" would have the main
-    // agent proceed on an answer that does not exist.
+    // 什么都没有回来，就是一次什么都没产出的运行。把它称作 "done"，会让主代理基于一个并不存在的
+    // 答案继续往下走。
     ScriptedProvider provider = new ScriptedProvider().text("");
 
     SubAgentReport report =
@@ -305,8 +301,8 @@ class SubAgentRunnerTest {
 
   @Test
   void aProviderThatThrowsDoesNotKillTheCaller() {
-    // The main agent has to keep working either way; an exception here would end the turn the user
-    // is watching over a failure the main agent could have reacted to.
+    // 无论如何主代理都得继续干活；这里抛一个异常，会为了一个主代理本可以应对的失败，结束用户正在
+    // 看着的那个回合。
     Provider broken =
         new Provider() {
           @Override
@@ -329,19 +325,18 @@ class SubAgentRunnerTest {
 
   @Test
   void aQueuedWriterGivesUpRatherThanRunningPastItsDeadline() throws Exception {
-    // Waiting on the write lock is a state loop.abort() cannot reach — no worker thread is set and no
-    // model call is in flight — so a deadline that only aborts the loop does not cover the queueing.
-    // Measured before the timed tryLock: a run queued behind another writer waited for ever and only
-    // then started counting its own deadline.
+    // 等待写锁是 loop.abort() 触达不到的一种状态 —— 没有设置工作线程，也没有模型调用在进行中 ——
+    // 所以一个只中止循环的截止时间，覆盖不了排队这一段。在计时 tryLock 之前已实测过：一次排在
+    // 另一个写入者后面的运行，等了永远那么久，然后才开始计算自己的截止时间。
     //
-    // The lock is process-wide and static, so this test is only meaningful when it is the one holding
-    // it. A leftover holder from another test would make it wait on somebody else's run, which is a
-    // different measurement — the assertion below says so rather than passing for the wrong reason.
+    // 这把锁是进程级、静态的，所以这个测试只有在它就是持锁者的那一个时才说明问题。来自另一个测试
+    // 的残留持锁者会让它去等别人的运行，那是另一种测量 —— 下面的断言会说明这一点，而不是因为
+    // 错误的理由而通过。
     assertTrue(
         SubAgentRunner.noWriterRunning(),
-        "another test's writing run still holds the process-wide write lock");
-    // The first writer blocks *inside* its run, so the lock is genuinely held while the second one
-    // queues: a provider that returns instantly releases it before the second ever asks.
+        "另一个测试的写入运行仍持有那把进程级写锁");
+    // 第一个写入者在它的运行*内部*阻塞，这样锁就确实被持有，而第二个会排队：一个瞬间返回的提供方
+    // 会在第二个开口之前就把锁放掉。
     java.util.concurrent.CountDownLatch inRun = new java.util.concurrent.CountDownLatch(1);
     java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
     Provider slow =
@@ -369,8 +364,8 @@ class SubAgentRunnerTest {
                 runner(slow, null, Duration.ofMinutes(1))
                     .run(SubAgentRole.of("build").get(), "hold the lock", null));
     first.start();
-    // Wait until the first is genuinely inside its run, so the lock is held and the second queues.
-    assertTrue(inRun.await(5, java.util.concurrent.TimeUnit.SECONDS), "the first writer started");
+    // 等到第一个真正进入它的运行，这样锁被持有，第二个就会排队。
+    assertTrue(inRun.await(5, java.util.concurrent.TimeUnit.SECONDS), "第一个写入者已经启动");
     ScriptedProvider second = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nsecond");
     long start = System.currentTimeMillis();
     SubAgentReport report =
@@ -379,12 +374,12 @@ class SubAgentRunnerTest {
 
     long waited = System.currentTimeMillis() - start;
     assertEquals("failed", report.status(), report.render("."));
-    assertTrue(report.summary().contains("waited"), report.summary());
-    // The margin is wide on purpose: the deadline is 2s and the first writer is held for far longer,
-    // so this measures "gave up while still queued" rather than the speed of the machine it runs on.
-    assertTrue(waited >= 1_500, "it really did wait for the deadline: " + waited + "ms");
-    assertTrue(waited < 15_000, "and then gave up rather than waiting for ever: " + waited + "ms");
-    assertTrue(second.requests().isEmpty(), "and the model was never asked");
+    assertTrue(report.summary().contains("为另一个写入任务等了"), report.summary());
+    // 余量是故意留宽的：截止时间是 2 秒，而第一个写入者被按住的时间远长于此，所以这里测量的是
+    // 「还在排队时就放弃了」，而不是它所在机器的速度。
+    assertTrue(waited >= 1_500, "它确实等满了截止时间：" + waited + "ms");
+    assertTrue(waited < 15_000, "然后就放弃了，而不是永远等下去：" + waited + "ms");
+    assertTrue(second.requests().isEmpty(), "而且从未问过模型");
     release.countDown();
     first.join(10_000);
   }
@@ -396,13 +391,13 @@ class SubAgentRunnerTest {
     assertEquals("failed", runner(provider, null).run(null, "look", null).status());
     assertEquals("failed", runner(provider, null).run(SubAgentRole.of("explore").get(), "  ", null).status());
 
-    assertTrue(provider.requests().isEmpty(), "the model is not asked to do nothing");
+    assertTrue(provider.requests().isEmpty(), "模型不会被要求去做一件没有内容的事");
   }
 
   @Test
   void theSubAgentsReadingNeverReachesTheCaller() throws Exception {
-    // The context saving, stated as a test: ten files read, one conclusion returned. If the reading
-    // came back too, the feature would be doing nothing.
+    // 把节省下来的上下文写成一个测试：读十个文件，返回一个结论。如果那些阅读也一并回来，这个特性
+    // 就等于什么都没做。
     for (int i = 0; i < 10; i++) {
       Files.writeString(project.resolve("file" + i + ".txt"), "contents of file " + i + "\n");
     }
@@ -415,17 +410,16 @@ class SubAgentRunnerTest {
     SubAgentReport report =
         runner(provider, null).run(SubAgentRole.of("explore").get(), "which file matters?", null);
 
-    assertEquals(11, provider.requests().size(), "ten reads and the final answer");
+    assertEquals(11, provider.requests().size(), "十次读取加上最后的回答");
     String rendered = report.render(".");
-    assertFalse(rendered.contains("contents of file"), "the reading did not come back: " + rendered);
+    assertFalse(rendered.contains("contents of file"), "那些阅读没有回来：" + rendered);
     assertTrue(rendered.contains("file3.txt:1"), rendered);
   }
 
   @Test
   void aWritingSubAgentAsksBeforeItChangesAnything() throws Exception {
-    // The sub-agent is invisible in what it *reads*; it is not invisible in what it *does*. Its
-    // request travels through the conversation that started it, so the prompt appears in the
-    // transcript the user is already watching — and a refusal stops the write.
+    // 子代理在它*读*什么上是不可见的；在它*做*什么上不是。它的请求会经过启动它的那段对话，所以
+    // 提示会出现在用户本来就在看的转录里 —— 而一次拒绝会挡住这次写入。
     java.util.List<String> asked = new java.util.ArrayList<>();
     Approver refusing =
         request -> {
@@ -441,15 +435,15 @@ class SubAgentRunnerTest {
         runner(provider, null, null, refusing)
             .run(SubAgentRole.of("build").get(), "write it", null);
 
-    assertEquals(java.util.List.of("write"), asked, "the write was put to the approver");
-    assertFalse(Files.exists(project.resolve("blocked.txt")), "and refused, so nothing was written");
+    assertEquals(java.util.List.of("write"), asked, "这次写入被提交给了审批者");
+    assertFalse(Files.exists(project.resolve("blocked.txt")), "而它被拒绝，所以什么都没写");
     assertEquals("blocked", report.status());
   }
 
   @Test
   void aReadingSubAgentDoesNotAsk() {
-    // read, glob and grep are declared read-only, so they never reach the approver: a sub-agent that
-    // asked permission to look at a file would be a prompt for every step of its search.
+    // read、glob 和 grep 都被声明为只读，所以它们从不到达审批者：一个连看一眼文件都要请求许可的
+    // 子代理，会在它搜索的每一步都弹一次提示。
     java.util.concurrent.atomic.AtomicInteger asked =
         new java.util.concurrent.atomic.AtomicInteger();
     Approver counting =
@@ -465,13 +459,13 @@ class SubAgentRunnerTest {
     runner(provider, null, null, counting)
         .run(SubAgentRole.of("explore").get(), "look around", null);
 
-    assertEquals(0, asked.get(), "a read-only tool asks nobody");
+    assertEquals(0, asked.get(), "只读工具不询问任何人");
   }
 
   @Test
   void aWritingRoleIsToldWhereItWorksAndThatItMustAsk() {
-    // No staging area and no promotion step, so what the prompt has to say is different: the session's
-    // own directory, and that a change there goes through the same permission the main agent asks for.
+    // 没有暂存区，也没有提升步骤，所以提示词要说的话不一样了：会话自己的目录，以及那里的改动会
+    // 走主代理所走的同一道许可。
     ScriptedProvider provider = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nok");
 
     runner(provider, null).run(SubAgentRole.of("build").get(), "write it", null);
@@ -479,12 +473,12 @@ class SubAgentRunnerTest {
     String system = provider.requests().get(0).system();
     assertTrue(
         system.contains(project.toString()),
-        "a writing role is told where it works: " + system);
+        "写入角色被告知它在哪儿工作：" + system);
     assertTrue(
         system.contains("permission") || system.contains("approv"),
-        "and that its changes are approved by the same person: " + system);
+        "以及它的改动由同一个人批准：" + system);
     assertFalse(
         system.contains("promote"),
-        "with no promotion step to describe: " + system);
+        "没有提升步骤需要描述：" + system);
   }
 }

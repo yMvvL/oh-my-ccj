@@ -11,17 +11,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The report a sub-agent hands back, and the one part of it that is machine-read.
+ * 子代理交回来的报告，以及其中唯一被机器读取的那部分。
  *
- * <p>The file list is what lets the main agent decide what to promote without opening anything. That
- * matters more than it looks: if it had to read each file to judge it, the context a sub-agent exists
- * to save would be spent on the judgement instead — the feature would cancel itself out. So the
- * parsing is pinned here in both directions: the shape the prompt asks for, and the shapes a model
- * actually writes when it half-follows it.
+ * <p>文件清单让主代理无需打开任何东西就能决定要提升什么。这比看上去更重要：如果它必须逐个读
+ * 文件才能判断，那么子代理本应省下的上下文，反倒会花在这次判断上 —— 这个特性就会自我抵消。所以
+ * 解析在两个方向上都被钉住：提示词要求的形状，以及模型半照着做时实际写出的形状。
  *
- * <p>The rule underneath all of it is that a report is never refused. A run that cost real tokens and
- * came back with three headings instead of four has still done the work, and throwing its answer away
- * over formatting is the expensive kind of correctness.
+ * <p>这一切之下的规则是：报告永远不会被拒绝。一次花了真金白银的 token、回来时给出三个标题而不是
+ * 四个的运行，活还是干了；为了格式就把它的答案扔掉，是代价高昂的那种正确。
  */
 class SubAgentReportTest {
 
@@ -46,13 +43,13 @@ class SubAgentReportTest {
     assertEquals(2, report.artifacts().size(), report.artifacts().toString());
 
     assertEquals("src/Parser.java", report.artifacts().get(0).path());
-    assertFalse(report.artifacts().get(0).disposable(), "the first is finished work");
+    assertFalse(report.artifacts().get(0).disposable(), "第一个是完成的工作");
     assertEquals("the file that does the parsing", report.artifacts().get(0).note());
 
     assertEquals("brute.cpp", report.artifacts().get(1).path());
-    assertTrue(report.artifacts().get(1).disposable(), "the second is an intermediate");
+    assertTrue(report.artifacts().get(1).disposable(), "第二个是中间产物");
 
-    // The split the caller actually acts on.
+    // 调用方真正据以行动的那个划分。
     assertEquals(1, report.keepable().size());
     assertEquals("src/Parser.java", report.keepable().get(0).path());
     assertEquals(1, report.disposable().size());
@@ -61,8 +58,8 @@ class SubAgentReportTest {
 
   @Test
   void markdownHeadingsAndSynonymsAreAccepted() {
-    // A model told to use headings uses one convention or the other and rarely both. Accepting
-    // either costs a few lines and saves a run.
+    // 被告知使用标题的模型，会采用两种惯例中的一种，很少两者都用。两种都接受只需几行代码，却能
+    // 救回一次运行。
     String text =
         """
         ## Status
@@ -86,8 +83,7 @@ class SubAgentReportTest {
 
   @Test
   void aFileWithNoMarkIsTreatedAsFinishedWork() {
-    // The asymmetry is deliberate: promoting a file that turns out to be an intermediate is a
-    // smaller mistake than deleting one that turns out to be the answer.
+    // 这种不对称是有意的：把一个其实是中间产物的文件提升，比删掉一个其实就是答案的文件，错误更小。
     String text =
         """
         STATUS: done
@@ -100,26 +96,25 @@ class SubAgentReportTest {
     SubAgentReport report = SubAgentReport.parse(text);
 
     assertEquals(1, report.artifacts().size());
-    assertFalse(report.artifacts().get(0).disposable(), "kept, not discarded, when it is ambiguous");
+    assertFalse(report.artifacts().get(0).disposable(), "含糊不清时选择保留，而不是丢弃");
     assertEquals(1, report.keepable().size());
   }
 
   @Test
   void theDisposableMarkIsFoundWhereverItAppearsInTheLine() {
-    // "intermediate" and "temp" are what a model writes when it is not reading the format closely.
+    // 模型没有仔细读格式时，写出来的就是 "intermediate" 和 "temp"。
     SubAgentReport a = SubAgentReport.parse("FILES:\n  gen.py  temporary generator\n");
     SubAgentReport b = SubAgentReport.parse("FILES:\n  gen.py  intermediate, kept for the run\n");
     SubAgentReport c = SubAgentReport.parse("FILES:\n  gen.py\n");
 
     assertTrue(a.artifacts().get(0).disposable(), "temporary");
     assertTrue(b.artifacts().get(0).disposable(), "intermediate");
-    assertFalse(c.artifacts().get(0).disposable(), "nothing said, so keep");
+    assertFalse(c.artifacts().get(0).disposable(), "什么都没说，那就保留");
   }
 
   @Test
   void theMarkIsStrippedFromTheNote() {
-    // Leaving "final" in the description would read as a claim about the file rather than as the flag
-    // it already is.
+    // 把 "final" 留在描述里，读起来会像是对该文件的一句断言，而不是它本来就已是的那面旗标。
     SubAgentReport report = SubAgentReport.parse("FILES:\n  a.py  final  the solution\n");
 
     assertEquals("the solution", report.artifacts().get(0).note());
@@ -127,21 +122,21 @@ class SubAgentReportTest {
 
   @Test
   void proseWithNoHeadingsIsStillAnAnswer() {
-    // A model that ignored the format produced the findings anyway. That is what the main agent
-    // needs, and a parser that threw would turn a useful run into a lost one.
+    // 一个无视格式的模型也照样产出了发现。那正是主代理需要的，而一个抛异常的解析器会把一次有用的
+    // 运行变成一次丢失的运行。
     SubAgentReport report =
         SubAgentReport.parse("The bug is in Parser.java line 142.\nThe null check is misplaced.");
 
     assertTrue(report.findings().contains("Parser.java line 142"), report.findings());
-    assertEquals("The bug is in Parser.java line 142.", report.summary(), "first line as the summary");
-    assertFalse(report.status().isEmpty(), "a report that came back is a run that finished");
+    assertEquals("The bug is in Parser.java line 142.", report.summary(), "首行作为摘要");
+    assertFalse(report.status().isEmpty(), "回来了的报告，就是一次跑完了的运行");
     assertTrue(report.artifacts().isEmpty());
   }
 
   @Test
   void anEmptyReportIsAFailureNotASuccess() {
-    // Nothing at all is a run that produced nothing: reporting that as "done" would have the main
-    // agent proceed on an answer that does not exist.
+    // 什么都没有，就是一次什么都没产出的运行：把它报告成 "done"，会让主代理基于一个并不存在的
+    // 答案继续往下走。
     SubAgentReport report = SubAgentReport.parse("");
 
     assertEquals("failed", report.status());
@@ -149,22 +144,20 @@ class SubAgentReportTest {
 
   @Test
   void aLongReportIsCutAndSaysSo() {
-    // A sub-agent exists to keep one conversation from filling with another one's reading; a verbose
-    // report is that failure arriving by a different door. The marker is the honesty: a main agent
-    // reading a partial answer must know it is partial.
+    // 子代理的存在，就是为了不让一段对话被另一段对话的阅读塞满；一份啰嗦的报告，是同一个失败从
+    // 另一扇门进来。标记就是那份诚实：读着部分答案的主代理，必须知道它只是部分。
     String findings = "detail ".repeat(SubAgentReport.LIMIT_CHARS);
     SubAgentReport report = SubAgentReport.parse("STATUS: done\nFINDINGS:\n" + findings);
 
     String rendered = report.render("/tmp/work");
 
-    assertTrue(rendered.length() <= SubAgentReport.LIMIT_CHARS + 200, "bounded: " + rendered.length());
-    assertTrue(rendered.contains("cut short"), "and says the report is incomplete");
+    assertTrue(rendered.length() <= SubAgentReport.LIMIT_CHARS + 200, "有界：" + rendered.length());
+    assertTrue(rendered.contains("已截短"), "并且说明这份报告不完整");
   }
 
   @Test
   void theRenderedReportNamesWhereTheFilesAre() {
-    // Without the workspace path the paths in the file list mean nothing to the main agent: it would
-    // have to guess where to promote from.
+    // 没有工作区路径，文件清单里的那些路径对主代理毫无意义：它得去猜从哪里提升。
     SubAgentReport report =
         SubAgentReport.parse("STATUS: done\nFILES:\n  std.cpp  final  the solution\nFINDINGS:\nok");
 
@@ -172,7 +165,7 @@ class SubAgentReportTest {
 
     assertTrue(rendered.contains("/home/me/proj/.ccj-work/r2"), rendered);
     assertTrue(rendered.contains("std.cpp"), rendered);
-    assertTrue(rendered.contains("[final]"), "the mark is visible to the reader: " + rendered);
+    assertTrue(rendered.contains("[final]"), "这个标记对读者是可见的：" + rendered);
     assertTrue(rendered.startsWith("STATUS: done"), rendered);
   }
 
@@ -187,7 +180,7 @@ class SubAgentReportTest {
 
   @Test
   void aCarriageReturnDoesNotHideAHeading() {
-    // A model on a Windows-shaped habit, or a relay that rewrites line endings.
+    // 一个带着 Windows 式习惯的模型，或者一个会重写行尾的中转服务。
     SubAgentReport report = SubAgentReport.parse("STATUS: done\r\nFINDINGS:\r\nfound it\r\n");
 
     assertEquals("done", report.status());

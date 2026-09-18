@@ -13,47 +13,43 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
- * The address this machine has on its tailnet, for {@code --host tailscale}.
+ * 这台机器在 tailnet 上的地址，供 {@code --host tailscale} 使用。
  *
- * <p>Binding the tailnet address rather than {@code 0.0.0.0} is the whole point: a wildcard bind puts
- * the web UI on every network this machine is on — café wifi included — while the tailnet address is
- * reachable only by devices in the tailnet, which is a set the user controls from the Tailscale admin
- * console. It is still not loopback, so {@code --web-token} is required by the check in {@code Cli};
- * that is deliberate, and the token is the second thing standing between a stolen phone and a shell.
+ * <p>绑 tailnet 地址而不是 {@code 0.0.0.0} 正是重点：通配绑定会把 Web UI 放到这台机器所在的每一个网络上
+ * ——包括咖啡馆的 wifi——而 tailnet 地址只有 tailnet 里的设备能到达，那一组设备是用户在 Tailscale 管理
+ * 后台自己控制的。它仍然不是环回地址，所以 {@code Cli} 里的检查会要求 {@code --web-token}；这是有意的，
+ * token 是挡在被偷的手机和 shell 之间的第二道东西。
  *
- * <p>Found by looking for the interface Tailscale creates ({@code tailscale0} on Linux, {@code
- * Tailscale} on Windows) and, failing that, by asking the CLI ({@code tailscale ip -4}) — macOS
- * carries its tailnet over a {@code utun} interface that is not named after Tailscale, and the CLI is
- * the documented way to ask. Both paths accept only an address in {@code 100.64.0.0/10}, the range
- * Tailscale hands out, so a machine with something else on a {@code utun} interface cannot make this
- * return the wrong address.
+ * <p>先找 Tailscale 建的那个接口（Linux 上是 {@code tailscale0}，Windows 上是 {@code Tailscale}），
+ * 找不到再问 CLI（{@code tailscale ip -4}）——macOS 用一个不叫 Tailscale 的 {@code utun} 接口承载它的
+ * tailnet，而 CLI 是官方文档给出的问法。两条路径都只接受 {@code 100.64.0.0/10} 里的地址，即 Tailscale
+ * 分配的网段，所以 {@code utun} 接口上跑着别的东西的机器没法让这里返回错误的地址。
  */
 public final class Tailnet {
 
-  /** What {@code --host} takes to mean "the address this machine has on its tailnet". */
+  /** {@code --host} 取什么值表示「这台机器在 tailnet 上的地址」。 */
   public static final String FLAG_VALUE = "tailscale";
 
   private static final Duration CLI_TIMEOUT = Duration.ofSeconds(5);
 
   private Tailnet() {}
 
-  /** The tailnet address, or empty when this machine is not on a tailnet. */
+  /** tailnet 地址；这台机器不在 tailnet 上时为空。 */
   public static Optional<InetAddress> address() {
     Optional<InetAddress> fromInterface = fromInterfaces();
     return fromInterface.isPresent() ? fromInterface : fromCli();
   }
 
-  /** True for the interface names Tailscale gives its own: {@code tailscale0}, {@code Tailscale}. */
+  /** Tailscale 给自己起的接口名返回 true：{@code tailscale0}、{@code Tailscale}。 */
   static boolean isTailnetInterface(String name) {
     return name != null && name.toLowerCase(Locale.ROOT).contains(FLAG_VALUE);
   }
 
   /**
-   * True for {@code 100.64.0.0/10}, the CGNAT range Tailscale allocates from.
+   * 对 {@code 100.64.0.0/10}——Tailscale 分配地址所用的 CGNAT 网段——返回 true。
    *
-   * <p>Checked rather than assumed: the names above are conventions, and a machine can have an
-   * interface called {@code tailscale0} that is not carrying the address we want, or a {@code utun}
-   * interface that has nothing to do with Tailscale at all.
+   * <p>检查过才下结论，而不是假定：上面那些名字只是约定，一台机器可能有个叫 {@code tailscale0} 的接口
+   * 却并不承载我们要的地址，也可能有个与 Tailscale 毫无关系的 {@code utun} 接口。
    */
   static boolean isTailnetAddress(InetAddress address) {
     if (!(address instanceof Inet4Address)) {
@@ -65,7 +61,7 @@ public final class Tailnet {
     return first == 100 && second >= 64 && second <= 127;
   }
 
-  /** The first tailnet address in the output of {@code tailscale ip -4}, if there is one. */
+  /** {@code tailscale ip -4} 输出里的第一个 tailnet 地址，如果有的话。 */
   static Optional<InetAddress> parse(String output) {
     if (output == null) {
       return Optional.empty();
@@ -81,7 +77,7 @@ public final class Tailnet {
           return Optional.of(parsed);
         }
       } catch (IOException e) {
-        // Not an address: the CLI printed something else (a warning, a version banner).
+        // 不是地址：CLI 打印的是别的东西（一条警告、一段版本横幅）。
       }
     }
     return Optional.empty();
@@ -104,7 +100,7 @@ public final class Tailnet {
         }
       }
     } catch (SocketException e) {
-      // No answer from the network stack at all: the CLI below is the other way in.
+      // 网络栈完全没给出答案：下面的 CLI 是另一条路。
     }
     return Optional.empty();
   }
@@ -123,7 +119,7 @@ public final class Tailnet {
       }
       return parse(new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
     } catch (IOException e) {
-      return Optional.empty(); // not installed: an ordinary machine, not an error
+      return Optional.empty(); // 没安装：普通机器而已，不是错误
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       return Optional.empty();

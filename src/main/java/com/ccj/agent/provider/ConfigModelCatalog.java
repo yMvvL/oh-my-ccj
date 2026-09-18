@@ -8,12 +8,10 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * The catalogue as configuration knows it: the built-in providers with their default models, plus
- * whatever the user defined.
+ * 配置所知道的模型目录：内置提供方及它们的默认模型，再加上用户自己定义的那些。
  *
- * <p>It is deliberately synchronous and dependency-free — no network — because a settings form must
- * render instantly. A router that wants to answer from the network implements {@link ModelCatalog}
- * itself and gets cached wherever it needs to be.
+ * <p>它刻意做成同步、不依赖任何东西——不碰网络——因为设置表单必须瞬间渲染出来。想从网络侧回答的路由器
+ * 自己实现 {@link ModelCatalog}，再在需要的地方加缓存。
  */
 public final class ConfigModelCatalog implements ModelCatalog {
 
@@ -31,7 +29,7 @@ public final class ConfigModelCatalog implements ModelCatalog {
     Set<String> seen = new LinkedHashSet<>();
     List<String> explicit = store == null ? List.of() : store.shown();
     if (store != null && store.narrowed()) {
-      // The user narrowed the list: it is exactly this, in this order.
+      // 用户收窄了列表：就是这个顺序、就是这些项。
       for (String name : explicit) {
         if (!seen.add(name)) {
           continue;
@@ -39,8 +37,8 @@ public final class ConfigModelCatalog implements ModelCatalog {
         ProviderDefinition definition = store == null ? null : store.find(name).orElse(null);
         boolean builtIn = Providers.supported().stream().anyMatch(known -> known.equalsIgnoreCase(name));
         if (definition == null && !builtIn) {
-          // A name that is neither defined nor built in: a leftover from a deleted definition.
-          // Skipping it is the honest answer — inventing an OpenAI provider for it would not be.
+          // 既没有定义、也不是内置的名字：某个已删除定义留下的残渣。跳过它才是诚实的答案——为它硬造一个
+          // OpenAI 提供方就不是了。
           continue;
         }
         String kind = definition != null ? definition.kind() : kindOf(name);
@@ -100,10 +98,10 @@ public final class ConfigModelCatalog implements ModelCatalog {
   }
 
   /**
-   * The list to offer for a provider: whatever the user last recorded wins, so a model they removed
-   * stays removed and one they added stays added; otherwise the provider's own list applies.
+   * 某个提供方要给出的模型列表：用户最后记下的那份说了算，这样他删掉的模型保持被删、他添加的保持存在；
+   * 否则就用提供方自带的那份列表。
    */
-  /** The protocol a built-in name speaks. */
+  /** 一个内置名字讲的协议。 */
   private static String kindOf(String name) {
     return ProviderDefinition.ANTHROPIC.equalsIgnoreCase(name)
         ? ProviderDefinition.ANTHROPIC

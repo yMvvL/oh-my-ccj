@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-/** Provider test double: replays a fixed script of assistant turns and records every request. */
+/** 提供方测试替身：重放一份固定的 assistant 回合脚本，并记录每一个请求。 */
 final class ScriptedProvider implements Provider {
 
   record Reply(String text, List<Message.ToolCall> toolCalls) {
@@ -28,7 +28,7 @@ final class ScriptedProvider implements Provider {
   private int cursor;
   private Exception failure;
   private int[] usage;
-  /** How long each streamed delta takes, for tests about stopping a call that is still running. */
+  /** 每个流式增量要花的时间，供那些「停掉一个仍在运行的调用」的测试使用。 */
   private long deltaMillis;
   private int deltaCount;
 
@@ -47,10 +47,10 @@ final class ScriptedProvider implements Provider {
   }
 
   /**
-   * Makes every delta take this long, standing in for a model that is still writing.
+   * 让每个增量都花这么久，以此代替一个仍在书写的模型。
    *
-   * <p>A real turn streams for seconds or minutes, which is exactly when a user presses stop; without
-   * this a scripted provider answers instantly and there is nothing to interrupt.
+   * <p>真实的回合会流式输出数秒乃至数分钟，而那正是用户按下停止的时候；没有这个，脚本化提供方
+   * 会瞬间作答，也就没有任何东西可供打断。
    */
   ScriptedProvider streaming(long deltaMillis, int deltas) {
     this.deltaMillis = deltaMillis;
@@ -58,7 +58,7 @@ final class ScriptedProvider implements Provider {
     return this;
   }
 
-  /** Reports token accounting after each turn: input, output, cached (cached may be null). */
+  /** 在每个回合之后报告 token 计数：输入、输出、缓存（缓存可能为 null）。 */
   ScriptedProvider usage(int inputTokens, int outputTokens, Integer cachedInputTokens) {
     this.usage = new int[] {inputTokens, outputTokens, cachedInputTokens == null ? -1 : cachedInputTokens};
     return this;
@@ -86,8 +86,7 @@ final class ScriptedProvider implements Provider {
     Reply reply = script.get(Math.min(cursor, script.size() - 1));
     cursor++;
     if (deltaMillis > 0) {
-      // Fragment the reply the way the wire does, one piece per interval, so there is a call in
-      // progress for an abort to interrupt.
+      // 像线上协议那样把回复切碎，每个间隔一段，这样中止才有一次进行中的调用可供打断。
       int pieces = Math.max(1, deltaCount);
       for (int i = 0; i < pieces; i++) {
         Thread.sleep(deltaMillis);

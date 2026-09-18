@@ -1,15 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title>ccj</title>
 <script>
-/* Theme before the first paint. The palette is chosen by an attribute on
- * <html>, and this runs in <head> — above the stylesheet — so the browser
- * never paints the palette the user did not ask for. A stored choice wins over
- * the OS; the OS is consulted only while the choice is "System". */
+/* 首次绘制之前先定主题。调色板由 <html> 上的属性选择，而这段代码跑在 <head> 里
+ * —— 位于样式表之上——所以浏览器绝不会先画出用户没要的那个调色板。已保存的
+ * 选择优先于操作系统；只有选择为「跟随系统」时才去问操作系统。 */
 (function () {
   var pref = 'system';
   try { pref = localStorage.getItem('ccj.theme') || 'system'; } catch (err) { /* keep the default */ }
@@ -19,9 +18,8 @@
   var theme = pref === 'system' ? (light ? 'light' : 'dark') : pref;
   root.setAttribute('data-theme', theme);
   root.setAttribute('data-theme-pref', pref);
-  /* Also inline, because the canvas and the native scrollbars are painted from
-   * color-scheme *before* the stylesheet arrives — a stored light theme on a
-   * dark desktop would otherwise flash dark. */
+  /* 同样内联，因为画布和原生滚动条依据 color-scheme 绘制，而这发生在样式表到达
+   * *之前* —— 否则「深色桌面 + 已保存的浅色主题」会先闪一下深色。 */
   root.style.colorScheme = theme;
 })();
 </script>
@@ -30,9 +28,9 @@
 </head>
 <body>
 <script>
-/* The token sheets key dark off `body[data-ds-dark-theme]`; the script above resolved the
- * theme onto <html> before the first paint, and this repeats the answer on the element they
- * read. It runs before the page below it is parsed, so nothing paints in the wrong palette. */
+/* token 表以 `body[data-ds-dark-theme]` 作为深色的开关；上面的脚本已在首次绘制前把主题
+ * 定到 <html> 上，这里把同一个答案写到它们读取的那个元素上。这段代码在它下面的页面被解析
+ * 之前运行，所以不会有东西画错调色板。 */
 (function () {
   if (document.documentElement.getAttribute('data-theme') === 'dark') {
     document.body.setAttribute('data-ds-dark-theme', '');
@@ -43,276 +41,273 @@
 
   <div id="layout" class="frame">
     <aside id="sidebar" class="sidebar" aria-labelledby="sidebar-title">
-      <!-- The harness's sidebar opens with its wordmark row and a New session
-           button under it; everything else in the column is the browser. -->
+      <!-- 工具架的侧边栏以字标行开头，下面是一个「新建会话」按钮；
+           这一列里其余的都属于浏览器。 -->
       <div class="side-logo-row">
         <span class="brand-mark">ccj</span>
-        <span id="conn-pill" class="conn-pill" hidden>reconnecting…</span>
+        <span id="conn-pill" class="conn-pill" hidden>重新连接中…</span>
         <button type="button" class="icon-btn" id="sidebar-collapse" aria-expanded="true"
-                aria-controls="sidebar" title="Collapse the workspace sidebar">
+                aria-controls="sidebar" title="折叠工作区侧边栏">
           <span aria-hidden="true">‹</span>
-          <span class="sr-only">Collapse the workspace sidebar</span>
+          <span class="sr-only">折叠工作区侧边栏</span>
         </button>
       </div>
 
-      <button type="button" class="new-session" id="btn-new">New session</button>
+      <button type="button" class="new-session" id="btn-new">新建会话</button>
 
-      <h2 class="sr-only" id="sidebar-title">Workspaces</h2>
+      <h2 class="sr-only" id="sidebar-title">工作区</h2>
 
       <div class="sidebar-body" id="sidebar-body">
         <p class="err sidebar-alert" id="sidebar-alert" role="alert" hidden></p>
         <p class="sidebar-note" id="sidebar-note" role="status" hidden></p>
 
         <ul class="ws-tree" id="ws-tree">
-          <li class="muted">Loading…</li>
+          <li class="muted">加载中…</li>
         </ul>
 
         <div class="ws-actions">
           <span class="delete-control" id="ws-delete-all-host"></span>
           <button type="button" class="btn sm" id="workspace-add" aria-expanded="false"
-                  aria-controls="sidebar-note sidebar-alert">Add workspace</button>
+                  aria-controls="sidebar-note sidebar-alert">添加工作区</button>
         </div>
 
         <form class="workspace-add-form" id="workspace-add-form" autocomplete="off" hidden>
           <div class="field">
-            <label for="ws-new-path">Path</label>
+            <label for="ws-new-path">路径</label>
             <div class="field-with-action">
               <input type="text" id="ws-new-path" spellcheck="false" placeholder="/home/you/api">
-              <button type="button" class="btn" id="ws-browse">Browse…</button>
+              <button type="button" class="btn" id="ws-browse">浏览…</button>
             </div>
             <span class="field-hint" id="ws-browse-hint" hidden></span>
             <span class="field-error" id="ws-path-error" hidden></span>
           </div>
-          <p class="field-hint">The folder's own name becomes the workspace's; when that name is
-            taken, the next free one is used. The directory is created if it does not exist.</p>
+          <p class="field-hint">工作区的名字取自文件夹自身的名字；该名字已被占用时，
+            就用下一个可用的名字。目录不存在时会被创建。</p>
           <div class="workspace-add-actions">
-            <button type="submit" class="btn primary" id="workspace-save">Add</button>
-            <button type="button" class="btn ghost" id="workspace-pick">Choose folder…</button>
+            <button type="submit" class="btn primary" id="workspace-save">添加</button>
+            <button type="button" class="btn ghost" id="workspace-pick">选择文件夹…</button>
           </div>
         </form>
       </div>
     </aside>
 
     <main id="main">
-      <!-- The harness's conversation header: one hairline-separated row holding
-           where you are on the left and what you can do on the right. -->
+      <!-- 工具架的对话头部：一行由细线分隔，左边是你所在的位置，
+           右边是你能做的事。 -->
       <header class="header" id="chat-head">
         <div class="title-row">
           <div class="meta" id="meta">
-            <span class="chip chip-session" id="chip-session" title="session">no session</span>
-            <span class="chip" id="chip-provider" title="provider">provider</span>
-            <span class="chip" id="chip-model" title="model">model</span>
+            <span class="chip chip-session" id="chip-session" title="会话">无会话</span>
+            <span class="chip" id="chip-provider" title="提供方">提供方</span>
+            <span class="chip" id="chip-model" title="模型">模型</span>
           </div>
 
           <div class="live" id="live" data-state="idle">
             <span class="live-dot" aria-hidden="true"></span>
-            <span id="live-text">idle</span>
+            <span id="live-text">空闲</span>
           </div>
 
           <div class="actions">
             <button type="button" class="btn toggle sm" id="btn-auto" aria-pressed="false">
               <span class="switch" aria-hidden="true"></span>
-              <span class="btn-label">Approve all</span>
-              <span class="toggle-state" id="auto-state">off</span>
+              <span class="btn-label">全部批准</span>
+              <span class="toggle-state" id="auto-state">关</span>
             </button>
-            <div class="view-toggles" role="group" aria-label="Panels">
-              <button type="button" class="btn ghost sm" id="btn-sidebar" aria-expanded="true" aria-controls="sidebar" title="Toggle the workspace sidebar">
-                <span class="btn-glyph" aria-hidden="true">▤</span><span class="btn-label">Workspaces</span></button>
-              <button type="button" class="btn ghost sm" id="btn-side" aria-expanded="true" aria-controls="side" title="Toggle the side panel">
-                <span class="btn-glyph" aria-hidden="true">▥</span><span class="btn-label">Panel</span></button>
+            <div class="view-toggles" role="group" aria-label="面板">
+              <button type="button" class="btn ghost sm" id="btn-sidebar" aria-expanded="true" aria-controls="sidebar" title="切换工作区侧边栏">
+                <span class="btn-glyph" aria-hidden="true">▤</span><span class="btn-label">工作区</span></button>
+              <button type="button" class="btn ghost sm" id="btn-side" aria-expanded="true" aria-controls="side" title="切换侧边面板">
+                <span class="btn-glyph" aria-hidden="true">▥</span><span class="btn-label">面板</span></button>
             </div>
-            <button type="button" class="btn sm" id="btn-settings" aria-haspopup="dialog" title="Settings">
-              <span class="btn-glyph" aria-hidden="true">⚙</span><span class="btn-label">Settings</span></button>
+            <button type="button" class="btn sm" id="btn-settings" aria-haspopup="dialog" title="设置">
+              <span class="btn-glyph" aria-hidden="true">⚙</span><span class="btn-label">设置</span></button>
             <button type="button" class="btn ghost sm" id="btn-wallpaper" aria-pressed="false" hidden
-                    title="Wallpaper — rotate the background every few minutes (shift-click for the next one)">
-              <span class="btn-glyph" aria-hidden="true">❖</span><span class="btn-label">Wallpaper</span>
+                    title="壁纸 —— 每隔几分钟轮换一次背景（Shift 点击换下一张）">
+              <span class="btn-glyph" aria-hidden="true">❖</span><span class="btn-label">壁纸</span>
             </button>
-            <button type="button" class="btn ghost sm theme-btn" id="btn-theme" aria-label="Theme: System. Switch to Light." title="Theme">
+            <button type="button" class="btn ghost sm theme-btn" id="btn-theme" aria-label="主题：跟随系统。切换到浅色。" title="主题">
               <span class="theme-icon" id="theme-icon" aria-hidden="true">◐</span>
-              <span class="theme-label" id="theme-label">System</span>
+              <span class="theme-label" id="theme-label">跟随系统</span>
             </button>
           </div>
         </div>
       </header>
 
       <div id="transcript" class="transcript" aria-live="polite" aria-relevant="additions text">
-        <p class="muted placeholder">Connecting to ccj…</p>
+        <p class="muted placeholder">正在连接 ccj…</p>
       </div>
 
       <form id="composer" class="composer" autocomplete="off">
-        <button type="button" id="jump" class="jump" hidden>jump to latest</button>
+        <button type="button" id="jump" class="jump" hidden>跳到最新</button>
         <div class="composer-card">
-        <label class="sr-only" for="input">Message</label>
+        <label class="sr-only" for="input">消息</label>
         <textarea id="input" rows="2" spellcheck="false"
-                  placeholder="Message the agent — Enter sends, Shift+Enter for a new line"></textarea>
+                  placeholder="给代理发消息 — Enter 发送，Shift+Enter 换行"></textarea>
         <div class="composer-row">
-          <!-- Provider, model and effort sit in the composer's own footer row, next
-               to the send control, the way the harness composes it. The panel is
-               anchored to the card and opens upward over the message box. -->
+          <!-- 提供方、模型与思考强度放在输入框自己的页脚行里，紧挨发送控件，
+               与工具架的排布一致。面板锚定在卡片上，向上覆盖消息框打开。 -->
         <div class="picker" id="composer-picker" data-picker="composer">
           <button type="button" class="picker-trigger" id="picker-trigger" data-role="trigger"
                   aria-haspopup="true" aria-expanded="false" aria-controls="picker-panel"
-                  title="Provider, model and effort">
-            <span class="picker-label">Model</span>
-            <span class="picker-value picker-value-warn" id="picker-value" data-role="value">not configured</span>
+                  title="提供方、模型与思考强度">
+            <span class="picker-label">模型</span>
+            <span class="picker-value picker-value-warn" id="picker-value" data-role="value">未配置</span>
             <span class="picker-caret" aria-hidden="true">▾</span>
           </button>
 
           <div class="picker-panel" id="picker-panel" data-role="panel" role="dialog"
-               aria-label="Choose a provider, model and effort" hidden>
+               aria-label="选择提供方、模型与思考强度" hidden>
             <div class="picker-cols">
               <div class="picker-col">
-                <p class="picker-col-head" id="picker-providers-head">Provider</p>
+                <p class="picker-col-head" id="picker-providers-head">提供方</p>
                 <ul class="picker-list" id="picker-providers" data-role="providers"
                     aria-labelledby="picker-providers-head"></ul>
                 <div class="picker-foot">
-                  <button type="button" class="btn sm" id="picker-provider-add" data-role="addProvider">Add provider…</button>
-                  <p class="picker-foot-hint">Providers are defined on the server; this opens the same
-                    form as Settings, on Your providers.</p>
+                  <button type="button" class="btn sm" id="picker-provider-add" data-role="addProvider">添加提供方…</button>
+                  <p class="picker-foot-hint">提供方定义在服务器上；这里打开的是
+                    「设置」中「你的提供方」下的同一个表单。</p>
                 </div>
               </div>
               <div class="picker-col">
-                <p class="picker-col-head" id="picker-models-head">Model</p>
+                <p class="picker-col-head" id="picker-models-head">模型</p>
                 <ul class="picker-list" id="picker-models" data-role="models"
                     aria-labelledby="picker-models-head"></ul>
                 <div class="picker-manual">
-                  <label class="sr-only" for="picker-model-input">Model name</label>
+                  <label class="sr-only" for="picker-model-input">模型名称</label>
                   <input type="text" id="picker-model-input" data-role="modelInput"
-                         spellcheck="false" autocomplete="off" placeholder="type a model name">
-                  <button type="button" class="btn sm" id="picker-model-use" data-role="modelAdd">Add</button>
+                         spellcheck="false" autocomplete="off" placeholder="输入模型名称">
+                  <button type="button" class="btn sm" id="picker-model-use" data-role="modelAdd">添加</button>
                 </div>
-                <p class="picker-foot-hint">Add puts the typed name in this provider's list. Click a
-                  model in the list to use it.</p>
+                <p class="picker-foot-hint">「添加」会把输入的名称放进该提供方的列表；
+                  点击列表里的模型即可使用它。</p>
               </div>
             </div>
             <div class="picker-effort" id="picker-effort" data-role="effort"
-                 role="group" aria-label="Reasoning effort"></div>
+                 role="group" aria-label="思考强度"></div>
             <p class="picker-effort-hint" id="picker-effort-hint" data-role="effortHint"></p>
             <p class="picker-error err" id="picker-error" data-role="error" role="alert" hidden></p>
           </div>
         </div>
           <span class="hint" id="composer-hint"></span>
           <span class="hint" id="photo-hint" role="status" hidden></span>
-          <!-- A picture never reaches the model: the server saves it, has the
-               vision model describe it, and the description becomes the message.
-               `accept="image/*"` without `capture` on purpose — `capture` takes
-               the camera on iOS and the library on Android, and the library has
-               to stay reachable from the same button on both. -->
-          <button type="button" class="btn ghost sm" id="btn-photo" aria-label="Send a picture"
-                  title="Send a picture: a vision model describes it and the description becomes your message">
-            <span class="btn-glyph" aria-hidden="true">▣</span><span class="btn-label">Photo</span></button>
+          <!-- 图片永远不会到达模型：服务器保存它，让视觉模型描述它，描述内容成为消息。
+               故意只写 `accept="image/*"` 而不带 `capture` —— `capture` 在 iOS 上会
+               直接调相机、在 Android 上调图库，而图库必须在这个按钮上仍然可达。 -->
+          <button type="button" class="btn ghost sm" id="btn-photo" aria-label="发送图片"
+                  title="发送图片：由视觉模型描述它，描述内容会成为你的消息">
+            <span class="btn-glyph" aria-hidden="true">▣</span><span class="btn-label">图片</span></button>
           <input type="file" id="photo-input" accept="image/*" hidden>
-          <button type="button" class="btn ghost sm" id="btn-undo" aria-label="Undo the last turn's file changes"
-                  title="Put back the files the last turn changed. Each turn is undoable once; the twenty most recent are kept.">
-            <span class="btn-glyph" aria-hidden="true">↺</span><span class="btn-label">Undo</span></button>
-          <button type="button" class="btn ghost sm" id="btn-compact" aria-label="Compact the conversation"
-                  title="Replace earlier turns with a summary, freeing context. The full conversation stays on disk.">
-            <span class="btn-glyph" aria-hidden="true">⤓</span><span class="btn-label">Compact</span></button>
+          <button type="button" class="btn ghost sm" id="btn-undo" aria-label="退回上一回合的文件改动"
+                  title="把上一回合改动过的文件放回去。每个回合可以退回一次；保留最近二十个回合。">
+            <span class="btn-glyph" aria-hidden="true">↺</span><span class="btn-label">退回</span></button>
+          <button type="button" class="btn ghost sm" id="btn-compact" aria-label="压缩对话"
+                  title="用摘要替换较早的回合，释放上下文。完整对话仍留在磁盘上。">
+            <span class="btn-glyph" aria-hidden="true">⤓</span><span class="btn-label">压缩</span></button>
           <button type="button" class="btn danger" id="btn-abort" hidden
-                  title="Stop the running turn at the next safe point">Abort</button>
-          <button type="submit" id="send" class="btn primary">Send</button>
+                  title="在下一个安全点停止正在运行的回合">停止</button>
+          <button type="submit" id="send" class="btn primary">发送</button>
         </div>
         </div>
       </form>
     </main>
 
-    <aside id="side" class="side" aria-label="Agent details">
+    <aside id="side" class="side" aria-label="代理详情">
       <section class="side-sec">
-        <h2>Usage</h2>
+        <h2>用量</h2>
         <div class="usage" id="usage">
           <div class="usage-hero">
-            <span class="usage-hero-label">cache hit rate</span>
+            <span class="usage-hero-label">前缀缓存命中率</span>
             <span class="usage-hero-value" id="u-hit">—</span>
           </div>
-          <div class="hit-bar" id="u-hit-bar" role="img" aria-label="cache hit rate not reported">
+          <div class="hit-bar" id="u-hit-bar" role="img" aria-label="未报告前缀缓存命中率">
             <div class="hit-bar-fill na" id="u-hit-fill"></div>
           </div>
-          <p class="usage-hint" id="u-hint" hidden>the provider did not report cache usage</p>
+          <p class="usage-hint" id="u-hint" hidden>提供方未报告前缀缓存用量</p>
           <p class="usage-alert" id="u-alert" hidden></p>
           <table class="usage-table">
             <tbody>
-              <tr><th scope="row">turns</th><td id="u-turns">—</td></tr>
-              <tr><th scope="row">steps</th><td id="u-steps">—</td></tr>
-              <tr><th scope="row">input tokens</th><td id="u-in">—</td></tr>
-              <tr><th scope="row">output tokens</th><td id="u-out">—</td></tr>
-              <tr><th scope="row">cached input</th><td id="u-cached">—</td></tr>
-              <tr id="u-errors-row"><th scope="row">tool errors</th><td id="u-errors">—</td></tr>
-              <tr><th scope="row">tool calls</th><td id="u-tools">—</td></tr>
-              <tr id="u-compact-row"><th scope="row">compactions</th><td id="u-compact">—</td></tr>
-              <tr><th scope="row">elapsed</th><td id="u-elapsed">—</td></tr>
-              <tr><th scope="row">context (est.)</th><td id="u-context">—</td></tr>
+              <tr><th scope="row">回合</th><td id="u-turns">—</td></tr>
+              <tr><th scope="row">步骤</th><td id="u-steps">—</td></tr>
+              <tr><th scope="row">输入 token</th><td id="u-in">—</td></tr>
+              <tr><th scope="row">输出 token</th><td id="u-out">—</td></tr>
+              <tr><th scope="row">已缓存输入</th><td id="u-cached">—</td></tr>
+              <tr id="u-errors-row"><th scope="row">工具错误</th><td id="u-errors">—</td></tr>
+              <tr><th scope="row">工具调用</th><td id="u-tools">—</td></tr>
+              <tr id="u-compact-row"><th scope="row">压缩次数</th><td id="u-compact">—</td></tr>
+              <tr><th scope="row">耗时</th><td id="u-elapsed">—</td></tr>
+              <tr><th scope="row">上下文（估算）</th><td id="u-context">—</td></tr>
             </tbody>
           </table>
         </div>
       </section>
       <section class="side-sec">
-        <h2>Tools</h2>
+        <h2>工具</h2>
         <ul class="tool-list" id="tool-list">
-          <li class="muted">No tools reported.</li>
+          <li class="muted">未报告任何工具。</li>
         </ul>
       </section>
     </aside>
   </div>
 
-  <!-- Shown under the sheets on a phone, so a tap outside one closes it. It is
-       above the wallpaper layer and below every panel and dialog. -->
+  <!-- 手机上显示在抽贴面板下面，所以点面板外面就能关掉它。它在壁纸层之上、
+       所有面板和对话框之下。 -->
   <div id="scrim" class="scrim" hidden></div>
 </div>
 
 <div id="settings-overlay" class="overlay" hidden>
   <div class="overlay-card settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
     <header class="overlay-head">
-      <h2 id="settings-title">Settings</h2>
-      <button type="button" class="btn ghost" id="settings-close">Close</button>
+      <h2 id="settings-title">设置</h2>
+      <button type="button" class="btn ghost" id="settings-close">关闭</button>
     </header>
 
     <div class="overlay-body settings-body">
       <form class="settings-form" id="settings-form" autocomplete="off">
         <p class="err settings-error" id="settings-error" hidden></p>
 
-        <!-- The same layered control as the composer's, mounted in the form:
-             choosing only fills the draft, Save is what applies it. -->
+        <!-- 与输入框那里同一个分层控件，挂在表单里：选择只填写草稿，
+             保存才会真正应用它。 -->
         <div class="field">
-          <label for="cfg-picker-trigger">Provider &amp; model</label>
+          <label for="cfg-picker-trigger">提供方与模型</label>
           <div class="picker picker-settings" id="cfg-picker" data-picker="settings">
             <button type="button" class="picker-trigger" id="cfg-picker-trigger" data-role="trigger"
                     aria-haspopup="true" aria-expanded="false" aria-controls="cfg-picker-panel"
-                    title="Provider, model and effort">
-              <span class="picker-label">Model</span>
-              <span class="picker-value picker-value-warn" id="cfg-picker-value" data-role="value">not configured</span>
+                    title="提供方、模型与思考强度">
+              <span class="picker-label">模型</span>
+              <span class="picker-value picker-value-warn" id="cfg-picker-value" data-role="value">未配置</span>
               <span class="picker-caret" aria-hidden="true">▾</span>
             </button>
 
             <div class="picker-panel" id="cfg-picker-panel" data-role="panel" role="dialog"
-                 aria-label="Choose a provider, model and effort" hidden>
+                 aria-label="选择提供方、模型与思考强度" hidden>
               <div class="picker-cols">
                 <div class="picker-col">
-                  <p class="picker-col-head" id="cfg-picker-providers-head">Provider</p>
+                  <p class="picker-col-head" id="cfg-picker-providers-head">提供方</p>
                   <ul class="picker-list" id="cfg-picker-providers" data-role="providers"
                       aria-labelledby="cfg-picker-providers-head"></ul>
                   <div class="picker-foot">
                     <button type="button" class="btn sm" id="cfg-picker-provider-add"
-                            data-role="addProvider">Add provider…</button>
-                    <p class="picker-foot-hint">Providers are defined on the server; this opens the same
-                      form as Settings, on Your providers.</p>
+                            data-role="addProvider">添加提供方…</button>
+                    <p class="picker-foot-hint">提供方定义在服务器上；这里打开的是
+                      「设置」中「你的提供方」下的同一个表单。</p>
                   </div>
                 </div>
                 <div class="picker-col">
-                  <p class="picker-col-head" id="cfg-picker-models-head">Model</p>
+                  <p class="picker-col-head" id="cfg-picker-models-head">模型</p>
                   <ul class="picker-list" id="cfg-picker-models" data-role="models"
                       aria-labelledby="cfg-picker-models-head"></ul>
                   <div class="picker-manual">
-                    <label class="sr-only" for="cfg-picker-model-input">Model name</label>
+                    <label class="sr-only" for="cfg-picker-model-input">模型名称</label>
                     <input type="text" id="cfg-picker-model-input" data-role="modelInput"
-                           spellcheck="false" autocomplete="off" placeholder="type a model name">
-                    <button type="button" class="btn sm" id="cfg-picker-model-use" data-role="modelAdd">Add</button>
+                           spellcheck="false" autocomplete="off" placeholder="输入模型名称">
+                    <button type="button" class="btn sm" id="cfg-picker-model-use" data-role="modelAdd">添加</button>
                   </div>
-                  <p class="picker-foot-hint">Add puts the typed name in this provider's list. Click a
-                    model in the list to use it.</p>
+                  <p class="picker-foot-hint">「添加」会把输入的名称放进该提供方的列表；
+                    点击列表里的模型即可使用它。</p>
                 </div>
               </div>
               <div class="picker-effort" id="cfg-picker-effort" data-role="effort"
-                   role="group" aria-label="Reasoning effort"></div>
+                   role="group" aria-label="思考强度"></div>
               <p class="picker-effort-hint" id="cfg-picker-effort-hint" data-role="effortHint"></p>
               <p class="picker-error err" id="cfg-picker-error" data-role="error" role="alert" hidden></p>
             </div>
@@ -324,89 +319,87 @@
         </div>
 
         <div class="field">
-          <label for="cfg-baseurl">Base URL</label>
+          <label for="cfg-baseurl">接口地址</label>
           <input type="text" id="cfg-baseurl" spellcheck="false" placeholder="https://api.openai.com/v1">
         </div>
 
         <div class="field">
-          <label for="cfg-apikey">API key</label>
+          <label for="cfg-apikey">API 密钥</label>
           <input type="password" id="cfg-apikey" autocomplete="new-password" spellcheck="false">
           <span class="field-hint" id="cfg-apikey-hint" hidden></span>
           <span class="field-error" id="cfg-apikey-error" hidden></span>
           <label class="field-check" id="cfg-clearkey-wrap" hidden>
             <input type="checkbox" id="cfg-clearkey">
-            <span>clear stored key</span>
+            <span>清除已保存的密钥</span>
           </label>
         </div>
 
         <div class="field">
-          <label for="cfg-apikeyenv">API key env var</label>
+          <label for="cfg-apikeyenv">API 密钥环境变量</label>
           <input type="text" id="cfg-apikeyenv" spellcheck="false" placeholder="OPENAI_API_KEY">
           <span class="field-hint" id="cfg-apikeyenv-hint" hidden></span>
         </div>
 
         <div class="field-row">
           <div class="field">
-            <label for="cfg-temperature">Temperature</label>
-            <input type="number" id="cfg-temperature" min="0" max="2" step="any" placeholder="default">
+            <label for="cfg-temperature">温度</label>
+            <input type="number" id="cfg-temperature" min="0" max="2" step="any" placeholder="默认">
           </div>
           <div class="field">
-            <label for="cfg-language">Thinking language</label>
+            <label for="cfg-language">思考语言</label>
             <select id="cfg-language"></select>
-            <span class="field-hint" id="cfg-language-hint">The agent answers in this language
-              whatever you write in. It asks the model to think in it too, which works on some
-              models and not others — the answer always follows, the reasoning may not.</span>
+            <span class="field-hint" id="cfg-language-hint">无论你用什么语言写，代理都用这种语言
+              回答。它也会让模型用这种语言思考，这在有些模型上有效、有些上无效——回答一定
+              会跟着变，推理过程不一定。</span>
           </div>
         </div>
 
-        <h3 class="settings-subhead" id="cfg-vision-title">Pictures</h3>
+        <h3 class="settings-subhead" id="cfg-vision-title">图片</h3>
         <p class="field-hint" id="cfg-vision-hint">
-          One picture per turn is described by this model, and the description becomes your message —
-          the main model never receives an image. Its own endpoint, key and model, because reading a
-          screenshot and writing code are different choices and a local model is right for a photo of
-          something private. Leave the endpoint or the model empty and pictures are off: the picture
-          button then refuses with what to set. Nothing here is tested by <em>Test connection</em> —
-          press the picture button to try it.
+          每个回合可以有一张图片，由这个模型来描述，描述内容成为你的消息——主模型永远
+          收不到图片。它有自己的端点、密钥和模型，因为读截图和写代码是不同的选择，而
+          一张涉及隐私的照片正适合交给本地模型。端点或模型留空即关闭图片功能：那时图片
+          按钮会拒绝并说明该设置什么。这里的内容不归 <em>测试连接</em> 测试——按图片
+          按钮才试得到。
         </p>
 
         <div class="field">
-          <label for="cfg-vision-baseurl">Vision base URL</label>
+          <label for="cfg-vision-baseurl">视觉接口地址</label>
           <input type="text" id="cfg-vision-baseurl" spellcheck="false" placeholder="https://api.openai.com/v1">
         </div>
 
         <div class="field">
-          <label for="cfg-vision-model">Vision model</label>
+          <label for="cfg-vision-model">视觉模型</label>
           <input type="text" id="cfg-vision-model" spellcheck="false" placeholder="gpt-4o-mini">
         </div>
 
         <div class="field">
-          <label for="cfg-vision-apikey">Vision API key</label>
+          <label for="cfg-vision-apikey">视觉 API 密钥</label>
           <input type="password" id="cfg-vision-apikey" autocomplete="new-password" spellcheck="false">
           <span class="field-hint" id="cfg-vision-apikey-hint" hidden></span>
           <span class="field-error" id="cfg-vision-error" hidden></span>
           <label class="field-check" id="cfg-vision-clearkey-wrap" hidden>
             <input type="checkbox" id="cfg-vision-clearkey">
-            <span>clear the saved vision key</span>
+            <span>清除已保存的视觉模型密钥</span>
           </label>
         </div>
 
         <div class="field-row">
           <div class="field">
-            <label for="cfg-vision-maxtokens">Description budget (tokens)</label>
+            <label for="cfg-vision-maxtokens">描述预算（token）</label>
             <input type="number" id="cfg-vision-maxtokens" min="1" step="1" placeholder="8192">
             <span class="field-hint" id="cfg-vision-maxtokens-hint">
-              A ceiling, not a spend: a description costs what the model writes, whatever room it was
-              given. A reasoning model spends it <em>before</em> it writes anything, so too little
-              returns an empty answer rather than a short one — 1500 was too little for a phone
-              screenshot. Empty means the default.
+              这是上限，不是开销：描述花掉的是模型写出来的量，与给了多少余量无关。推理模型
+              会在写出任何东西<em>之前</em>就花掉它，所以给得太少得到的是空回答而不是短
+              回答——一张手机截图给 1500 就太少。留空表示用默认值。
             </span>
           </div>
           <div class="field">
-            <label>State</label>
+            <label>状态</label>
             <span class="field-hint" id="cfg-vision-state"></span>
             <label class="field-check">
               <input type="checkbox" id="cfg-vision-off">
-              <span>turn pictures off (remove the vision block)</span>
+              <span>关闭图片（移除 vision 配置块）</span>
             </label>
           </div>
         </div>
@@ -414,44 +407,44 @@
         <p class="settings-test-result" id="settings-test-result" hidden></p>
 
         <div class="settings-actions">
-          <button type="button" class="btn" id="settings-test">Test connection</button>
-          <span class="hint" id="settings-test-hint">Sends one tiny request to the provider using these values. Nothing is saved.</span>
-          <button type="submit" class="btn primary" id="settings-save">Save</button>
+          <button type="button" class="btn" id="settings-test">测试连接</button>
+          <span class="hint" id="settings-test-hint">用这些值向提供方发一个极小的请求。不会保存任何东西。</span>
+          <button type="submit" class="btn primary" id="settings-save">保存</button>
         </div>
 
         <p class="settings-foot" id="settings-foot"></p>
       </form>
 
       <section class="provider-section" id="cfg-providers-section" aria-labelledby="cfg-providers-title">
-        <h3 class="settings-subhead" id="cfg-providers-title">Your providers</h3>
+        <h3 class="settings-subhead" id="cfg-providers-title">你的提供方</h3>
         <p class="field-hint" id="cfg-providers-hint">
-          A provider you define yourself: a relay, a gateway, a self-hosted server or your own router.
-          The server stores it and it becomes selectable in the Provider field above.
+          由你自己定义的提供方：中转服务、网关、自建服务器，或者你自己的路由。服务器会保存
+          它，之后它就能在上面「提供方」字段里选中。
         </p>
         <p class="err provider-note" id="cfg-providers-note" role="status" hidden></p>
         <ul class="provider-list" id="cfg-provider-list">
-          <li class="muted">Loading…</li>
+          <li class="muted">加载中…</li>
         </ul>
 
 
         <div class="provider-add">
           <button type="button" class="btn" id="cfg-provider-add-toggle" aria-expanded="false"
-                  aria-controls="cfg-provider-form">Add provider…</button>
+                  aria-controls="cfg-provider-form">添加提供方…</button>
 
           <div class="provider-builtins" id="cfg-builtin-row" hidden>
-            <span class="provider-builtins-label">or add a built-in:</span>
+            <span class="provider-builtins-label">或添加内置提供方：</span>
             <span class="provider-builtins-list" id="cfg-builtins"></span>
           </div>
 
           <form class="provider-form" id="cfg-provider-form" autocomplete="off" hidden>
             <div class="field-row">
               <div class="field">
-                <label for="cfg-new-name">Name</label>
+                <label for="cfg-new-name">名称</label>
                 <input type="text" id="cfg-new-name" spellcheck="false" autocomplete="off" placeholder="myrelay">
                 <span class="field-error" id="cfg-new-name-error" hidden></span>
               </div>
               <div class="field">
-                <label for="cfg-new-kind">Protocol</label>
+                <label for="cfg-new-kind">协议</label>
                 <select id="cfg-new-kind">
                   <option value="openai">openai</option>
                   <option value="anthropic">anthropic</option>
@@ -461,35 +454,34 @@
             </div>
 
             <div class="field">
-              <label for="cfg-new-baseurl">Base URL</label>
+              <label for="cfg-new-baseurl">接口地址</label>
               <input type="text" id="cfg-new-baseurl" spellcheck="false" autocomplete="off"
                      placeholder="https://relay.example.com/v1">
-              <span class="field-hint">Give the prefix only — ccj appends the endpoint path
-                (<code>/chat/completions</code> or <code>/v1/messages</code>) itself.</span>
+              <span class="field-hint">只填前缀 —— ccj 会自己补上端点路径
+                （<code>/chat/completions</code> 或 <code>/v1/messages</code>）。</span>
               <span class="field-error" id="cfg-new-baseurl-error" hidden></span>
             </div>
 
             <div class="field-row">
               <div class="field">
-                <label for="cfg-new-apikeyenv">API key env var <span class="field-optional">optional</span></label>
+                <label for="cfg-new-apikeyenv">API 密钥环境变量 <span class="field-optional">可选</span></label>
                 <input type="text" id="cfg-new-apikeyenv" spellcheck="false" autocomplete="off"
                        placeholder="MYRELAY_API_KEY">
               </div>
               <div class="field">
-                <label for="cfg-new-models">Models</label>
+                <label for="cfg-new-models">模型</label>
                 <input type="text" id="cfg-new-models" spellcheck="false" autocomplete="off"
                        placeholder="deepseek-v4-flash, gpt-5.5">
               </div>
             </div>
 
             <p class="field-hint">
-              Models are optional and comma-separated. They are offered in the Model field above
-              once the provider is defined.
+              模型是可选的，用逗号分隔。提供方定义好之后，它们就会出现在上面的「模型」字段里。
             </p>
             <p class="err" id="cfg-provider-form-error" role="alert" hidden></p>
 
             <div class="provider-form-actions">
-              <button type="submit" class="btn primary" id="cfg-provider-save">Add provider</button>
+              <button type="submit" class="btn primary" id="cfg-provider-save">添加提供方</button>
             </div>
           </form>
         </div>
@@ -498,7 +490,7 @@
   </div>
 </div>
 
-<noscript><p class="noscript">ccj --web needs JavaScript.</p></noscript>
+<noscript><p class="noscript">ccj --web 需要 JavaScript。</p></noscript>
 
 <script src="/app.js" defer></script>
 </body>

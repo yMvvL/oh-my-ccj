@@ -10,16 +10,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Serialises {@link Message} to and from the JSON shape stored in a session file.
+ * 在 {@link Message} 与会话文件里存的 JSON 形状之间来回序列化。
  *
- * <p>The format is one flat object per message with a {@code type} discriminator, so a session log
- * stays readable with ordinary JSON tooling and stays throwable away by any reader that does not
- * know a new message kind. Tool call arguments are kept verbatim as a raw string: the core never
- * parses them, and re-serialising the model's bytes would change what the next request sends.
+ * <p>格式是每条消息一个扁平对象，带一个 {@code type} 判别字段，于是会话日志用普通的 JSON 工具就能读，
+ * 不认识新消息类型的读取方也能直接把它丢掉。工具调用的参数按原样保留为原始字符串：核心从不解析它们，
+ * 而重新序列化模型给的字节会改变下一个请求发出去的内容。
  *
- * <p>Decoding is deliberately strict. A session file is history the loop will feed back to a
- * provider, so a silent coercion (missing text becoming {@code ""}, an object accepted where a
- * string belongs) would corrupt the conversation instead of surfacing the bad file.
+ * <p>解码是刻意严格的。会话文件是循环要回喂给提供方的历史，所以一次静默的强制转换（缺失的文本变成
+ * {@code ""}、在该放字符串的地方接受了对象）会污染这段会话，而不是把坏文件暴露出来。
  */
 public final class MessageCodec {
 
@@ -27,14 +25,14 @@ public final class MessageCodec {
   public static final String TYPE_USER = "user";
   public static final String TYPE_ASSISTANT = "assistant";
   public static final String TYPE_TOOL_RESULT = "tool_result";
-  /** A model-written summary standing in for the messages a compaction replaced. */
+  /** 模型写的摘要，代替一次压缩替换掉的那些消息。 */
   public static final String TYPE_SUMMARY = "summary";
 
   private MessageCodec() {}
 
   public static ObjectNode toNode(Message message) {
     if (message == null) {
-      throw new IllegalArgumentException("message must not be null");
+      throw new IllegalArgumentException("message 不能为 null");
     }
     ObjectNode node = Json.object();
     switch (message) {
@@ -56,8 +54,8 @@ public final class MessageCodec {
           encoded.put("name", call.name());
           encoded.put("arguments", call.arguments());
         }
-        // Written only when there is one: a session recorded before thinking existed stays
-        // byte-identical, and the field costs nothing on every other provider.
+        // 有内容时才写出：在 thinking 存在之前记录的会话保持逐字节相同，而在其它提供方那里这个字段不花
+        // 任何代价。
         if (!assistant.thinking().isEmpty()) {
           ArrayNode blocks = node.putArray("thinking");
           for (Message.Thinking block : assistant.thinking()) {
@@ -77,8 +75,8 @@ public final class MessageCodec {
       case Message.Summary summary -> {
         node.put("type", TYPE_SUMMARY);
         node.put("text", summary.text());
-        // Written only when there is something to say: a generation file made before compaction
-        // existed, or a test constructing one by hand, stays byte-identical without these.
+        // 有内容可说时才写出：在压缩存在之前生成的代文件，或者测试手工构造的一个，没有这些字段时保持逐
+        // 字节相同。
         if (summary.covers() > 0) {
           node.put("covers", summary.covers());
         }
@@ -104,14 +102,14 @@ public final class MessageCodec {
   public static Message fromNode(JsonNode node) {
     if (node == null || !node.isObject()) {
       throw new IllegalArgumentException(
-          "message must be a JSON object, got " + describe(node));
+          "message 必须是 JSON 对象，实际为 " + describe(node));
     }
     JsonNode type = node.get("type");
     if (type == null || type.isNull()) {
-      throw new IllegalArgumentException("message is missing the 'type' discriminator");
+      throw new IllegalArgumentException("message 缺少 'type' 判别字段");
     }
     if (!type.isTextual()) {
-      throw new IllegalArgumentException("message 'type' must be a string, got " + describe(type));
+      throw new IllegalArgumentException("message 的 'type' 必须是字符串，实际为 " + describe(type));
     }
     return switch (type.asText()) {
       case TYPE_SYSTEM -> new Message.System(text(node, "text"));
@@ -126,7 +124,7 @@ public final class MessageCodec {
               text(node, "tool_name"),
               text(node, "content"),
               bool(node, "error"));
-      default -> throw new IllegalArgumentException("unknown message type: " + type.asText());
+      default -> throw new IllegalArgumentException("未知的消息类型：" + type.asText());
     };
   }
 
@@ -140,14 +138,14 @@ public final class MessageCodec {
     }
     if (!node.isArray()) {
       throw new IllegalArgumentException(
-          "message field 'tool_calls' must be an array, got " + describe(node));
+          "message 的 'tool_calls' 字段必须是数组，实际为 " + describe(node));
     }
     List<Message.ToolCall> calls = new ArrayList<>(node.size());
     for (int i = 0; i < node.size(); i++) {
       JsonNode item = node.get(i);
       if (!item.isObject()) {
         throw new IllegalArgumentException(
-            "tool_calls[" + i + "] must be a JSON object, got " + describe(item));
+            "tool_calls[" + i + "] 必须是 JSON 对象，实际为 " + describe(item));
       }
       try {
         calls.add(
@@ -160,8 +158,8 @@ public final class MessageCodec {
   }
 
   /**
-   * Thinking blocks, or nothing when the record has none. A block that carries neither text,
-   * signature nor data is skipped rather than stored: it is a replay the API would reject.
+   * thinking 块；记录里没有时什么也不给。既没有 text、signature 也没有 data 的块会被跳过而不存储：
+   * 那是 API 会拒绝的一次重放。
    */
   private static List<Message.Thinking> thinking(JsonNode node) {
     if (node == null || node.isNull()) {
@@ -169,14 +167,14 @@ public final class MessageCodec {
     }
     if (!node.isArray()) {
       throw new IllegalArgumentException(
-          "message field 'thinking' must be an array, got " + describe(node));
+          "message 的 'thinking' 字段必须是数组，实际为 " + describe(node));
     }
     List<Message.Thinking> blocks = new ArrayList<>(node.size());
     for (int i = 0; i < node.size(); i++) {
       JsonNode item = node.get(i);
       if (!item.isObject()) {
         throw new IllegalArgumentException(
-            "thinking[" + i + "] must be a JSON object, got " + describe(item));
+            "thinking[" + i + "] 必须是 JSON 对象，实际为 " + describe(item));
       }
       Message.Thinking block =
           new Message.Thinking(
@@ -194,8 +192,8 @@ public final class MessageCodec {
   }
 
   /**
-   * How many messages a summary replaced. Absent is 0 rather than an error: the count is what the
-   * transcript displays, and a hand-written generation file without it is still a usable summary.
+   * 一条摘要替换掉了多少条消息。缺失时是 0 而不是错误：这个计数是转录要显示的东西，手工写的代文件
+   * 没有它也仍然是一条可用的摘要。
    */
   private static int covers(JsonNode node) {
     JsonNode value = node.get("covers");
@@ -204,12 +202,12 @@ public final class MessageCodec {
     }
     if (!value.isIntegralNumber() || !value.canConvertToInt() || value.asInt() < 0) {
       throw new IllegalArgumentException(
-          "message field 'covers' must be a non-negative integer, got " + describe(value));
+          "message 的 'covers' 字段必须是非负整数，实际为 " + describe(value));
     }
     return value.asInt();
   }
 
-  /** The file the summarised messages are still in, or empty when the writer named none. */
+  /** 被摘要的那些消息仍在的文件，写的人没有指明时为空。 */
   private static String source(JsonNode node) {
     JsonNode value = node.get("source");
     return value == null || !value.isTextual() ? "" : value.asText();
@@ -218,11 +216,11 @@ public final class MessageCodec {
   private static String text(JsonNode node, String field) {
     JsonNode value = node.get(field);
     if (value == null || value.isNull()) {
-      throw new IllegalArgumentException("message field '" + field + "' is missing");
+      throw new IllegalArgumentException("message 缺少 '" + field + "' 字段");
     }
     if (!value.isTextual()) {
       throw new IllegalArgumentException(
-          "message field '" + field + "' must be a string, got " + describe(value));
+          "message 的 '" + field + "' 字段必须是字符串，实际为 " + describe(value));
     }
     return value.asText();
   }
@@ -230,22 +228,22 @@ public final class MessageCodec {
   private static boolean bool(JsonNode node, String field) {
     JsonNode value = node.get(field);
     if (value == null || value.isNull()) {
-      throw new IllegalArgumentException("message field '" + field + "' is missing");
+      throw new IllegalArgumentException("message 缺少 '" + field + "' 字段");
     }
     if (!value.isBoolean()) {
       throw new IllegalArgumentException(
-          "message field '" + field + "' must be a boolean, got " + describe(value));
+          "message 的 '" + field + "' 字段必须是布尔值，实际为 " + describe(value));
     }
     return value.asBoolean();
   }
 
   private static String describe(JsonNode node) {
-    return node == null ? "nothing" : node.getNodeType().toString().toLowerCase();
+    return node == null ? "无" : node.getNodeType().toString().toLowerCase();
   }
 
   /**
-   * Accounting records share the session file but are not messages: the codec writes them so totals
-   * survive a restart, and {@code FileSession} filters them out of the conversation.
+   * 记账记录与会话共用同一个文件，但它们不是消息：codec 写出它们，好让累计值在重启后还在，
+   * {@code FileSession} 则把它们从会话里滤掉。
    */
   public static String totalsToJson(UsageTotals totals) {
     ObjectNode node = Json.object();
@@ -258,8 +256,8 @@ public final class MessageCodec {
     node.put("tool_calls", totals.toolCalls());
     node.put("tool_errors", totals.toolErrors());
     node.put("elapsed_ms", totals.elapsedMillis());
-    // Written only when there is one: a session recorded before compaction existed keeps a usage line
-    // byte-identical to what it was, so nothing about an old file looks newer than it is.
+    // 有内容时才写出：在压缩存在之前记录的会话，其 usage 行保持逐字节与原来相同，于是旧文件的任何部分
+    // 都不会显得比它实际更新。
     if (totals.compactions() > 0) {
       node.put("compactions", totals.compactions());
     }
@@ -270,7 +268,7 @@ public final class MessageCodec {
   public static UsageTotals totalsFromJson(String line) {
     JsonNode node = Json.parse(line);
     if (!FileSession.USAGE_TYPE.equals(node.path("type").asText())) {
-      throw new IllegalArgumentException("not a usage record");
+      throw new IllegalArgumentException("不是 usage 记录");
     }
     return new UsageTotals(
         node.path("input_tokens").asLong(),
@@ -281,7 +279,7 @@ public final class MessageCodec {
         node.path("tool_calls").asInt(),
         node.path("tool_errors").asInt(),
         node.path("elapsed_ms").asLong(),
-        // Absent reads as 0, which is what a session that was never compacted recorded.
+        // 缺失读作 0，这正是从未被压缩过的会话记录下的值。
         node.path("compactions").asInt(0),
         node.path("cache_reported").asBoolean());
   }

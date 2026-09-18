@@ -13,63 +13,57 @@ import java.nio.file.StandardCopyOption;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Puts a newly built jar in place of the one this process is running from, so the rebuild the agent
- * just did takes effect.
+ * 把一个新构建出来的 jar 放到本进程正在运行的那个 jar 的位置上，让代理刚做的重新构建生效。
  *
- * <p>Two facts make this an operation rather than a shell line. Writing over a jar a JVM is
- * executing kills that JVM — partway through, with a {@code NoClassDefFoundError} that says nothing
- * about the cause — so the new jar is <em>renamed</em> into place instead: same filesystem, so the
- * rename is atomic, and the running process keeps the inode it already opened. And a process cannot
- * replace its own code: once the swap is done this one is running bytes that are no longer on disk,
- * so it exits with a status only the launcher acts on, and the launcher starts the new jar. That is
- * why the ending is an explicit "restart me" rather than a crash or a success.
+ * <p>有两个事实让它成为一次操作，而不是一行 shell。覆盖一个 JVM 正在执行的 jar 会杀死那个 JVM——
+ * 死在半途，抛出一个对起因什么都没说的 {@code NoClassDefFoundError}——所以新 jar 是以<em>重命名</em>
+ * 的方式就位的：同一个文件系统，因此重命名是原子的，正在运行的进程也保留着它已经打开的那个 inode。
+ * 而一个进程无法替换自己的代码：一旦换完，这个进程运行的字节就不再位于磁盘上，所以它以一个只有启动器
+ * 才会处理的退出状态退出，由启动器启动新的 jar。这就是为什么结局是一句明确的「重启我」，而不是崩溃，
+ * 也不是成功。
  *
- * <p>It is gated on approval like every other tool that changes something, and the approval detail
- * names both files: which jar is about to become which is the whole decision.
+ * <p>它和所有会改动东西的工具一样受审批闸门管控，而审批详情会点名两个文件：哪个 jar 即将变成哪个，
+ * 就是整个决定的内容。
  *
- * <p>The run ends with this call: {@link ToolContext#endRun()} stops the loop where it stands. The
- * install is the last thing worth doing in this process, and letting the model ask for one more
- * step would only produce a failure to talk about.
+ * <p>这次运行以这个调用告终：{@link ToolContext#endRun()} 让循环就地停下。安装是这个进程里最后一
+ * 件值得做的事，而让模型再要一步，只会产生一个需要交代的失败。
  */
 public final class RestartTool implements Tool {
 
-  /** The jar the launcher runs, which is the only jar this project ships. */
+  /** 启动器运行的那个 jar，也是这个项目唯一发布的 jar。 */
   private static final String INSTALLED_JAR = "ccj.jar";
 
   /**
-   * The jar a scratch build writes ({@code -Djar.name=ccj-next}), waiting to be swapped in. It has
-   * to be a different filename from the installed one: the build that produces it truncates whatever
-   * path it writes, and truncating the installed jar is what kills the process running from it.
+   * 临时构建写出的 jar（{@code -Djar.name=ccj-next}），等着被换上去。它的文件名必须与已安装的那个
+   * 不同：产出它的构建会截断自己写入的那条路径，而截断已安装的 jar 正是杀死从它运行的进程的原因。
    */
   private static final String STAGED_JAR = "ccj-next.jar";
 
   /**
-   * The exit status that means "start me again". 75 is EX_TEMPFAIL: nothing here raises it, and it
-   * has to survive the shell the launcher runs, which is why it is not one of the CLI's own codes
-   * (0 success, 1 runtime failure, 2 usage error).
+   * 表示「重新启动我」的退出状态。75 是 EX_TEMPFAIL：这里没有任何东西会抛出它，而它必须穿过启动器
+   * 所运行的那层 shell 存活下来，这就是为什么它不是 CLI 自己的状态码之一（0 成功、1 运行时失败、
+   * 2 用法错误）。
    */
   public static final int RESTART_EXIT = 75;
 
   /**
-   * Whether this process is meant to end in a restart. A static flag rather than a return value
-   * because the decision has to travel out of a tool call, through the loop and the run, into
-   * {@code Cli}: threading one bit through every one of those signatures would be the tail wagging
-   * the dog, and this is one process asking itself one question.
+   * 本进程是否要以重启收场。用静态标志而不是返回值，因为这个决定必须从一次工具调用里走出来，穿过循环
+   * 和这次运行，进入 {@code Cli}：为这一个比特在一路上每个签名里穿线，就是尾巴摇狗，而这里只是一个
+   * 进程问自己一个问题。
    */
   private static final AtomicBoolean RESTART_REQUESTED = new AtomicBoolean();
 
-  /** True when a restart has been requested; the CLI checks it once its run is over. */
+  /** 已经请求重启时为 true；CLI 在它那次运行结束后检查它。 */
   public static boolean restartRequested() {
     return RESTART_REQUESTED.get();
   }
 
   /**
-   * Forgets a request made by an earlier run in this JVM.
+   * 忘掉这个 JVM 里更早那次运行发出的请求。
    *
-   * <p>The flag answers a question about one run, but the process can outlive it — the test suite
-   * and any embedder call {@code Cli} several times — and a request that survived into the next run
-   * would tell it to exit 75 for a restart that run never asked for. So a run starts by saying "not
-   * this one", which is what keeps the answer scoped to the run that made it.
+   * <p>这个标志回答的是关于某一次运行的问题，但进程可能比它活得久——测试套件和任何嵌入方都会多次调用
+   * {@code Cli}——而一个活到下一次运行的请求，会叫它为一次它从未请求过的重启而退出 75。所以一次运行
+   * 开始时先声明「不是我这次」，这个答案就始终被限制在发出它的那次运行之内。
    */
   public static void clearRequest() {
     RESTART_REQUESTED.set(false);
@@ -113,44 +107,42 @@ public final class RestartTool implements Tool {
 
     if (!Files.isRegularFile(built)) {
       return ToolResult.error(
-          "no jar at "
-              + self
-              + " — build this project first with mvn -q -DskipTests -Djar.name=ccj-next package,"
-              + " which writes "
+          self
+              + " 处没有 jar — 先构建这个项目：mvn -q -DskipTests -Djar.name=ccj-next package，"
+              + "它会写出 "
               + STAGED_JAR);
     }
     if (built.toAbsolutePath().normalize().equals(installed.toAbsolutePath().normalize())) {
       return ToolResult.error(
           self
-              + " is already the installed jar; pass the staged one ("
+              + " 已经是当前安装的 jar；请传那个暂存的（"
               + STAGED_JAR
-              + ") so the swap has somewhere to come from");
+              + "），这样替换才有来源");
     }
     if (!Files.isRegularFile(installed)) {
       return ToolResult.error(
-          "no "
+          ToolSupport.display(ctx, installed)
+              + " 处没有 "
               + INSTALLED_JAR
-              + " at "
-              + ToolSupport.display(ctx, installed)
-              + " — restart installs the jar the launcher runs, and there is none here");
+              + " — restart 安装的是启动器运行的那个 jar，而这里没有");
     }
     if (!built.toAbsolutePath().normalize().equals(staged.toAbsolutePath().normalize())) {
       return ToolResult.error(
           self
-              + " is not the jar a build stages ("
+              + " 不是构建所暂存的那个 jar（"
               + ToolSupport.display(ctx, staged)
-              + "); installing some other jar would be a different thing entirely");
+              + "）；装别的 jar 是完全另一回事");
     }
 
     String detail =
         ToolSupport.display(ctx, built)
             + "  ->  "
             + ToolSupport.display(ctx, installed)
-            + "\n(renamed over the running jar: the JVM keeps the file it already opened, which is"
-            + " why this does not kill this process)\n"
-            + "then this process exits "
+            + "\n(以重命名的方式覆盖正在运行的 jar：JVM 保留它已经打开的那个文件，所以这不会杀死"
+            + "本进程)\n"
+            + "随后本进程以 "
             + RESTART_EXIT
-            + ", and the launcher starts the new jar";
+            + " 退出，启动器会启动新的 jar";
     String refusal = ctx.refusal(ApprovalRequest.tool("restart", detail));
     if (refusal != null) {
       return ToolResult.error(refusal);
@@ -160,13 +152,13 @@ public final class RestartTool implements Tool {
       Files.move(
           built, installed, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     } catch (AtomicMoveNotSupportedException e) {
-      // Two mounts between the two paths; the plain move is still a rename, not a write over it.
+      // 两条路径之间隔着两个挂载点；普通的 move 仍然是一次重命名，而不是覆盖写入。
       Files.move(built, installed, StandardCopyOption.REPLACE_EXISTING);
     }
     RESTART_REQUESTED.set(true);
-    // Nothing after this can be sent: the process is about to be replaced. Ending the run here is
-    // what keeps the transcript from ending in a provider error nobody asked for.
+    // 这之后什么都发不出去了：本进程即将被替换。在这里结束这次运行，才能让转录不会以一个没人要过的
+    // 提供方错误收尾。
     ctx.endRun();
-    return ToolResult.ok("installed " + ToolSupport.display(ctx, installed) + "; restarting on it");
+    return ToolResult.ok("已安装 " + ToolSupport.display(ctx, installed) + "；即将在它上面重启");
   }
 }

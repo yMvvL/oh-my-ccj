@@ -9,9 +9,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * The repair that makes an interrupted conversation usable again. Both wire formats refuse a turn
- * where an assistant asked for a tool call and no result answers it, and the session is append-only —
- * so an abort between the two leaves a history that no later turn can ever send.
+ * 让一段被打断的对话重新可用的修复。两种线上格式都会拒绝这样一个回合：assistant 请求了一次工具
+ * 调用，却没有任何结果回应它；而会话是只追加的 —— 所以夹在两者之间的一次中止，会留下之后任何
+ * 回合都永远发不出去的历史。
  */
 class SessionRepairTest {
 
@@ -46,7 +46,7 @@ class SessionRepairTest {
 
   @Test
   void anInterruptedTurnGetsTheResultItNeverGot() {
-    // Exactly the state an abort leaves behind: the assistant turn is on disk, its result is not.
+    // 正是一次中止留下来的状态：assistant 回合已经在磁盘上，它的结果没有。
     List<Message> messages = List.of(new Message.User("read it"), calls("call_1"));
 
     SessionRepair.Result repaired = SessionRepair.apply(messages);
@@ -56,15 +56,15 @@ class SessionRepairTest {
     Message.ToolResult filled = (Message.ToolResult) repaired.messages().get(2);
     assertEquals("call_1", filled.toolCallId());
     assertEquals("read", filled.toolName());
-    assertTrue(filled.error(), "a call that did not run is not a success");
-    assertTrue(filled.content().contains("not run"), filled.content());
-    assertTrue(repaired.notice().contains("1 interrupted tool call"), repaired.notice());
+    assertTrue(filled.error(), "一个没有运行的调用不算成功");
+    assertTrue(filled.content().contains("未运行"), filled.content());
+    assertTrue(repaired.notice().contains("1 次被中断的工具调用被标记为未运行"), repaired.notice());
   }
 
   @Test
   void theResultLandsWithItsTurnNotAtTheEndOfTheConversation() {
-    // Position matters: both APIs require the answers to follow the turn that asked, so a repair
-    // that appended at the end would be as invalid as the hole it filled.
+    // 位置很重要：两个 API 都要求回答跟随着发出请求的那个回合，所以追加到末尾的修复，会与它所
+    // 填补的那个空洞一样不合法。
     List<Message> messages =
         List.of(
             new Message.User("first"),
@@ -93,15 +93,14 @@ class SessionRepairTest {
     SessionRepair.Result repaired = SessionRepair.apply(messages);
 
     assertEquals(1, repaired.filled(), repaired.messages().toString());
-    // call_2's result belongs after call_1's, before the next user turn.
+    // call_2 的结果应该在 call_1 的结果之后、下一个用户回合之前。
     assertEquals("call_2", ((Message.ToolResult) repaired.messages().get(3)).toolCallId());
     assertEquals("call_3", ((Message.ToolResult) repaired.messages().get(6)).toolCallId());
   }
 
   @Test
   void parallelCallsThatShareAnEmptyIdStillCountAsTwo() {
-    // Providers exist that omit call ids entirely; matching by id alone would think one result
-    // answered both calls and leave the session invalid.
+    // 有些提供方完全省略调用 id；只按 id 匹配会以为一个结果回应了两个调用，从而让会话不合法。
     List<Message> messages =
         List.of(calls("", ""), result(""));
 
@@ -136,11 +135,10 @@ class SessionRepairTest {
 
   @Test
   void aMessageInTheMiddleOfATurnsAnswersStillEndsUpAfterThem() {
-    // The shape a second writer on one session leaves behind: the assistant asked for a call, a user
-    // message landed before its result did, and the call now looks unanswered while its real result
-    // sits past the interruption. Sent as recorded, that is an orphan tool message — which is exactly
-    // the request OpenAI rejects with "Messages with role 'tool' must be a response to a preceding
-    // message with 'tool_calls'".
+    // 同一个会话上的第二个写入者会留下的形状：assistant 请求了一次调用，一条用户消息先于它的结果
+    // 落盘，而这个调用如今看起来无人应答，它真正的结果却落在中断之后。按记录原样发出，那就是一条
+    // 孤儿 tool 消息 —— 正是 OpenAI 用 "Messages with role 'tool' must be a response to a preceding
+    // message with 'tool_calls'" 拒绝的那个请求。
     List<Message> messages =
         List.of(
             new Message.User("run it"),
@@ -154,9 +152,9 @@ class SessionRepairTest {
     assertEquals(4, out.size(), out.toString());
     assertEquals("call_1", ((Message.ToolResult) out.get(2)).toolCallId(), out.toString());
     assertEquals("zzz a probe written mid-turn", ((Message.User) out.get(3)).text());
-    assertEquals(0, repaired.filled(), "the call was answered: nothing had to be invented");
+    assertEquals(0, repaired.filled(), "这个调用已被回应：不需要凭空造一个");
     assertEquals(1, repaired.moved(), repaired.notice());
-    assertTrue(repaired.notice().contains("moved back"), repaired.notice());
+    assertTrue(repaired.notice().contains("条工具结果被带回了提出它们的那个回合"), repaired.notice());
   }
 
   @Test
@@ -187,9 +185,8 @@ class SessionRepairTest {
 
   @Test
   void aResultThatAnswersNoRecordedCallIsNotSentAtAll() {
-    // Sending it is the same rejected request: a tool message with no call for it to answer. The
-    // projection leaves it out and says so, because a request is only sendable when every result is
-    // an answer to a call.
+    // 发出它，就是同一个被拒绝的请求：一条没有任何调用可供它回应的 tool 消息。投影会把它排除在外
+    // 并说明原因，因为只有当每个结果都是对某个调用的回应时，请求才发得出去。
     List<Message> messages =
         List.of(
             new Message.User("read it"),
@@ -202,7 +199,7 @@ class SessionRepairTest {
     assertEquals(3, repaired.messages().size(), repaired.messages().toString());
     assertEquals(0, repaired.filled());
     assertEquals(1, repaired.dropped(), repaired.notice());
-    assertTrue(repaired.notice().contains("answer no call"), repaired.notice());
+    assertTrue(repaired.notice().contains("回答不了任何调用的工具结果未放进请求"), repaired.notice());
   }
 
   @Test
@@ -232,16 +229,16 @@ class SessionRepairTest {
     assertEquals("call_1", ((Message.ToolResult) out.get(2)).toolCallId());
     Message.ToolResult supplied = (Message.ToolResult) out.get(3);
     assertEquals("call_2", supplied.toolCallId());
-    assertTrue(supplied.content().contains("not run"), supplied.content());
+    assertTrue(supplied.content().contains("未运行"), supplied.content());
     assertEquals("are you done?", ((Message.User) out.get(4)).text());
     assertEquals(1, repaired.filled());
-    assertEquals(0, repaired.moved(), "the answer that was there did not move: " + repaired.notice());
+    assertEquals(0, repaired.moved(), "本来就在那里的回答没有移动：" + repaired.notice());
   }
 
   @Test
   void aProjectionIsSendableWhateverASecondWriterDidToTheFile() {
-    // Whatever order results and interruptions arrive in, the shape both wire formats validate has to
-    // hold: one well-formed run of answers per call, right after the turn that asked for them.
+    // 无论结果和中断以什么顺序到达，两种线上格式都会校验的形状必须成立：每个调用后面紧跟一段
+    // 格式良好的回答。
     List<Message> messages =
         List.of(
             new Message.User("go"),
@@ -271,7 +268,7 @@ class SessionRepairTest {
               .map(Message.ToolResult.class::cast)
               .map(Message.ToolResult::toolCallId)
               .toList(),
-          "answers in call order, right after the turn at " + i + ": " + out);
+          "回答按调用顺序排，紧跟在第 " + i + " 位的那个回合之后：" + out);
     }
   }
 

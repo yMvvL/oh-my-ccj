@@ -8,10 +8,10 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * Chooses a provider for a resolved {@link Config}.
+ * 为一个已解析的 {@link Config} 挑选提供方。
  *
- * <p>Everything that can be wrong with the request is rejected here, before a socket is opened, so
- * the CLI can turn a misconfiguration into one actionable sentence instead of a vendor error page.
+ * <p>请求里凡是可能出错的地方都在这里被拒掉，在任何一个套接字打开之前，这样 CLI 就能把一处配置错误变成
+ * 一句可照做的话，而不是一页厂家的报错。
  */
 public final class Providers {
 
@@ -23,12 +23,12 @@ public final class Providers {
 
   private Providers() {}
 
-  /** Every built-in provider name {@link #create} accepts, canonical names first. */
+  /** {@link #create} 接受的每一个内置提供方名字，规范名在前。 */
   public static List<String> supported() {
     return SUPPORTED;
   }
 
-  /** The built-ins plus whatever the user defined, which is what a picker should offer. */
+  /** 内置项加上用户自己定义的那些，也就是选择器应当给出的东西。 */
   public static List<String> supported(ProviderStore store) {
     List<String> names = new java.util.ArrayList<>(SUPPORTED);
     if (store != null) {
@@ -42,14 +42,11 @@ public final class Providers {
   }
 
   /**
-   * True when the endpoint and credential a configuration stores are the ones {@code name} will
-   * actually use.
+   * 配置里存的端点与凭据，是否就是 {@code name} 真正会用的那一对。
    *
-   * <p>A custom provider takes them from its own definition unless they were entered for it — a
-   * stored pair is only this provider's to use when the configuration says so. A built-in has no
-   * definition to fall back on, so whatever is stored is its own. This is the question a settings
-   * form has to ask before showing them: displaying a value that will not be used offers to save it,
-   * which is how the wrong endpoint gets written down again.
+   * <p>自定义提供方从它自己的定义里取，除非那对值是专门为它填的——只有配置这么说时，存下的那一对才是这个
+   * 提供方的。内置提供方没有定义可以回退，所以存下的是什么就是它的。这正是设置表单在把它们显示出来之前必须
+   * 问的问题：显示一个不会被用到的值，就是在提供把它保存下来，而错误的端点就是这样又一次被写进去的。
    */
   public static boolean usesStoredSettings(Config resolved, ProviderStore store, String name) {
     if (resolved == null || name == null || name.isBlank()) {
@@ -60,13 +57,11 @@ public final class Providers {
   }
 
   /**
-   * The endpoint {@code name} will actually be called at, which is not always the one the
-   * configuration stores: a custom provider is served by its definition unless the stored URL was
-   * entered for it, and a built-in by whatever the configuration says.
+   * {@code name} 真正会被调用的端点，它并不总是配置里存的那个：自定义提供方由它的定义来服务，除非那个存下
+   * 的 URL 是专门为它填的；内置提供方则听配置怎么说。
    *
-   * <p>One place answers this so that what the status reports and what the request does cannot drift
-   * apart — two answers to "where does this go" is how a session that reports one endpoint ends up
-   * calling another.
+   * <p>只由一处回答这个问题，状态报告的和请求实际做的才不会各走各的——「这到底发往哪里」有两个答案，正是
+   * 一个会话报告着一个端点、却在调另一个端点的由来。
    */
   public static String effectiveBaseUrl(Config resolved, ProviderStore store, String name) {
     if (resolved == null) {
@@ -76,9 +71,8 @@ public final class Providers {
     if (definition == null) {
       return resolved.baseUrl();
     }
-    // "Stored" means this configuration really names an endpoint: resolved() fills the OpenAI
-    // default for any name it does not recognise, and that filler is a placeholder rather than a
-    // choice — taking it would point a custom provider at somebody else's address.
+    // 「存过」的意思是这份配置真的点名了一个端点：resolved() 会给它不认识的任何名字填上 OpenAI 的默认
+    // 值，而那个填充值是占位符，不是选择——采用它会把自定义提供方指向别人的地址。
     boolean stored =
         resolved.baseUrl() != null
             && !resolved.baseUrl().isBlank()
@@ -89,19 +83,19 @@ public final class Providers {
   }
 
   /**
-   * @param resolved configuration after {@link Config#resolved()}
-   * @param env environment to read the API key from; may be null
+   * @param resolved {@link Config#resolved()} 之后的配置
+   * @param env 读取 API 密钥的环境；可以为 null
    */
   public static Provider create(Config resolved, Map<String, String> env) {
     return create(resolved, env, null);
   }
 
   /**
-   * @param store custom provider definitions; may be null when none exist
+   * @param store 自定义提供方定义；没有时可以为 null
    */
   public static Provider create(Config resolved, Map<String, String> env, ProviderStore store) {
     if (resolved == null) {
-      throw new IllegalArgumentException("a resolved configuration is required");
+      throw new IllegalArgumentException("需要一份已解析的配置");
     }
     Map<String, String> environment = env == null ? Map.of() : env;
     String name =
@@ -109,21 +103,19 @@ public final class Providers {
             ? Config.DEFAULT_PROVIDER
             : resolved.provider().strip().toLowerCase();
 
-    // A custom definition wins over the built-in alias table: the user's own "custom" entry must
-    // mean what they wrote, not the generic OpenAI-compatible default.
+    // 自定义定义优先于内置别名表：用户自己那个 "custom" 条目必须就是他写的意思，而不是通用的
+    // OpenAI 兼容默认值。
     ProviderDefinition custom = store == null ? null : store.find(name).orElse(null);
     requireModel(resolved, custom);
-    // Whether the endpoint and the key in this configuration were entered for *this* provider. They
-    // live in one flat file, so a value left behind by the provider used a minute ago is otherwise
-    // indistinguishable from one meant for this provider — and using it sends this provider's traffic
-    // to that address, with that provider's credential, which is a leak and a bill.
+    // 这份配置里的端点与密钥，是不是为*这个*提供方填的。它们同住一个扁平文件，否则一分钟前用过的提供方留下
+    // 的值，和真正为这个提供方准备的值就分不出来——而用了它，就会把这个提供方的流量发去那个地址、带着那个提供
+    // 方的凭据，既是泄漏也是一笔账单。
     boolean ownsSettings = resolved.settingsBelongTo(name);
     String apiKey = requireApiKey(resolved, environment, custom, name, ownsSettings);
 
     if (custom != null) {
-      // The definition is where a custom provider's endpoint comes from: it is the only thing that
-      // knows which address serves which provider. A stored base URL is honoured only when it was
-      // entered for this provider (a --base-url flag, a CCJ_BASE_URL, or this very form).
+      // 自定义提供方的端点来自它的定义：只有定义知道哪个地址服务于哪个提供方。存下的 base URL 只有在专门
+      // 为这个提供方填过时才会被采纳（--base-url 参数、CCJ_BASE_URL，或就是这张表单）。
       String baseUrl = effectiveBaseUrl(resolved, store, name);
       return ProviderDefinition.ANTHROPIC.equals(custom.kind())
           ? new AnthropicProvider(baseUrl, apiKey)
@@ -132,13 +124,13 @@ public final class Providers {
 
     if (!OPENAI_NAMES.contains(name) && !ANTHROPIC_NAMES.contains(name)) {
       throw new IllegalArgumentException(
-          "unknown provider '"
+          "未知的提供方 '"
               + name
-              + "'; built-in: "
+              + "'；内置："
               + String.join(", ", SUPPORTED)
               + (store == null || store.list().isEmpty()
-                  ? " (define your own in the settings panel)"
-                  : "; defined: "
+                  ? "（可在设置面板里自定义一个）"
+                  : "；已定义："
                       + String.join(
                           ", ",
                           store.list().stream().map(ProviderDefinition::name).toList())));
@@ -149,7 +141,7 @@ public final class Providers {
         : new OpenAiProvider(baseUrl, apiKey);
   }
 
-  /** A custom provider supplies its own key variable; the built-ins have theirs. */
+  /** 自定义提供方自带密钥变量；内置的有自己的。 */
   private static String requireApiKey(
       Config resolved,
       Map<String, String> env,
@@ -159,11 +151,9 @@ public final class Providers {
     if (custom == null) {
       return requireApiKey(resolved, env, name);
     }
-    // The variable the definition names is where its key lives. Otherwise the kind decides, and the
-    // config's `apiKeyEnv` only counts when it is a deliberate choice: `resolved()` fills that field
-    // with the default this provider's *name* would have produced, so a custom provider of the
-    // Anthropic kind would otherwise be asked for OPENAI_API_KEY — and would send a globally
-    // exported OpenAI key to a third-party relay.
+    // 密钥住在定义点名的那个变量里。否则由 kind 决定，而配置里的 `apiKeyEnv` 只有在它是有意为之的选择
+    // 时才算数：`resolved()` 会用这个提供方*名字*本会产生的默认值填上那个字段，于是 Anthropic 类型的自
+    // 定义提供方就会被要求提供 OPENAI_API_KEY——并把全局导出的 OpenAI 密钥发给第三方中继。
     String configVariable = resolved.apiKeyEnv();
     String variable;
     if (custom.apiKeyEnv() != null && !custom.apiKeyEnv().isBlank()) {
@@ -175,8 +165,8 @@ public final class Providers {
     } else {
       variable = Config.defaultKeyEnv(custom.kind());
     }
-    // A literal key is this provider's only when the configuration says so; an unowned one was
-    // entered for somebody else, and handing it to this endpoint is the leak this rule prevents.
+    // 字面量密钥只有在配置这么说时才属于这个提供方；不属于它的那把是为别人填的，把它交给这个端点正是这条
+    // 规则要防的泄漏。
     if (ownsSettings) {
       String literal = resolved.apiKey();
       if (literal != null && !literal.isBlank()) {
@@ -188,41 +178,39 @@ public final class Providers {
       return fromEnv.strip();
     }
     if (looksLikeAKey(variable)) {
-      // A very easy mistake to make, and the raw "no API key" message would not explain it. Checked
-      // before anything that would name the variable, because this field holds a key rather than a
-      // variable name and echoing it back would put a credential in a log.
+      // 一个极容易犯的错，而光秃秃的「没有 API 密钥」说不清它。放在任何会点名变量的分支之前检查，因为这个
+      // 字段里放的是密钥而不是变量名，把它原样回显就等于把凭据写进日志。
       throw new IllegalArgumentException(
-          "no API key for provider '"
+          "提供方 '"
               + name
-              + "': the apiKeyEnv setting holds what looks like an API key itself ("
+              + "' 没有 API 密钥：apiKeyEnv 设置里放的看起来就是 API 密钥本身（"
               + redact(variable)
-              + ") — put the key in the API key field and the *name* of an environment variable here,"
-              + " for example MY_RELAY_KEY");
+              + "）——请把密钥填进 API key 字段，这里填环境变量的*名字*，"
+              + "例如 MY_RELAY_KEY");
     }
     if (resolved.apiKey() != null && !resolved.apiKey().isBlank()) {
       String owner =
           resolved.settingsFor() == null || resolved.settingsFor().isBlank()
-              ? "another provider"
-              : "provider '" + resolved.settingsFor() + "'";
+              ? "另一个提供方"
+              : "提供方 '" + resolved.settingsFor() + "'";
       throw new IllegalArgumentException(
-          "no API key for provider '"
+          "提供方 '"
               + name
-              + "': the key stored in the config file was entered for "
+              + "' 没有 API 密钥：配置文件里存的那把是为"
               + owner
-              + " and is not sent to '"
+              + "填的，不会发给 '"
               + name
-              + "' — paste it again with '"
+              + "'——请在选中 '"
               + name
-              + "' selected, or set "
-              + variable
-              + " in the environment");
+              + "' 后重新粘贴，或在环境里设置 "
+              + variable);
     }
     throw new IllegalArgumentException(
-        "no API key for provider '"
+        "提供方 '"
             + name
-            + "': set "
+            + "' 没有 API 密钥：请在环境里设置 "
             + variable
-            + " in the environment or \"apiKey\" in the config file");
+            + "，或在配置文件里填 \"apiKey\"");
   }
 
   private static void requireModel(Config resolved) {
@@ -238,16 +226,16 @@ public final class Providers {
     String why =
         custom != null
             ? custom.models().isEmpty()
-                ? "provider '" + provider + "' is a custom provider with no model list"
-                : "provider '" + provider + "' offers: " + String.join(", ", custom.models())
+                ? "提供方 '" + provider + "' 是自定义提供方，但没有任何模型列表"
+                : "提供方 '" + provider + "' 提供：" + String.join(", ", custom.models())
             : fallback == null
-                ? "provider '" + provider + "' has no default model"
-                : "a default (" + fallback + ") only applies to the provider's own endpoint, and '"
+                ? "提供方 '" + provider + "' 没有默认模型"
+                : "默认值（" + fallback + "）只适用于提供方自己的端点，而 '"
                     + resolved.baseUrl()
-                    + "' is a custom one";
+                    + "' 是自定义端点";
     throw new IllegalArgumentException(
-        "no model configured: pass --model <name>, set CCJ_MODEL, or add \"model\" to the config file"
-            + " — "
+        "没有配置模型：传 --model <name>、设置 CCJ_MODEL，或在配置文件里加 \"model\""
+            + " —— "
             + why);
   }
 
@@ -274,11 +262,11 @@ public final class Providers {
             ? Config.defaultKeyEnv(provider)
             : resolved.apiKeyEnv();
     throw new IllegalArgumentException(
-        "no API key for provider '"
+        "提供方 '"
             + provider
-            + "': set "
+            + "' 没有 API 密钥：请在环境里设置 "
             + envVar
-            + " in the environment or `apiKey` in the config file");
+            + "，或在配置文件里填 `apiKey`");
   }
 
   private static String resolveBaseUrl(Config resolved, String provider) {

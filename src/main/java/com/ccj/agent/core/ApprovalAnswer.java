@@ -1,33 +1,31 @@
 package com.ccj.agent.core;
 
 /**
- * What came back from an approval request, which is four answers and not two.
+ * 审批请求得到的答复，是四种答案，不是两种。
  *
- * <p>The boolean this replaced forced every answer into yes-or-no, and the only way to say "stop
- * asking about this" was to switch approval off for the whole session — measured as the reason
- * people run `--yolo`. "Yes, this once" and "yes, always" are different answers with different
- * consequences, and the caller has to be able to tell them apart, so they are separate values.
+ * <p>它取代的那个布尔值把所有答案都逼成是或否，而想说「别再问这个了」的唯一办法是把整个会话的审批关掉——
+ * 那正是人们跑 `--yolo` 的原因。「这一次可以」和「一直可以」是后果不同的两种答复，调用方必须能区分它们，
+ * 所以它们是各自独立的值。
  */
 public enum ApprovalAnswer {
 
-  /** Do it, and ask again next time. */
+  /** 照做，下次再问一遍。 */
   ALLOW_ONCE,
 
-  /** Do it, and do not ask again in this session for the same command or path. */
+  /** 照做，本会话内对同一条命令或同一个路径不再询问。 */
   ALLOW_SESSION,
 
-  /** Do it, and write a rule so it is never asked again in this project. */
+  /** 照做，并写入一条规则，使本项目内永远不再询问。 */
   ALLOW_ALWAYS,
 
-  /** Refused by the person. */
+  /** 被人拒绝。 */
   DENY,
 
   /**
-   * Refused by a rule the user wrote earlier, without asking anybody.
+   * 被用户先前写下的规则拒绝，没有问过任何人。
    *
-   * <p>Distinct from {@link #DENY} because the two read differently in a transcript: one is "I said
-   * no just now", the other is "a rule you wrote says no" — and only the second is worth going to
-   * look at.
+   * <p>与 {@link #DENY} 区分开，因为两者在转录里的读法不同：一个是「我刚才说了不行」，另一个是「你写的
+   * 一条规则说不行」——只有后者值得去翻出来看。
    */
   DENY_BY_RULE;
 
@@ -35,10 +33,10 @@ public enum ApprovalAnswer {
     return this == ALLOW_ONCE || this == ALLOW_SESSION || this == ALLOW_ALWAYS;
   }
 
-  /** What the tool hands back to the model when the answer was no. */
+  /** 答案为否时，工具交还给模型的内容。 */
   public String refusal() {
     return this == DENY_BY_RULE
-        ? "denied by a rule in the approvals file (see ccj --help and SECURITY.md)"
-        : "rejected by user";
+        ? "被审批文件中的某条规则拒绝（可运行 ccj --help、查看 SECURITY.md 了解如何改规则）"
+        : "被用户拒绝";
   }
 }

@@ -18,70 +18,62 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Fetches one URL over http or https and returns the body as text.
+ * 通过 http 或 https 取回一个 URL，并把响应体作为文本返回。
  *
- * <p>The first tool that leaves the machine, so the reach is what the rules are for. The scheme is
- * checked before anything is dialled: {@code file:}, {@code ftp:}, {@code javascript:} and a bare
- * path are refused by name. This is the tool that disproves "the agent cannot reach out", which is
- * exactly why it must not become a file reader, and the check is repeated for every redirect hop,
- * because where a redirect lands is the server's choice rather than the model's.
+ * <p>第一个会离开本机的工具，所以它的触及范围正是规则存在的理由。在拨出任何连接之前先检查 scheme：
+ * {@code file:}、{@code ftp:}、{@code javascript:} 以及光秃秃的路径都会被点名拒绝。正是这个工具反驳了
+ * 「代理无法向外伸手」，这也恰恰是它绝不能变成文件读取器的原因；而且每一跳重定向都要重新检查一遍，因为
+ * 重定向落到哪里是服务器而不是模型的选择。
  *
- * <p>The body is bounded while it is read, not truncated afterwards: the read stops at {@code
- * max_bytes} and the result says how much was left out. The same rule as `bash` output and vision
- * replies, for the same reason — a limit applied after the bytes are already in memory has saved
- * nothing at all.
+ * <p>响应体在读取时就被限住，而不是先读进来再截断：读满 {@code max_bytes} 就停，结果里说明少了多少。
+ * 与 `bash` 输出和视觉回复同一条规则，理由也相同——在字节已经进了内存之后才施加的限制，什么也没省下。
  *
- * <p>The body is returned exactly as it arrived, HTML tags included, because stripping markup is a
- * guess rather than a fact and a guess is what the model would then quote back. A response that is
- * not declared as text is refused with its content type named instead of being handed over as
- * though it were. Bodies are decoded as UTF-8.
+ * <p>响应体按原样返回，HTML 标签也不动，因为剥掉标记是一种猜测而不是事实，而猜测正是模型之后会引用回去
+ * 的东西。没有声明为文本的响应会被拒绝，并点名它的内容类型，而不是当作文本交出去。响应体按 UTF-8 解码。
  */
 public final class FetchTool implements Tool {
 
-  /** Bytes returned when the model does not ask for a size: a page of prose, not a whole site. */
+  /** 模型没有指定大小的时候返回多少字节：一篇散文，而不是整个站点。 */
   private static final int DEFAULT_MAX_BYTES = 200_000;
 
   /**
-   * Ceiling on {@code max_bytes}, whatever the model asks for.
+   * {@code max_bytes} 的上限，无论模型要多少。
    *
-   * <p>A fetch is one step of a turn whose whole output the user pays for on every later turn, so
-   * the tool decides how much context a single URL may spend: a megabyte is already several hundred
-   * thousand tokens to the wrong endpoint, and a model that wants more can ask for the next page.
+   * <p>一次 fetch 只是某个回合的一步，而整个回合的输出用户在此后每个回合都要付费，所以这个工具决定
+   * 单个 URL 可以花掉多少上下文：一个兆字节送到不合适的分词端点已经是几十万 token 了，想要更多的模型
+   * 可以再要下一页。
    */
   private static final int HARD_MAX_BYTES = 1024 * 1024;
 
   /**
-   * How long a connection may take to be accepted.
+   * 连接可以被接受的时间上限。
    *
-   * <p>Ten seconds: a host that has not accepted by then will not answer this call, and every second
-   * past that is a second the model is not getting a result.
+   * <p>十秒：到那时还没接受连接的主机不会回答这次调用，而在此之后的每一秒，都是模型拿不到结果的一秒。
    */
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
 
   /**
-   * How long the whole exchange may take.
+   * 整个交换可以花的时间上限。
    *
-   * <p>Thirty seconds covers a slow page and a slow TLS handshake without parking the turn; the
-   * model's own request deadline is minutes, so a fetch that hung would be paid for in full before
-   * anything noticed.
+   * <p>三十秒足以覆盖一个慢页面和一次慢 TLS 握手，而不至于把回合停在那里；模型自己那次请求的截止时间
+   * 是分钟级的，所以一次卡住的 fetch 会在任何东西察觉之前就被全额付费。
    */
   private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
   /**
-   * Redirect hops followed before the chain is reported as a loop.
+   * 在把这条链条报成死循环之前，最多跟随多少跳重定向。
    *
-   * <p>Five: documentation URLs redirect once or twice, and a chain is not bounded by {@code
-   * max_bytes} — each hop is a fresh request and a fresh timeout — so it needs a bound of its own.
+   * <p>五跳：文档 URL 会重定向一两次，而一条链条并不受 {@code max_bytes} 约束——每一跳都是一次全新的
+   * 请求和一次全新的超时——所以它需要自己的界限。
    */
   private static final int MAX_REDIRECTS = 5;
 
   /**
-   * Non-{@code text/*} media types whose content is still text.
+   * 内容仍然是文本的非 {@code text/*} 媒体类型。
    *
-   * <p>The short list is the point: a type that is not here is refused with its name, which the
-   * model can act on, rather than returned as text that would arrive as garbage. Types ending in
-   * {@code +json} or {@code +xml} are accepted for the same reason without an entry each — {@code
-   * application/ld+json} and {@code application/vnd.api+json} are text by construction.
+   * <p>这份清单之短正是重点：不在这里的类型会被拒绝并点名，模型可以据此行动，而不是当成文本返回、
+   * 到手却是一堆乱码。以 {@code +json} 或 {@code +xml} 结尾的类型出于同样的理由被接受，不必逐个
+   * 列出——{@code application/ld+json} 与 {@code application/vnd.api+json} 按构造就是文本。
    */
   private static final Set<String> TEXT_TYPES =
       Set.of(
@@ -97,13 +89,12 @@ public final class FetchTool implements Tool {
           "application/sql");
 
   /**
-   * One client for the process.
+   * 整个进程共用一个客户端。
    *
-   * <p>{@code HttpClient} owns a selector thread and a connection pool, so building one per call
-   * would start a thread per fetch and reuse nothing between them. Redirects are not left to it:
-   * {@code NORMAL} would follow a {@code Location} to wherever the server points before this tool
-   * gets to look at it, and the scheme rule has to hold for the hop as well as for the URL the model
-   * typed. The hops are followed below instead, one scheme-checked request at a time.
+   * <p>{@code HttpClient} 自带一个 selector 线程和一个连接池，所以每次调用都新建一个，会让每次 fetch
+   * 都启动一个线程，彼此之间什么也复用不到。重定向不交给它：{@code NORMAL} 会在本工具看清之前就跟着
+   * {@code Location} 跑到服务器指向的任何地方，而 scheme 规则必须对这一跳成立，也必须对模型敲进来的
+   * URL 成立。所以下面自己跟随跳转，一次一个经过 scheme 检查的请求。
    */
   private static final HttpClient HTTP =
       HttpClient.newBuilder()
@@ -117,9 +108,8 @@ public final class FetchTool implements Tool {
   }
 
   /**
-   * False on purpose. A fetch changes nothing on this machine, but it is the one tool whose effect
-   * lands on somebody else, and the loop reads this flag to decide what may overlap and what must go
-   * through the approver first. A network request is a side effect in that sense.
+   * 刻意返回 false。一次 fetch 在本机上什么也没改，但它是唯一一个效果落在别人身上的工具，而循环读这个
+   * 标志来决定什么可以并行、什么必须先过审批。在这个意义上，一次网络请求就是副作用。
    */
   @Override
   public boolean readOnly() {
@@ -163,20 +153,19 @@ public final class FetchTool implements Tool {
     try {
       target = new URI(given);
     } catch (URISyntaxException e) {
-      return ToolResult.error("not a URL: " + given + " (" + e.getReason() + ")");
+      return ToolResult.error("不是 URL: " + given + "（" + e.getReason() + "）");
     }
     String complaint = schemeComplaint(target, given);
     if (complaint != null) {
-      return ToolResult.error("refused: " + complaint);
+      return ToolResult.error("已拒绝：" + complaint);
     }
     if (target.getHost() == null || target.getHost().isBlank()) {
-      return ToolResult.error("the URL names no host: " + given);
+      return ToolResult.error("该 URL 没有指定主机: " + given);
     }
 
-    // Approval before the first byte leaves the machine, and the *URL* is what a rule matches: this
-    // is the one tool whose request reaches a third party, and "which host" is the whole question.
-    // The scheme and host checks above run first so that what the prompt shows is a URL worth
-    // approving rather than something that was going to be refused anyway.
+    // 在第一个字节离开本机之前先审批，而规则匹配的是*URL*：这是唯一一个请求会到达第三方的工具，
+    // 「哪个主机」就是全部问题。上面的 scheme 与主机检查先跑，这样提示里展示的是一个值得批准的 URL，
+    // 而不是一个反正都会被拒绝的东西。
     String refusal =
         ctx.refusal(
             new ApprovalRequest("fetch", target.toString(), null, "fetch", "GET " + target));
@@ -189,10 +178,10 @@ public final class FetchTool implements Tool {
       try {
         response = HTTP.send(get(target), HttpResponse.BodyHandlers.ofInputStream());
       } catch (IOException e) {
-        return ToolResult.error("could not reach " + target + ": " + e);
+        return ToolResult.error("无法访问 " + target + ": " + e);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
-        return ToolResult.error("interrupted while fetching " + target);
+        return ToolResult.error("抓取 " + target + " 时被中断");
       }
 
       String location = response.headers().firstValue("location").orElse("").strip();
@@ -202,45 +191,43 @@ public final class FetchTool implements Tool {
       close(response);
       if (hop >= MAX_REDIRECTS) {
         return ToolResult.error(
-            "too many redirects (more than " + MAX_REDIRECTS + ") fetching " + given);
+            "重定向太多（超过 " + MAX_REDIRECTS + " 次），抓取 " + given + " 时");
       }
       URI next = resolve(target, location);
       if (next == null) {
         return ToolResult.error(
-            "refused: the redirect from " + target + " names a target that is not a URL: "
-                + location);
+            "已拒绝：来自 " + target + " 的重定向指向的目标不是 URL: " + location);
       }
       String redirectComplaint = schemeComplaint(next, location);
       if (redirectComplaint != null) {
         return ToolResult.error(
-            "refused: " + redirectComplaint + " (redirected from " + target + ")");
+            "已拒绝：" + redirectComplaint + "（重定向自 " + target + "）");
       }
       target = next;
     }
   }
 
   /**
-   * The text of a 2xx response, or the reason there is none.
+   * 2xx 响应的文本，或者没有文本的原因。
    *
-   * <p>The status and the content type are decided before the body is touched: a 404 body or an
-   * octet stream is not read at all, so the refusal costs nothing and no bytes of something the tool
-   * will not return pass through this process.
+   * <p>状态码与内容类型都在碰响应体之前就定了：404 的响应体或八位字节流根本不会被读取，因此这次拒绝
+   * 不花任何代价，也不会有任何本工具不会返回的字节流经这个进程。
    */
   private static ToolResult read(URI url, HttpResponse<InputStream> response, int limit) {
     int status = response.statusCode();
     if (status < 200 || status >= 300) {
       close(response);
-      return ToolResult.error("HTTP " + status + " fetching " + url);
+      return ToolResult.error("抓取 " + url + " 返回 HTTP " + status);
     }
     String contentType = response.headers().firstValue("content-type").orElse("").strip();
     if (!isText(mediaType(contentType))) {
       close(response);
       return ToolResult.error(
-          "refused: "
+          "已拒绝："
               + url
-              + " returned "
-              + (contentType.isEmpty() ? "no content type" : contentType)
-              + ", which is not text; fetch returns text only");
+              + " 返回的 "
+              + (contentType.isEmpty() ? "没有内容类型" : contentType)
+              + " 不是文本；fetch 只返回文本");
     }
 
     byte[] kept = new byte[limit];
@@ -254,13 +241,13 @@ public final class FetchTool implements Tool {
         }
         length += read;
       }
-      // One byte past the limit is what distinguishes "exactly the limit" from "cut here", and it is
-      // the only part of the rest of the body that is ever read.
+      // 越过限制读的那一个字节，是用来把「正好等于限制」和「在这里截断」区分开的，它也是响应体其余
+      // 部分中唯一会被读取的东西。
       if (length == limit) {
         truncated = body.read() != -1;
       }
     } catch (IOException e) {
-      return ToolResult.error(url + " returned HTTP " + status + " but its body was cut short: " + e);
+      return ToolResult.error(url + " 返回了 HTTP " + status + "，但响应体被截断了: " + e);
     }
 
     StringBuilder content = new StringBuilder(length + 64);
@@ -271,16 +258,16 @@ public final class FetchTool implements Tool {
         .append(contentType)
         .append(" (")
         .append(length)
-        .append(" bytes");
+        .append(" 字节");
     if (truncated) {
       long declared = declaredSize(response);
-      content.append(", truncated; ");
+      content.append("，已截断；");
       if (declared > length) {
-        content.append(declared - length).append(" bytes omitted of ").append(declared);
+        content.append(declared).append(" 字节中省略了 ").append(declared - length);
       } else {
-        // Counting the rest would mean downloading the body the limit exists to avoid, so it is
-        // reported as unknown rather than guessed at.
-        content.append("the rest was not read and its size was not declared");
+        // 数清剩下的部分，意味着去下载这个限制存在的目的正是要避免下载的响应体，所以它被报成未知，
+        // 而不是猜一个数。
+        content.append("其余部分未读取，也没有声明它的大小");
       }
     }
     return ToolResult.ok(
@@ -292,25 +279,24 @@ public final class FetchTool implements Tool {
   }
 
   /**
-   * Why a URL may not be fetched, or null when it may. A refusal names the scheme it found, and the
-   * bare-path case names the absence of one, because "invalid URL" would leave the model guessing
-   * which of the two things it is looking at.
+   * 某个 URL 为何不能被 fetch，可以时为 null。拒绝消息会点名它看到的 scheme，「光秃秃路径」那种情况
+   * 则点名 scheme 缺失，因为一句「invalid URL」会让模型去猜它面对的到底是哪一种。
    */
   private static String schemeComplaint(URI uri, String given) {
     String scheme = uri.getScheme();
     if (scheme == null) {
       return "\""
           + given
-          + "\" names no scheme: fetch reads http and https URLs only, and a path is not one — use"
-          + " read for a file on this machine";
+          + "\" 没有指定 scheme：fetch 只读 http 与 https URL，而路径不是 URL——本机上的文件请用"
+          + " read";
     }
     if (!isHttp(scheme)) {
       return "\""
           + given
-          + "\" uses the "
+          + "\" 用的是 "
           + scheme
-          + " scheme: fetch reads http and https URLs only. It exists to reach the network, so it"
-          + " will not read a file or run a script";
+          + " scheme：fetch 只读 http 与 https URL。它存在的目的是到达网络，所以不会读文件，"
+          + "也不会运行脚本";
     }
     return null;
   }
@@ -323,7 +309,7 @@ public final class FetchTool implements Tool {
     return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
   }
 
-  /** Where a {@code Location} points, resolved against the URL that sent it, or null if it is not a URI. */
+  /** {@code Location} 指向哪里，相对于发出它的那个 URL 解析；不是 URI 时为 null。 */
   private static URI resolve(URI from, String location) {
     try {
       return from.resolve(location);
@@ -332,7 +318,7 @@ public final class FetchTool implements Tool {
     }
   }
 
-  /** The media type alone, lower-cased: {@code text/html; charset=utf-8} becomes {@code text/html}. */
+  /** 只留媒体类型并转成小写：{@code text/html; charset=utf-8} 变成 {@code text/html}。 */
   private static String mediaType(String contentType) {
     int parameters = contentType.indexOf(';');
     String type = parameters < 0 ? contentType : contentType.substring(0, parameters);
@@ -347,9 +333,8 @@ public final class FetchTool implements Tool {
   }
 
   /**
-   * The body size the response declared, or -1. A header that is not a number is reported as "not
-   * declared" rather than thrown: the size is a courtesy on the truncation note, and a broken one
-   * must not turn a page that arrived in full into an error.
+   * 响应声明的响应体大小，或者 -1。不是数字的头会被报成「未声明」而不是抛出去：这个大小只是截断说明上
+   * 的一番好意，一个坏掉的值不能把一页完整到达的内容变成错误。
    */
   private static long declaredSize(HttpResponse<?> response) {
     try {
@@ -359,12 +344,12 @@ public final class FetchTool implements Tool {
     }
   }
 
-  /** Releases a body that will not be read: an abandoned stream holds its connection open. */
+  /** 释放一个不会被读取的响应体：被丢下的流会让它的连接一直开着。 */
   private static void close(HttpResponse<InputStream> response) {
     try {
       response.body().close();
     } catch (IOException ignored) {
-      // Already closed, or the connection died; nothing was going to be read from it either way.
+      // 已经关掉了，或者连接断了；两种情况本来也不会从它读任何东西。
     }
   }
 }

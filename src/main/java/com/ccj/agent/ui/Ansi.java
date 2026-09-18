@@ -1,11 +1,11 @@
 package com.ccj.agent.ui;
 
 /**
- * ANSI colour and style helpers that turn into identity functions when colour would be noise.
+ * ANSI 颜色与样式辅助方法；当颜色只会成为噪音时，它们退化为恒等函数。
  *
- * <p>Detection is process-wide and deliberately simple: colour is on only when stdout is a real
- * terminal and {@code NO_COLOR} is unset. Redirected output, CI logs and the {@code NO_COLOR}
- * convention all land on plain text, so callers can wrap freely without checking anything.
+ * <p>检测是进程级的，并且刻意保持简单：只有当 stdout 是真实终端且 {@code NO_COLOR} 未设置时，
+ * 颜色才开启。被重定向的输出、CI 日志和 {@code NO_COLOR} 约定都会落到纯文本上，因此调用方可以
+ * 随意外包，不必做任何检查。
  */
 public final class Ansi {
 
@@ -14,7 +14,7 @@ public final class Ansi {
 
   private Ansi() {}
 
-  /** True when stdin/stdout are attached to a terminal. */
+  /** 当 stdin/stdout 挂在终端上时为 true。 */
   public static boolean tty() {
     return System.console() != null;
   }

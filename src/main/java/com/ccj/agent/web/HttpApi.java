@@ -27,20 +27,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * The HTTP face of {@link AgentHub}: static page, JSON endpoints, and one long-lived SSE stream.
+ * {@link AgentHub} 的 HTTP 面：静态页面、JSON 端点，以及一条长命的 SSE 流。
  *
- * <p>Two decisions worth knowing:
+ * <p>两个值得知道的决定：
  *
  * <ul>
- *   <li>Requests are served by a cached pool. The default executor is a single thread, so one open
- *       SSE stream would freeze every other request.
- *   <li>The token, when set, is accepted from the query string and then remembered in an HttpOnly
- *       cookie. That keeps the browser's own {@code EventSource} and {@code fetch} calls working
- *       without any client-side token plumbing.
+ *   <li>请求由一个带缓存的线程池服务。默认执行器是单线程，所以一条打开的 SSE 流会冻住其他所有请求。
+ *   <li>token 一旦设置，就从查询字符串里接受，随后记进一个 HttpOnly cookie。这样浏览器自己的
+ *       {@code EventSource} 和 {@code fetch} 调用照常工作，客户端不需要任何 token 管道。
  * </ul>
  *
- * <p>It is not a public server: nothing here is designed to face the internet, and the CLI refuses
- * to bind a non-loopback address without a token.
+ * <p>它不是公开服务器：这里没有任何东西是按面向互联网设计的，而 CLI 拒绝在没有 token 的情况下绑定
+ * 非环回地址。
  */
 public final class HttpApi implements AutoCloseable {
 
@@ -48,19 +46,18 @@ public final class HttpApi implements AutoCloseable {
   private static final long HEARTBEAT_MILLIS = 15_000;
 
   private final AgentHub hub;
-  /** One server per bind address — the same routing, the same hub, two ways in. */
+  /** 每个绑定地址一个服务器——同一套路由、同一个 hub，两条进来的路。 */
   private final List<HttpServer> servers;
   private final String token;
-  /** The pictures the page may use as a background; an absent directory means none. */
+  /** 页面可以用作背景的图片；目录不存在就表示一张也没有。 */
   private final Wallpapers wallpapers;
   /**
-   * One virtual thread per exchange.
+   * 每个交换一个虚拟线程。
    *
-   * <p>An SSE stream keeps its thread for as long as the page is open, and a browser happily keeps
-   * one open for hours. On platform threads that is one OS thread per open tab — a cost that makes
-   * "one thread per connection" a liability instead of a design, and one a stalled client would pay
-   * for on behalf of everyone. Virtual threads make it cheap, and a blocking socket write inside one
-   * parks a continuation rather than an OS thread.
+   * <p>一条 SSE 流只要页面开着就一直占着自己的线程，而浏览器可以愉快地开上几个小时。放在平台线程上，
+   * 那就是每个打开的标签页一个 OS 线程——这个代价把「一个连接一个线程」从设计变成了负担，而且一个卡住的
+   * 客户端会让所有人替它买单。虚拟线程让它变得便宜，而虚拟线程里的阻塞式 socket 写入停放的是续体，而不是
+   * OS 线程。
    */
   private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -72,9 +69,8 @@ public final class HttpApi implements AutoCloseable {
     List<HttpServer> created = new ArrayList<>();
     try {
       for (InetSocketAddress bind : binds) {
-        // One port, several addresses: asking for port 0 means "any free port", and it means one free
-        // port — a second address bound to a second arbitrary number would give the same page two
-        // different URLs, which is not what "serve it here and there" can mean.
+        // 一个端口、几个地址：要端口 0 就是「随便给个空闲端口」，而且只给一个空闲端口——第二个地址绑到
+        // 第二个任意号码，同一个页面就会有两个不同的 URL，那不是「在这里和那里都提供服务」能有的意思。
         InetSocketAddress resolved =
             bind.getPort() == 0 && !created.isEmpty()
                 ? new InetSocketAddress(bind.getAddress(), created.get(0).getAddress().getPort())
@@ -82,8 +78,8 @@ public final class HttpApi implements AutoCloseable {
         created.add(serverOn(resolved));
       }
     } catch (IOException e) {
-      // A half-bound server would answer on one address and refuse on another, which is a state
-      // nobody asked for: the servers made so far are closed and the failure is reported.
+      // 半绑定的服务器会在一个地址上应答、在另一个地址上拒绝，这是没人要的状态：把已经建起来的服务器
+      // 关掉，并把失败报出去。
       created.forEach(server -> server.stop(0));
       throw e;
     }
@@ -101,11 +97,10 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * Serves the same page on every address given.
+   * 在给出的每一个地址上提供同一个页面。
    *
-   * <p>More than one because the two ways in are genuinely different: loopback is the machine the
-   * user is sitting at, and the tailnet address is their phone. Binding a wildcard instead would
-   * also put the port on the café wifi, so the addresses are named one by one.
+   * <p>之所以不止一个，是因为两条进来的路确实不同：环回是用户正坐着的这台机器，tailnet 地址是他们的
+   * 手机。改成绑通配地址还会把这个端口放到咖啡馆的 wifi 上，所以地址是一个一个点名的。
    */
   public static HttpApi start(
       AgentHub hub, List<InetSocketAddress> binds, String token, Wallpapers wallpapers)
@@ -122,19 +117,17 @@ public final class HttpApi implements AutoCloseable {
     return server;
   }
 
-  /** The port actually bound — useful when the caller asked for 0. */
+  /** 实际绑上的端口——调用方要的是 0 时有用。 */
   public int port() {
     return servers.get(0).getAddress().getPort();
   }
 
   /**
-   * Every address a human can click, in the order they were bound, each carrying the token only when
-   * that address needs one.
+   * 人能点击的每一个地址，按绑定的顺序排列，各自只在需要时才带上 token。
    *
-   * <p>Loopback is not "another device": a request that arrives there was made on this machine, so
-   * the token gates the network and not the user's own browser. That is what lets {@code ccj} keep
-   * opening {@code http://127.0.0.1:6767} with nothing attached while the same server asks the phone
-   * for the secret.
+   * <p>环回不是「另一台设备」：到达那里的请求就是在这台机器上发出的，所以 token 把守的是网络，而不是
+   * 用户自己的浏览器。正因如此，{@code ccj} 可以一直打开 {@code http://127.0.0.1:6767} 而什么都不附，
+   * 同一个服务器却会向手机索要那点机密。
    */
   public List<String> urls() {
     List<String> urls = new ArrayList<>(servers.size());
@@ -151,12 +144,12 @@ public final class HttpApi implements AutoCloseable {
     return urls;
   }
 
-  /** A URL a human can click, carrying the token when one is required. */
+  /** 人能点击的一个 URL，需要时带上 token。 */
   public String url() {
     return urls().get(0);
   }
 
-  /** True for an address reachable from somewhere other than this machine. */
+  /** 从这台机器以外的地方可达的地址返回 true。 */
   private static boolean needsToken(InetSocketAddress address) {
     return !address.getAddress().isLoopbackAddress();
   }
@@ -169,10 +162,9 @@ public final class HttpApi implements AutoCloseable {
 
   private void route(HttpExchange exchange) throws IOException {
     try {
-      // Two ways in, and they are reported differently on purpose. A caller who has not proved the
-      // token is told *that* when there is a token to prove — it is the thing they can fix. A caller
-      // to a tokenless server is answering for its Host instead, and the message says so. A caller who
-      // did prove the token is asked nothing else: the secret is the whole price of a network bind.
+      // 两条进来的路，报错方式不同是有意的。没有证明 token 的调用方，在有 token 可证明时会被告知*这一点*
+      // ——那是他们能修的东西。没有 token 的服务器则改为就它的 Host 向调用方追责，消息里也这么说。证明了
+      // token 的调用方不会再被问别的：那点机密就是网络绑定要付的全部代价。
       boolean provedToken = token != null && tokenPresented(exchange);
       if (!provedToken && !permitted(exchange)) {
         if (token != null) {
@@ -183,38 +175,35 @@ public final class HttpApi implements AutoCloseable {
               403,
               "Host '"
                   + exchange.getRequestHeaders().getFirst("Host")
-                  + "' is not a loopback address; a browser can reach this server from any page it"
-                  + " visits, so either open it as localhost/127.0.0.1 or start ccj with a token");
+                  + "' 不是环回地址；浏览器可以从它访问的任何页面到达这个服务器，所以请用"
+                  + " localhost/127.0.0.1 打开它，或带 token 启动 ccj");
         }
         return;
       }
       String path = exchange.getRequestURI().getPath();
-      // A cross-origin check for anything that changes state, and it is the one defence the loopback
-      // and Host checks cannot provide.
+      // 对任何会改变状态的请求做一次跨源检查，这是环回和 Host 两道检查都给不了的那一层防护。
       //
-      // Those two answer "did this arrive on the machine itself", which a page in the user's browser
-      // satisfies perfectly: the browser runs on the machine, so its connection is loopback and its
-      // Host is 127.0.0.1. What they cannot see is *which page* caused it. Measured before this
-      // existed: a POST to /api/auto-approve carrying `Origin: https://evil.example` was served, and
-      // it really did switch auto-approval on — after which the agent stops asking before it runs
-      // commands. That is the whole attack: visit a page, and the page turns off the guard.
+      // 那两道回答的是「它是不是到了本机」，而用户浏览器里的一个页面完美满足这一条：浏览器就跑在这台机器
+      // 上，所以它的连接是环回，它的 Host 是 127.0.0.1。它们看不到的是*哪一个页面*造成了这次请求。在这道
+      // 检查存在之前实测过：一个带 `Origin: https://evil.example`、发往 /api/auto-approve 的 POST 被正常
+      // 处理，而且它真的把自动审批打开了——此后代理在运行命令之前就不再询问。整个攻击就是这样：访问一个
+      // 页面，页面就把守卫关掉了。
       //
-      // Checked only for state-changing requests, so a GET that leaks nothing is unaffected, and only
-      // when the browser sent an Origin at all — a curl or a script sends none, and treating that as
-      // hostile would break every legitimate caller to protect against one that a browser would not
-      // let through anyway.
+      // 只对改变状态的请求检查，所以一个不泄露任何东西的 GET 不受影响；也只在浏览器确实发了 Origin 时才
+      // 检查——curl 或脚本什么也不发，把那种情况当成敌意，会为了防住一个浏览器本来就不会放行的调用方，而
+      // 打断每一个正当调用方。
       if (stateChanging(exchange) && !sameOrigin(exchange)) {
         error(
             exchange,
             403,
-            "cross-origin request refused: a page on "
+            "跨源（cross-origin）请求被拒绝：位于 "
                 + exchange.getRequestHeaders().getFirst("Origin")
-                + " must not change this server's state. A browser cannot reach ccj from another"
-                + " site, and this is what enforces that rather than assuming it.");
+                + " 的页面不得改变本服务器的状态。浏览器无法从另一个站点访问 ccj，"
+                + "这里是把它明确落实，而不是假定如此。");
         return;
       }
-      // One prefix before the table below: a wallpaper's name is part of the path, and the name is
-      // whatever the directory happens to hold, so there is no case label that could match it.
+      // 在下面的分派表之前先处理一个前缀：壁纸的名字是路径的一部分，而这个名字就是目录里恰好有的东西，
+      // 所以没有任何 case 标签能匹配它。
       if (path.startsWith("/wallpaper/")) {
         wallpaper(exchange, path.substring("/wallpaper/".length()));
         return;
@@ -244,7 +233,7 @@ public final class HttpApi implements AutoCloseable {
         case "/api/providers" -> providers(exchange);
         case "/api/config" -> config(exchange);
         case "/api/config/test" -> configTest(exchange);
-        default -> error(exchange, 404, "no such endpoint: " + path);
+        default -> error(exchange, 404, "没有这个端点：" + path);
       }
     } catch (IllegalArgumentException e) {
       error(exchange, 400, e.getMessage());
@@ -262,16 +251,16 @@ public final class HttpApi implements AutoCloseable {
 
   private void message(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "需要 POST");
       return;
     }
     String text = Json.parse(readBody(exchange)).path("text").asText("");
     if (text.isBlank()) {
-      error(exchange, 400, "field 'text' is required");
+      error(exchange, 400, "字段 'text' 是必需的");
       return;
     }
-    // 202 either way: the message was accepted, whether it started a turn or is waiting behind the
-    // one that is running. The page says which, and the composer stays usable in both cases.
+    // 两种情况下都是 202：消息被接受了，无论它是开启了一个回合，还是在正在跑的那个后面排队。页面会说清
+    // 是哪一种，而输入框在两种情况下都保持可用。
     AgentHub.Submit submit = hub.submit(text);
     respond(
         exchange,
@@ -280,20 +269,18 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * One picture, and the turn it becomes.
+   * 一张图片，以及它变成的那个回合。
    *
-   * <p>The body is the image itself rather than a JSON envelope with base64 in it, so the bytes are
-   * never encoded on the client and re-decoded here: the upload is one request with the picture in
-   * it, and the name it is to be stored under is the {@code name} query parameter.
+   * <p>请求体就是图片本身，而不是装着 base64 的 JSON 信封，所以这些字节从不在客户端编码、再在这里解码：
+   * 上传就是一个带着图片的请求，而存放时用的名字是 {@code name} 查询参数。
    *
-   * <p>Reading is bounded twice over, and both times before the bytes are held: a declared length
-   * over the limit is refused outright, and the read itself stops at the limit so a body that lies
-   * about its length — or streams with no length at all — cannot turn the limit into a suggestion.
-   * The refusal is a 413 with the size in it, which is what a client can act on.
+   * <p>读取有两重上界，而且都在字节被拿住之前：声明长度超过上限的直接拒绝，读取本身也在上限处停下，这样
+   * 一个谎报长度的请求体——或者根本不带长度的流式请求体——没法把上限变成一句建议。拒绝是 413，并带上尺寸，
+   * 那是客户端能据以行动的东西。
    */
   private void attachment(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "需要 POST");
       return;
     }
     byte[] bytes;
@@ -306,45 +293,42 @@ public final class HttpApi implements AutoCloseable {
     respond(exchange, 202, hub.describePicture(queryParam(exchange, "name"), bytes));
   }
 
-  /** {@code Content-Length} when the client sent one, or -1 for a chunked body. */
+  /** 客户端发了 {@code Content-Length} 时就是它；分块请求体则为 -1。 */
   private static long declaredLength(HttpExchange exchange) {
     try {
       String header = exchange.getRequestHeaders().getFirst("Content-Length");
       return header == null || header.isBlank() ? -1 : Long.parseLong(header.strip());
     } catch (NumberFormatException e) {
-      // A length that does not parse is no worse than one that was not sent: the read is bounded
-      // either way, and a refusal here would reject a body that is perfectly readable.
+      // 解析不了的长度并不比没发长度更糟：两种情况下读取都有上界，在这里拒绝会拒掉一个完全可读的请求体。
       return -1;
     }
   }
 
   private void abort(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "需要 POST");
       return;
     }
-    // The session is optional: with no id this is the conversation on screen, which is what the
-    // composer's stop button means. An id stops a turn running in a conversation the user is not
-    // looking at, which is the case the tree's running marker leads them to.
+    // 会话是可选的：不带 id 就是屏幕上那个对话，这正是输入框的停止按钮的含义。带 id 则停掉用户没有在看
+    // 的那个对话里正在跑的回合，也就是树里的运行标记把他们引过去的那种情况。
     String id = queryParam(exchange, "id");
     boolean aborted = id == null || id.isBlank() ? hub.abortAll() : hub.abort(id);
     respond(exchange, 200, Json.object().put("aborted", aborted));
   }
 
   /**
-   * Compacts the session on screen. Answers with what was replaced and what it cost, and the
-   * conversation itself arrives as a {@code compacted} event — the page learns its transcript changed
-   * the same way it learns about everything else.
+   * 压缩屏幕上的这个会话。回答里给出替换掉了什么、代价是多少，而对话本身以 {@code compacted} 事件到达
+   * ——页面得知自己的转录变了的方式，和它得知其他一切事情的方式相同。
    */
   /**
-   * Puts back what the last turn changed.
+   * 把上一回合改动过的东西放回去。
    *
-   * <p>Answers with what was restored and how many turns are still undoable, so the page can say
-   * both; the conversation itself says so through a notice, like everything else the server does.
+   * <p>回答里给出恢复了什么、还有多少个回合可以退回，这样页面两件事都能说；对话本身则通过一条通知说明，
+   * 和服务器做的其他每件事一样。
    */
   private void undo(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "需要 POST");
       return;
     }
     respond(exchange, 200, hub.undoTurn());
@@ -352,7 +336,7 @@ public final class HttpApi implements AutoCloseable {
 
   private void compact(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "需要 POST");
       return;
     }
     respond(exchange, 200, hub.compact());
@@ -360,7 +344,7 @@ public final class HttpApi implements AutoCloseable {
 
   private void approval(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "需要 POST");
       return;
     }
     JsonNode body = Json.parse(readBody(exchange));
@@ -369,11 +353,11 @@ public final class HttpApi implements AutoCloseable {
     boolean remember = body.path("remember").asBoolean(false);
     String answer = body.path("answer").asText(null);
     if (id.isBlank()) {
-      error(exchange, 400, "field 'id' is required");
+      error(exchange, 400, "字段 'id' 是必需的");
       return;
     }
     if (!hub.resolveApproval(id, AgentHub.answerOf(allow, remember, answer))) {
-      error(exchange, 404, "no pending approval with id " + id);
+      error(exchange, 404, "没有 id 为 " + id + " 的待处理审批");
       return;
     }
     respond(exchange, 200, Json.object().put("resolved", true).put("allow", allow));
@@ -386,20 +370,19 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     if (!"POST".equals(method)) {
-      error(exchange, 405, "GET or POST required");
+      error(exchange, 405, "需要 GET 或 POST");
       return;
     }
     JsonNode body = Json.parse(readBody(exchange));
     String path = body.path("path").asText("");
     String name = body.path("name").asText("");
     if (path.isBlank()) {
-      // Checked here, not left to Path.of(""), which is the process's own directory and would look
-      // like a perfectly good folder to add.
-      error(exchange, 400, "a workspace needs a directory");
+      // 在这里检查，而不是丢给 Path.of("")，那是进程自己的目录，看上去会像一个完全可以添加的文件夹。
+      error(exchange, 400, "工作区需要一个目录");
       return;
     }
-    // `name` is optional on purpose: a browser that picked a directory has already said what the
-    // workspace is called, and the folder names it. A request that carries a name still wins.
+    // `name` 是有意可选的：挑过目录的浏览器已经说过这个工作区叫什么了，就是那个文件夹的名字。请求里
+    // 带着名字时，仍然以它为准。
     respond(
         exchange,
         200,
@@ -417,7 +400,7 @@ public final class HttpApi implements AutoCloseable {
       respond(exchange, 200, hub.removeWorkspace(queryParam(exchange, "name")));
       return;
     }
-    error(exchange, 405, "POST or DELETE required");
+    error(exchange, 405, "需要 POST 或 DELETE");
   }
 
   private void sessions(HttpExchange exchange) throws IOException {
@@ -434,17 +417,16 @@ public final class HttpApi implements AutoCloseable {
       respond(exchange, 200, hub.deleteAllSessions(queryParam(exchange, "workspace")));
       return;
     }
-    error(exchange, 405, "GET or DELETE required");
+    error(exchange, 405, "需要 GET 或 DELETE");
   }
 
   /**
-   * Opens the desktop's folder chooser. A browser cannot do this itself — the web File System
-   * Access API deliberately hides absolute paths — but the process serving the page is sitting on
-   * the same machine, so it can ask the desktop directly.
+   * 打开桌面的文件夹选择器。浏览器自己做不到这一点——Web 的 File System Access API 有意隐藏绝对路径
+   * ——但提供这个页面的进程就坐在同一台机器上，所以它可以直接去问桌面。
    */
   private void browse(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "需要 POST");
       return;
     }
     java.io.IOException[] failure = new java.io.IOException[1];
@@ -481,7 +463,7 @@ public final class HttpApi implements AutoCloseable {
           hub.removeModel(queryParam(exchange, "provider"), queryParam(exchange, "model")));
       return;
     }
-    error(exchange, 405, "GET, POST or DELETE required");
+    error(exchange, 405, "需要 GET、POST 或 DELETE");
   }
 
   private void providers(HttpExchange exchange) throws IOException {
@@ -505,7 +487,7 @@ public final class HttpApi implements AutoCloseable {
       respond(exchange, 200, hub.modelsJson());
       return;
     }
-    error(exchange, 405, "GET, POST, PUT or DELETE required");
+    error(exchange, 405, "需要 GET、POST、PUT 或 DELETE");
   }
 
   private void config(HttpExchange exchange) throws IOException {
@@ -515,16 +497,16 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     if (!"POST".equals(method)) {
-      error(exchange, 405, "GET or POST required");
+      error(exchange, 405, "需要 GET 或 POST");
       return;
     }
-    // Validation failures are IllegalArgumentException, which route() answers with 400.
+    // 校验失败是 IllegalArgumentException，route() 会用 400 回答它。
     respond(exchange, 200, hub.applyConfig(Json.parse(readBody(exchange))));
   }
 
   private void configTest(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "需要 POST");
       return;
     }
     respond(exchange, 200, hub.testConfiguration(Json.parse(readBody(exchange))));
@@ -532,12 +514,12 @@ public final class HttpApi implements AutoCloseable {
 
   private void autoApprove(HttpExchange exchange) throws IOException {
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST required");
+      error(exchange, 405, "需要 POST");
       return;
     }
     JsonNode body = Json.parse(readBody(exchange));
     if (!body.has("enabled")) {
-      error(exchange, 400, "field 'enabled' is required");
+      error(exchange, 400, "字段 'enabled' 是必需的");
       return;
     }
     hub.setAutoApprove(body.path("enabled").asBoolean(false));
@@ -548,14 +530,14 @@ public final class HttpApi implements AutoCloseable {
     if ("DELETE".equals(exchange.getRequestMethod())) {
       String id = queryParam(exchange, "id");
       if (id == null || id.isBlank()) {
-        error(exchange, 400, "query parameter 'id' is required");
+        error(exchange, 400, "查询参数 'id' 是必需的");
         return;
       }
       respond(exchange, 200, hub.deleteSession(queryParam(exchange, "workspace"), id));
       return;
     }
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "POST or DELETE required");
+      error(exchange, 405, "需要 POST 或 DELETE");
       return;
     }
     JsonNode body = Json.parse(readBody(exchange));
@@ -564,7 +546,7 @@ public final class HttpApi implements AutoCloseable {
       case "new" -> hub.newSession();
       case "resume" -> hub.resumeSession(body.path("id").asText(""));
       default -> {
-        error(exchange, 400, "action must be 'new' or 'resume'");
+        error(exchange, 400, "action 必须是 'new' 或 'resume'");
         return;
       }
     }
@@ -585,9 +567,8 @@ public final class HttpApi implements AutoCloseable {
     SseClient client = new SseClient(out, lastEventId);
     List<AgentHub.Event> missed = hub.subscribe(client);
     try {
-      // The replay buffer exists for one purpose: filling the gap a reconnecting page missed. A
-      // fresh connection has no gap — it gets the conversation from /api/history, so replaying the
-      // buffer here would render every recent event a second time.
+      // 重放缓冲区只为一个目的存在：补上重连的页面错过的那段空白。全新的连接没有空白——它从
+      // /api/history 取得对话，所以在这里重放缓冲区会把每个近期事件渲染第二遍。
       if (lastEventId > 0) {
         for (AgentHub.Event event : missed) {
           if (event.id() > client.lastSent()) {
@@ -595,11 +576,10 @@ public final class HttpApi implements AutoCloseable {
           }
         }
       }
-      // A browser that just connected has no state yet, and the contract promises a status event.
+      // 刚连上的浏览器还没有任何状态，而契约承诺会有一个 status 事件。
       hub.publishStatus();
-      // This thread owns the socket for the life of the stream: it writes what the queue holds and
-      // pings when the queue stays empty. Nothing else ever writes here, which is what keeps a
-      // browser that stops reading from blocking whoever published.
+      // 这条线程在流的整个生命期里独占这个 socket：它写队列里的东西，队列一直空着时就发心跳。这里从没有
+      // 别的写入者，正因如此，一个停止读取的浏览器阻塞不了发布事件的人。
       while (!client.closed()) {
         AgentHub.Event event = client.take(HEARTBEAT_MILLIS);
         if (client.closed()) {
@@ -615,9 +595,8 @@ public final class HttpApi implements AutoCloseable {
         }
       }
     } catch (InterruptedException e) {
-      // The only thing that interrupts this thread is its own client overflowing, and the flag was
-      // set by this class for exactly this wake-up: it is cleared rather than propagated, because
-      // the thread goes back into the pool and a stale interrupt there would break the next request.
+      // 唯一会中断这条线程的，是它自己的客户端溢出，而这个标志正是本类为这次唤醒设置的：它被清除，而不是
+      // 继续传播，因为这条线程会回到池里，那里残留的中断会弄坏下一个请求。
     } finally {
       hub.unsubscribe(client);
       exchange.close();
@@ -637,21 +616,18 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * A subscriber that owns one socket.
+   * 独占一个 socket 的订阅者。
    *
-   * <p>Events are queued by whoever publishes them and written by the thread serving the connection.
-   * Writing straight from {@code publish} would put a blocking socket write inside the hub's replay
-   * monitor: one browser that stops reading — a suspended tab, a stalled network — would then wedge
-   * the agent's turn thread, and with it every other client. Here a client that stops reading fills
-   * only its own queue.
+   * <p>事件由发布它们的人入队，由服务这个连接的那条线程写出。直接从 {@code publish} 里写，会把一次阻塞式
+   * socket 写入塞进 hub 的重放监视器内部：那样一个停止读取的浏览器——被挂起的标签页、卡住的网络——就会
+   * 卡死 agent 的回合线程，连带其他每一个客户端。现在，一个停止读取的客户端只填满自己的队列。
    *
-   * <p>That queue is bounded on purpose: a client that may never come back must not be able to grow
-   * the heap without limit. An overflowing client is dropped, and the page reconnects and re-reads
-   * its history from {@code /api/history}, which it does after every disconnect anyway.
+   * <p>那个队列是有意设有上界的：一个可能再也回不来的客户端，不能让它无限地长堆。溢出的客户端被丢弃，页面
+   * 会重连并从 {@code /api/history} 重读历史——反正它每次断开后都会这么做。
    */
   private static final class SseClient implements Consumer<AgentHub.Event> {
 
-    /** Events one slow client may fall behind before it is dropped. */
+    /** 一个慢客户端在被丢弃之前可以落后多少条事件。 */
     private static final int QUEUE_LIMIT = 4096;
 
     private final OutputStream out;
@@ -665,7 +641,7 @@ public final class HttpApi implements AutoCloseable {
       this.lastSent = lastSent;
     }
 
-    /** Called on the publishing thread: this never blocks and never writes. */
+    /** 在发布线程上调用：这里从不阻塞，也从不写入。 */
     @Override
     public void accept(AgentHub.Event event) {
       if (closed) {
@@ -674,7 +650,7 @@ public final class HttpApi implements AutoCloseable {
       if (pending.offer(event)) {
         return;
       }
-      // Too far behind to catch up: drop the client and wake its thread so it stops waiting.
+      // 落后太多追不上了：丢弃这个客户端并唤醒它的线程，让它不再等待。
       closed = true;
       Thread waiting = reader;
       if (waiting != null) {
@@ -682,7 +658,7 @@ public final class HttpApi implements AutoCloseable {
       }
     }
 
-    /** Waits for the next event, or for {@code timeoutMillis} to pass with nothing to send. */
+    /** 等下一个事件，或等 {@code timeoutMillis} 过去而没有什么可发。 */
     AgentHub.Event take(long timeoutMillis) throws InterruptedException {
       reader = Thread.currentThread();
       try {
@@ -692,7 +668,7 @@ public final class HttpApi implements AutoCloseable {
       }
     }
 
-    /** Whatever else is already queued, without waiting. */
+    /** 已经排在队列里的其余东西，不等待。 */
     AgentHub.Event poll() {
       return pending.poll();
     }
@@ -710,18 +686,15 @@ public final class HttpApi implements AutoCloseable {
     }
 
     /**
-     * Keeps the connection visibly alive.
+     * 让连接看起来一直活着。
      *
-     * <p>A real data frame, not the {@code : ping} comment an SSE server usually sends. A comment is
-     * not delivered to the page at all — {@code EventSource} dispatches only frames with a
-     * {@code data} field — so the page's {@code lastEventAt} never moved and its 20-second
-     * "the stream is dead" timer fired on a perfectly healthy connection. Measured: a turn waiting on
-     * an approval showed a prompt that flickered while the page reconnected underneath it, and the
-     * request looked like it had been withdrawn when it was still open.
+     * <p>是一个真正的数据帧，而不是 SSE 服务器通常发的 {@code : ping} 注释。注释根本不会投递给页面
+     * ——{@code EventSource} 只分派带 {@code data} 字段的帧——所以页面的 {@code lastEventAt} 从不前进，
+     * 它那个 20 秒的「流已经死了」计时器会对着一条完全健康的连接触发。实测：一个等待审批的回合，在页面于
+     * 其下方重连时，展示出的提示会闪烁，而这个请求明明还开着，看上去却像是被撤回了。
      *
-     * <p>Sent with no {@code id}, so it cannot disturb the resume position the real events maintain,
-     * and named {@code ping} rather than the default message type: the page ignores it in its switch,
-     * so the only thing it does is prove the connection is alive — which is exactly the job.
+     * <p>发送时不带 {@code id}，所以它不会扰乱真实事件维持的续传位置；名字取 {@code ping} 而不是默认
+     * 消息类型：页面在自己的 switch 里忽略它，于是它唯一做的事就是证明连接还活着——这正是它该干的活。
      */
     void heartbeat() {
       write("event: ping\ndata: {}\n\n");
@@ -763,7 +736,7 @@ public final class HttpApi implements AutoCloseable {
       throws IOException {
     try (InputStream in = HttpApi.class.getResourceAsStream(resource)) {
       if (in == null) {
-        error(exchange, 404, "missing resource " + resource + " (was the jar built before it was added?)");
+        error(exchange, 404, "找不到资源 " + resource + "（jar 是不是在加入它之前就构建好了？）");
         return;
       }
       byte[] bytes = in.readAllBytes();
@@ -777,8 +750,8 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * The names the page may rotate through. An empty list is the honest answer when there is no
-   * directory to read: the control that uses this hides itself rather than offering nothing.
+   * 页面可以轮换使用的名字。没有目录可读时，空列表是诚实的答案：用它的那个控件会把自己藏起来，而不是
+   * 提供一片空白。
    */
   private void wallpapers(HttpExchange exchange) throws IOException {
     ObjectNode body = Json.object();
@@ -795,22 +768,21 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * One wallpaper's bytes, streamed rather than read into memory: a 4K picture is several
-   * megabytes, and none of it has a reason to pass through the heap on its way to the socket. The
-   * name is checked by {@link Wallpapers#resolve}, which is what keeps this endpoint from becoming
-   * a way to read any file on the machine.
+   * 一张壁纸的字节，流式发出而不是读进内存：一张 4K 图片有好几兆，其中没有一个字节有理由在去往 socket
+   * 的路上经过堆。名字由 {@link Wallpapers#resolve} 检查，正是这一点让这个端点没有变成读取机器上任意
+   * 文件的一条路。
    */
   private void wallpaper(HttpExchange exchange, String name) throws IOException {
     Optional<Path> file = wallpapers.resolve(name);
     if (file.isEmpty()) {
-      error(exchange, 404, "no such wallpaper");
+      error(exchange, 404, "没有这张壁纸");
       return;
     }
     exchange
         .getResponseHeaders()
         .add("Content-Type", wallpapers.contentType(file.get()).orElse("application/octet-stream"));
-    // A rotation revisits the same pictures, and they are files that rarely change: a few minutes of
-    // caching is what keeps switching backgrounds from re-reading a megabyte every time.
+    // 轮换会反复看同样的图片，而它们是很少变的文件：几分钟的缓存，就是让切换背景不至于每次都重读几兆的
+    // 原因。
     exchange.getResponseHeaders().add("Cache-Control", "private, max-age=300");
     exchange.sendResponseHeaders(200, Files.size(file.get()));
     try (OutputStream out = exchange.getResponseBody()) {
@@ -820,7 +792,7 @@ public final class HttpApi implements AutoCloseable {
 
   private void get(HttpExchange exchange, ObjectNode body) throws IOException {
     if (!"GET".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "GET required");
+      error(exchange, 405, "需要 GET");
       return;
     }
     respond(exchange, 200, body);
@@ -836,10 +808,10 @@ public final class HttpApi implements AutoCloseable {
   }
 
   private void error(HttpExchange exchange, int status, String message) throws IOException {
-    respond(exchange, status, Json.object().put("error", message == null ? "failed" : message));
+    respond(exchange, status, Json.object().put("error", message == null ? "失败" : message));
   }
 
-  /** Rejected request body, so a huge upload cannot be turned into an OutOfMemoryError. */
+  /** 被拒绝的请求体，让巨大的上传没法变成一次 OutOfMemoryError。 */
   private static final class PayloadTooLargeException extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
@@ -848,21 +820,21 @@ public final class HttpApi implements AutoCloseable {
     }
   }
 
-  /** Everything the UI posts is a small form or a message; a megabyte is already generous. */
+  /** UI 提交的一切都是小表单或一条消息；一兆已经很宽裕了。 */
   private static final int MAX_BODY_BYTES = 1024 * 1024;
 
   private String readBody(HttpExchange exchange) throws IOException {
     byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY_BYTES + 1);
     if (body.length > MAX_BODY_BYTES) {
       throw new PayloadTooLargeException(
-          "request body is larger than " + MAX_BODY_BYTES + " bytes");
+          "请求体大于 " + MAX_BODY_BYTES + " 字节");
     }
     return new String(body, StandardCharsets.UTF_8);
   }
 
   private boolean tokenPresented(HttpExchange exchange) {
     if (token == null) {
-      return false; // there is nothing to present, which is not the same as having presented it
+      return false; // 没有任何东西可出示，这和「已经出示过」不是一回事
     }
     if (token.equals(queryParam(exchange, "token"))) {
       return true;
@@ -888,26 +860,23 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * True when a request that did <em>not</em> prove the token may be served anyway: it arrived on the
-   * loopback interface <em>and</em> it names a loopback Host.
+   * 一个<em>没有</em>证明 token 的请求仍可被服务时为 true：它到达于环回接口<em>并且</em>它点名的 Host
+   * 是环回。
    *
-   * <p>This is the local case, and it is deliberately the only one. Loopback is not a boundary
-   * against a browser: any page the user visits can POST to 127.0.0.1 without a preflight, and DNS
-   * rebinding lets that page read the answers too — which is why the Host half is checked and not
-   * assumed, a name like {@code dead.beef} being exactly the attack. An address the page was reached
-   * on being loopback says the request came from this machine; the Host header says it was aimed at
-   * this server rather than at a name that happens to resolve here.
+   * <p>这是本地这种情形，而且有意是唯一一种。环回不是挡浏览器的边界：用户访问的任何页面都能不经预检就
+   * POST 到 127.0.0.1，而 DNS 重绑定还让那个页面能读到回答——所以 Host 那一半是检查出来的，不是假定
+   * 出来的，像 {@code dead.beef} 这样的名字正是那种攻击。页面被访问时所用的地址是环回，说明请求来自这台
+   * 机器；Host 头说明它瞄准的是这个服务器，而不是一个恰好解析到这里的名字。
    *
-   * <p>So a token gates the <em>network</em>, not the user's own browser: {@code http://127.0.0.1:6767}
-   * keeps working with nothing attached while the same server asks the phone for the secret. The
-   * alternative — a token on every request — would mean the machine's own user has to carry a secret
-   * to reach a server they started.
+   * <p>所以 token 把守的是<em>网络</em>，不是用户自己的浏览器：{@code http://127.0.0.1:6767} 一直可用
+   * 且什么都不必附，同一个服务器却会向手机索要那点机密。另一种做法——每个请求都带 token——意味着这台机器
+   * 自己的用户，为了到达自己启动的服务器，还得随身带一个机密。
    */
   /**
-   * True for a request that can change something.
+   * 可能改变某些东西的请求返回 true。
    *
-   * <p>Methods rather than a list of paths: a new endpoint must not have to remember to opt in, and
-   * the ones that read are exactly the ones the protocol says do not change state.
+   * <p>按方法判断，而不是按路径清单：新端点不必记得主动加入，而只读的那些，恰好就是协议规定不改变状态的
+   * 那些。
    */
   private static boolean stateChanging(HttpExchange exchange) {
     String method = exchange.getRequestMethod();
@@ -915,36 +884,29 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * True when the request did not come from another site, or did not say where it came from.
+   * 请求不是来自另一个站点、或者没有说它来自哪里时为 true。
    *
-   * <p>An absent {@code Origin} counts as same-origin. Browsers attach it to cross-origin requests and
-   * to every state-changing request they make at all, so its absence means the caller is not a browser
-   * page — a script, a test, the CLI. Refusing those would break every legitimate caller to defend
-   * against one the browser would not deliver in the first place.
+   * <p>缺少 {@code Origin} 算作同源。浏览器会把它附加到跨源请求上，也会附加到它发出的每一个改变状态的
+   * 请求上，所以它缺失意味着调用方不是浏览器页面——是脚本、测试、CLI。拒绝这些，会为了防住一个浏览器本来
+   * 就不会放行的调用方，而打断每一个正当调用方。
    *
-   * <p>When it is present it has to name this server, in one of the two ways a page can honestly do
-   * that: a loopback address (the machine the server runs on), or the host the request was aimed at —
-   * {@code Origin} and {@code Host} agreeing. Both are needed. Only the first was here at the start,
-   * and it made every state-changing request from a phone on the tailnet a 403: that page is served
-   * from the tailnet address, so its {@code Origin} names the tailnet address, which is neither
-   * loopback nor anything the check would accept — measured from a phone-shaped request
-   * ({@code Origin: http://100.72.92.41:6767}, the same host the page came from) against a real
-   * server, where sending a message, aborting a turn, saving settings, answering an approval and
-   * uploading a picture were all refused. The address the page was loaded from is the one honest
-   * answer to "which page is this", and it is not knowable in advance — the server binds whatever
-   * addresses the user named, and the tailnet one is theirs.
+   * <p>它存在时，必须点名这个服务器，而页面只有两种诚实的方式做到这一点：一个环回地址（服务器运行所在的
+   * 机器），或者请求所瞄准的那个主机——{@code Origin} 与 {@code Host} 一致。两者都需要。开头只有第一种，
+   * 而它让来自 tailnet 上手机的所有改变状态的请求都变成 403：那个页面是从 tailnet 地址提供的，所以它的
+   * {@code Origin} 点名的是 tailnet 地址，那既不是环回，也不是这道检查会接受的任何东西——这是拿一个手机
+   * 形状的请求（{@code Origin: http://100.72.92.41:6767}，与页面来自同一个主机）对着真实服务器实测的，
+   * 当时发消息、停回合、保存设置、回答审批、上传图片全都被拒。页面是从哪个地址加载的，正是「这是哪个页面」
+   * 唯一诚实的答案，而它不是事先能知道的——服务器绑的是用户点名的那些地址，而 tailnet 那个是他们的。
    *
-   * <p>Comparing against {@code Host} rather than accepting any host is what keeps this from being a
-   * hole. A page on another site sends its own origin, which is not the host the request is aimed at,
-   * so it is still refused. A page that reaches this server through a rebinding name sends that name
-   * in both headers and would agree with itself — which is why the agreement is not the only guard:
-   * a tokenless server has already refused the request for naming a non-loopback {@code Host} before
-   * this runs, and a token server has already refused it for arriving without the token. What is left
-   * is a page served from the very address this server answers on, which is the same machine, the
-   * same user, and the same trust the loopback case has always granted.
+   * <p>拿它和 {@code Host} 比较，而不是接受任何主机，是这件事没有成为漏洞的原因。另一个站点上的页面发出
+   * 的是它自己的源，那不是请求所瞄准的主机，所以仍被拒绝。一个通过重绑定名字到达这个服务器的页面，会在两个
+   * 头里都发那个名字，于是自己与自己一致——正因如此，一致并不是唯一的守卫：没有 token 的服务器在本段运行
+   * 之前，已经因为点名了非环回 {@code Host} 而拒绝了它；有 token 的服务器已经因为它没带 token 到达而拒绝
+   * 了它。剩下的情况，是一个从本服务器应答所用的那个地址提供的页面，同一台机器、同一个用户，与环回那种情形
+   * 一直给予的同样的信任。
    *
-   * <p>A port mismatch is allowed because the user may have started ccj on a different port than the
-   * page they first opened, and every one of these addresses is the machine itself.
+   * <p>端口不一致是允许的，因为用户可能在一个与最初打开的页面不同的端口上启动了 ccj，而这些地址中的每一个
+   * 都是这台机器本身。
    */
   private static boolean sameOrigin(HttpExchange exchange) {
     String origin = exchange.getRequestHeaders().getFirst("Origin");
@@ -952,7 +914,7 @@ public final class HttpApi implements AutoCloseable {
       return true;
     }
     String clean = origin.strip();
-    // "null" is what a sandboxed iframe or a file:// page sends. It is not this server.
+    // "null" 是沙箱 iframe 或 file:// 页面发的东西。它不是本服务器。
     if ("null".equalsIgnoreCase(clean)) {
       return false;
     }
@@ -963,17 +925,15 @@ public final class HttpApi implements AutoCloseable {
         return false;
       }
       if (loopbackHost(host)) {
-        // The same rule the Host header is held to, on purpose: one notion of "this machine" rather
-        // than two that can disagree, and the loopback-literal check that refuses to resolve a name is
-        // exactly what is wanted here too.
+        // 有意与 Host 头遵守同一条规则：关于「这台机器」只有一个概念，而不是两个可能互相打架的概念；
+        // 拒绝解析名字的环回字面量检查，在这里也正是想要的。
         return true;
       }
-      // Otherwise the page has to be served from the host this request was aimed at, which is what a
-      // user's own bookmark to the tailnet address sends.
+      // 否则，页面必须是从这次请求所瞄准的主机提供的，这正是用户自己收藏的 tailnet 地址书签发来的东西。
       String aimedAt = hostName(exchange.getRequestHeaders().getFirst("Host"));
       return aimedAt != null && aimedAt.equalsIgnoreCase(host);
     } catch (IllegalArgumentException e) {
-      // An Origin that does not parse is not this server's.
+      // 解析不了的 Origin 不是本服务器的。
       return false;
     }
   }
@@ -982,13 +942,13 @@ public final class HttpApi implements AutoCloseable {
     return loopbackPeer(exchange) && loopbackHost(exchange.getRequestHeaders().getFirst("Host"));
   }
 
-  /** True when this connection was accepted on a loopback address. */
+  /** 这个连接是在环回地址上被接受的时候为 true。 */
   private static boolean loopbackPeer(HttpExchange exchange) {
     InetSocketAddress peer = exchange.getRemoteAddress();
     return peer != null && peer.getAddress() != null && peer.getAddress().isLoopbackAddress();
   }
 
-  /** The host part of a {@code Host} header, without its port, or null when there is none. */
+  /** {@code Host} 头里的主机部分，不含端口；没有则为 null。 */
   private static String hostName(String header) {
     if (header == null || header.isBlank()) {
       return null;
@@ -1003,11 +963,11 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * True for {@code localhost} and for loopback <em>literals</em>.
+   * {@code localhost} 以及环回<em>字面量</em>返回 true。
    *
-   * <p>A dotted name is never resolved here: {@code dead.beef} is a perfectly legal hostname, and
-   * resolving attacker-chosen names is the whole point of a rebinding attack. Only four decimal
-   * groups in {@code 127.0.0.0/8}, and literal IPv6 (which cannot be a DNS name), are accepted.
+   * <p>带点的名字在这里从不做解析：{@code dead.beef} 是完全可以合法的主机名，而解析攻击者选定的名字
+   * 正是重绑定攻击的全部要点。只接受 {@code 127.0.0.0/8} 里的四段十进制数字，以及字面量 IPv6（它不
+   * 可能是 DNS 名字）。
    */
   private static boolean loopbackHost(String header) {
     String host = hostName(header);
@@ -1048,8 +1008,8 @@ public final class HttpApi implements AutoCloseable {
         Json.object()
             .put(
                 "error",
-                "this server requires a token; open the URL printed by ccj (it carries ?token=…),"
-                    + " or send Authorization: Bearer <token>"));
+                "本服务器需要一个 token；请打开 ccj 打印的 URL（其中带有 ?token=…），"
+                    + "或发送 Authorization: Bearer <token>"));
   }
 
   private static String queryParam(HttpExchange exchange, String name) {

@@ -11,15 +11,14 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 
 /**
- * A tiny MCP server, used as the other end of the client's tests.
+ * 一个很小的 MCP 服务器，用作客户端测试的另一端。
  *
- * <p>It is a real server started as a real process — not a stub of the client — because the things
- * worth testing about this client are the ones a stub cannot show: a handshake that arrives in two
- * pieces, an answer that belongs to an earlier request, a server that writes to stderr, one that dies
- * mid-call. The suite spawns it with the same mechanism the product uses, over the same pipe.
+ * <p>它是一个以真实进程启动的真实服务器——不是客户端的桩——因为关于这个客户端值得测的东西，
+ * 恰恰是桩展示不出来的：分两段到达的握手、属于更早请求的答案、往 stderr 写东西的服务器、
+ * 调用途中死掉的服务器。测试套件用产品所用的同一套机制、同一根管道把它派生出来。
  *
- * <p>Its behaviour is chosen by the first argument, so one class can be several servers, and every
- * behaviour it can take is one the client has a rule about.
+ * <p>它的行为由第一个参数选择，因此一个类可以扮演好几个服务器，而它所能采取的每种行为，都是
+ * 客户端有应对规则的那一种。
  */
 public final class FixtureMcpServer {
 
@@ -28,7 +27,7 @@ public final class FixtureMcpServer {
   public static void main(String[] args) throws IOException {
     String mode = args.length == 0 ? "normal" : args[0];
     if ("die".equals(mode)) {
-      // A server that starts, says nothing, and exits: the handshake has no answer coming.
+      // 一个启动、什么都不说、然后退出的服务器：那场握手没有任何答案会来。
       return;
     }
     BufferedReader in =
@@ -36,8 +35,8 @@ public final class FixtureMcpServer {
     BufferedWriter out =
         new BufferedWriter(new OutputStreamWriter(System.out, StandardCharsets.UTF_8));
     if ("noisy".equals(mode)) {
-      // A server that logs to stderr, which a client must drain or the pipe fills and the server
-      // stops dead: the failure looks like a hang with no explanation.
+      // 一个往 stderr 打日志的服务器，客户端必须抽干它，否则管道写满、服务器当场停摆：那失败
+      // 看起来就是一次毫无解释的卡死。
       for (int i = 0; i < 5000; i++) {
         System.err.println("fixture " + mode + " log line " + i
             + " padding padding padding padding padding padding padding padding");
@@ -67,7 +66,7 @@ public final class FixtureMcpServer {
     }
   }
 
-  /** The whole reply, result or error, because a fixture has to be able to refuse something. */
+  /** 完整的回复，或者是结果或者是错误，因为 fixture 必须能拒绝点什么。 */
   private static ObjectNode replyFor(JsonNode request, String mode) {
     String method = request.path("method").asText("");
     ObjectNode result = Json.object();
@@ -91,8 +90,8 @@ public final class FixtureMcpServer {
       case "initialize":
         if ("old-protocol".equals(mode)
             && !"2024-11-05".equals(request.path("params").path("protocolVersion").asText(""))) {
-          // The one refusal a client is allowed to retry: a server that only speaks the older
-          // revision says so, and the client asks again in the language this one understands.
+          // 客户端唯一被允许重试的那次拒绝：只讲旧修订版的服务器会明说，客户端于是用对方听得懂
+          // 的语言再问一次。
           ObjectNode refusal = Json.object();
           ObjectNode error = refusal.putObject("error");
           error.put("code", -32602);

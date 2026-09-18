@@ -14,18 +14,17 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Effective configuration after layering file, environment and command line.
+ * 把文件、环境和命令行叠加之后得到的生效配置。
  *
- * <p>Every field is nullable and means "not specified here". {@link #merge} layers sources from
- * lowest to highest precedence and {@link #resolved} fills in the provider-dependent defaults, so
- * the rest of the code only ever sees a complete configuration.
+ * <p>每个字段都可以为 null，意思是「这里没有指定」。{@link #merge} 按从低到高的优先级叠加各来源，
+ * {@link #resolved} 再补上依赖提供方的默认值，于是代码的其他部分只会看到一份完整的配置。
  *
- * <p>Precedence, lowest first: built-in defaults, {@code ~/.oh-my-ccj/config.json}, {@code CCJ_*}
- * environment variables, command-line flags.
+ * <p>优先级，从低到高：内置默认值、{@code ~/.oh-my-ccj/config.json}、{@code CCJ_*} 环境变量、命令行
+ * flag。
  *
- * <p>{@code baseUrl}, {@code apiKey} and {@code apiKeyEnv} are <em>provider-scoped</em>: they mean
- * something only next to the provider they were entered for, which is what {@code settingsFor}
- * records. See {@link #settingsBelongTo}.
+ * <p>{@code baseUrl}、{@code apiKey} 和 {@code apiKeyEnv} 是<em>属于提供方的</em>：只有挨着它们被填写时
+ * 所针对的那个提供方，它们才有意义，而 {@code settingsFor} 记录的正是这件事。见
+ * {@link #settingsBelongTo}。
  */
 public record Config(
     String provider,
@@ -46,8 +45,7 @@ public record Config(
     VisionConfig vision) {
 
   /**
-   * The fields as they existed before context budgeting, so a caller that does not care about it does
-   * not have to name it.
+   * 上下文预算出现之前的字段形态，这样不关心它的调用方就不必点它的名。
    */
   public Config(
       String provider,
@@ -81,8 +79,7 @@ public record Config(
   }
 
   /**
-   * The fields as they existed before credentials were scoped to a provider, so a caller that does
-   * not care about the scope does not have to name it.
+   * 凭据被限定到提供方之前字段的形态，这样不关心这个归属的调用方就不必点它的名。
    */
   public Config(
       String provider,
@@ -117,10 +114,9 @@ public record Config(
   }
 
   /**
-   * The map of remembered pairs is normalised here: keys are lower-cased because provider names are
-   * matched case-insensitively everywhere else, and an entry with nothing in it is dropped rather
-   * than kept as an empty promise. The vision block is normalised the same way: one that names
-   * nothing is the absence of a configuration, and two representations of "off" is one too many.
+   * 已记住配对的 map 在这里被规范化：键统一小写，因为提供方名字在别处都是不区分大小写匹配的；而一个什么都没
+   * 有的条目会被丢掉，而不是当作一句空头承诺留着。vision 块也按同样方式规范化：什么都没点明的块就是没有配
+   * 置，而「关闭」有两种表示已经多了一种。
    */
   public Config {
     Map<String, ProviderSettings> clean = new LinkedHashMap<>();
@@ -147,14 +143,14 @@ public record Config(
   public static final String DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5";
   public static final int DEFAULT_OUTPUT_LIMIT_BYTES = 32 * 1024;
 
-  /** Reasoning effort tiers, in ascending order; null means "say nothing, let the model decide". */
+  /** 推理努力档位，升序排列；null 表示「什么都不说，让模型自己决定」。 */
   public static final List<String> REASONING_LEVELS = List.of("low", "high", "max");
 
   public static Config empty() {
     return new Config(null, null, null, null, null, null, null, null, null, null, null, null);
   }
 
-  /** Returns this configuration with every field {@code higher} specifies taking over. */
+  /** 返回这份配置，其中 {@code higher} 指定了的每个字段都接管过来。 */
   public Config merge(Config higher) {
     if (higher == null) {
       return this;
@@ -179,12 +175,11 @@ public record Config(
   }
 
   /**
-   * The vision block from both layers, field by field.
+   * 两层的 vision 块，逐字段合并。
    *
-   * <p>Field by field rather than whole-block, for the same reason every other field is picked
-   * individually: a layer that names only the model — {@code CCJ_VISION_MODEL}, a
-   * {@code --vision-model} flag — must not erase the endpoint underneath it. Replacing the block
-   * wholesale would turn "use this model instead" into "forget the endpoint and the key".
+   * <p>逐字段而不是整块，理由与其他每个字段都单独挑选相同：只点明模型的层——{@code CCJ_VISION_MODEL}、
+   * 一个 {@code --vision-model} flag——绝不能抹掉它下面的端点。整块替换会把「改用这个模型」变成「把端点和
+   * 密钥都忘掉」。
    */
   private static VisionConfig mergeVision(VisionConfig lower, VisionConfig higher) {
     if (higher == null || higher.isEmpty()) {
@@ -202,12 +197,11 @@ public record Config(
   }
 
   /**
-   * Remembered pairs from both layers, the higher one winning per provider.
+   * 两层的已记住配对，每个提供方由更高的一层胜出。
    *
-   * <p>Layered like every other field, but a map cannot be "picked": a layer that says nothing about
-   * a provider must not erase what a lower layer knows about it. That is the whole point of the map —
-   * a key entered for the provider you are not using has to survive the saves that happen while you
-   * are using another one.
+   * <p>和其他每个字段一样分层，但 map 没法「挑选」：一层若对某个提供方只字未提，绝不能抹掉更低层关于它
+   * 知道的东西。这正是这个 map 的全部意义——为「你没在用的那个提供方」填的密钥，必须在「你在用另一个提供
+   * 方」期间的每次保存中活下来。
    */
   private static Map<String, ProviderSettings> mergeRemembered(
       Map<String, ProviderSettings> lower, Map<String, ProviderSettings> higher) {
@@ -223,14 +217,12 @@ public record Config(
   }
 
   /**
-   * True when the endpoint and credential fields in this configuration were entered for {@code
-   * provider}.
+   * 当这份配置里的端点和凭据字段是为 {@code provider} 填的时为 true。
    *
-   * <p>Those three fields are provider-scoped but live in one flat file, so without this mark a base
-   * URL and a key left behind by the provider used a minute ago look exactly like ones meant for the
-   * provider active now. Reading "unknown" as "yes, this key is for that endpoint" is how one
-   * vendor's traffic — and one vendor's credential — ends up at another vendor's address. A null
-   * mark therefore means <em>not this provider's</em>, never "assume yes".
+   * <p>那三个字段属于提供方，却住在一个扁平文件里，所以没有这个标记时，一分钟前那个提供方留下的 base URL
+   * 和密钥，看起来与为当前提供方准备的一模一样。把「不知道」读成「是的，这个密钥是给那个端点的」，就是这样
+   * 让一家厂商的流量——以及它的凭据——走到另一家厂商的地址上。所以标记为 null 意味着<em>不是这个提供方的
+   * </em>，而从不是「就当是吧」。
    */
   public boolean settingsBelongTo(String provider) {
     if (settingsFor == null || settingsFor.isBlank() || provider == null || provider.isBlank()) {
@@ -239,17 +231,17 @@ public record Config(
     return settingsFor.strip().equalsIgnoreCase(provider.strip());
   }
 
-  /** True when this configuration sets any of the provider-scoped fields. */
+  /** 这份配置设置了任何一个属于提供方的字段时为 true。 */
   public boolean setsProviderSettings() {
     return baseUrl != null || apiKey != null || apiKeyEnv != null;
   }
 
   /**
-   * True when the flat pair carries a mark naming a provider other than {@code provider}.
+   * 当这个扁平配对带着一个标记、点名了 {@code provider} 之外的提供方时为 true。
    *
-   * <p>{@link #settingsBelongTo} answers "may this pair be used here?", which is false both for
-   * another provider's pair and for one nobody claimed. This answers the narrower question a switch
-   * has to ask: the pair is deliberately somebody else's, so it is dropped rather than inherited.
+   * <p>{@link #settingsBelongTo} 回答的是「这个配对可以在这里用吗」，而无论是别人的配对还是无人认领的
+   * 配对，答案都是否。这个方法回答的是切换时必须问的那个更窄的问题：这个配对刻意是别人的，所以要丢掉，而不是
+   * 继承下来。
    */
   private boolean markedForAnotherProvider(String provider) {
     return settingsFor != null
@@ -259,7 +251,7 @@ public record Config(
         && !settingsFor.strip().equalsIgnoreCase(provider.strip());
   }
 
-  /** The same configuration with a different thinking language; null means "let the model decide". */
+  /** 同一份配置，换一种思考语言；null 表示「让模型自己决定」。 */
   public Config language(String value) {
     return new Config(
         provider,
@@ -281,11 +273,11 @@ public record Config(
   }
 
   /**
-   * The pair this configuration holds in its flat fields, or null when it holds none.
+   * 这份配置在其扁平字段里持有的配对；什么都没持有时为 null。
    *
-   * <p>An endpoint or a key variable that is only this provider's default is left out: the file
-   * records what was chosen, and repeating a default that {@link #resolved()} re-derives anyway is
-   * how a meaningless address gets written down and later mistaken for a deliberate one.
+   * <p>只是该提供方默认值的端点或密钥变量会被略去：文件记录的是被选择的东西，而把一个
+   * {@link #resolved()} 反正会重新推导出来的默认值重复写一遍，就是让一个没有意义的地址被写下来、日后被误
+   * 当成刻意填的。
    */
   public ProviderSettings settings() {
     String name = provider == null ? DEFAULT_PROVIDER : provider.strip().toLowerCase();
@@ -296,8 +288,7 @@ public record Config(
   }
 
   /**
-   * This configuration without the provider-scoped fields, which is what a provider change has to
-   * start from: the new provider inherits neither the old endpoint nor the old credential.
+   * 这份配置去掉属于提供方的字段；切换提供方时正应该从这里开始：新提供方既不继承旧端点，也不继承旧凭据。
    */
   public Config forgetProviderSettings() {
     return new Config(
@@ -306,13 +297,11 @@ public record Config(
   }
 
   /**
-   * The same configuration with the vision block's key literal forgotten, and the endpoint, model and
-   * budget left where they are.
+   * 同一份配置，但忘掉 vision 块的密钥明文，端点、模型和预算留在原处。
    *
-   * <p>Separate from {@link #withoutVision} because they are different intentions: a key that was
-   * pasted into the wrong box is not a configuration to throw away, and {@code merge} cannot express
-   * either — a field it does not mention means "leave it", which is exactly what clearing a key has
-   * to override. The settings form therefore says which of the two it wants.
+   * <p>它与 {@link #withoutVision} 分开，因为两者是不同意图：一个被粘错框的密钥不是一份该丢掉的配置，而
+   * {@code merge} 两者都表达不了——它没提到的字段意思就是「别动」，而这恰恰是清空密钥必须覆盖掉的东西。
+   * 所以设置表单会说清它要哪一种。
    */
   public Config withoutVisionKey() {
     if (vision == null || vision.apiKey() == null) {
@@ -325,8 +314,8 @@ public record Config(
   }
 
   /**
-   * The same configuration with no vision block at all, which is how the feature is turned off:
-   * absent and empty mean the same thing everywhere else, so this is the one representation of off.
+   * 同一份配置，但完全没有 vision 块，这就是该功能的关闭方式：在别处「不存在」与「空」意思相同，所以这是
+   * 「关闭」的唯一表示。
    */
   public Config withoutVision() {
     if (vision == null) {
@@ -338,7 +327,7 @@ public record Config(
         remembered, null);
   }
 
-  /** The same configuration, with its endpoint and credential fields marked as {@code provider}'s. */
+  /** 同一份配置，但把它的端点和凭据字段标记为属于 {@code provider}。 */
   public Config scopedTo(String provider) {
     return new Config(
         this.provider,
@@ -359,21 +348,20 @@ public record Config(
         vision);
   }
 
-  /** The pair remembered for {@code provider}, if any. */
+  /** 为 {@code provider} 记住的配对，如果有的话。 */
   public ProviderSettings rememberedFor(String provider) {
     return provider == null ? null : remembered.get(provider.strip().toLowerCase());
   }
 
-  /** The names of the providers whose endpoint and key are remembered here. */
+  /** 端点与密钥被记住在这里的提供方名字。 */
   public java.util.Set<String> rememberedNames() {
     return remembered.keySet();
   }
 
   /**
-   * Keeps the pair this configuration holds under {@code provider}, so switching back restores it.
+   * 把这份配置持有的配对存在 {@code provider} 名下，这样切回来时还能恢复。
    *
-   * <p>Only the pair that belongs to that provider is worth keeping: anything else was entered
-   * somewhere else, and filing it under this name is the mistake this map exists to prevent.
+   * <p>只有属于该提供方的那对值得留着：别的东西是在别处填的，把它归到这个名下正是这个 map 要防止的错误。
    */
   public Config remembering(String provider, ProviderSettings settings) {
     if (provider == null || provider.isBlank() || settings == null || settings.isEmpty()) {
@@ -384,7 +372,7 @@ public record Config(
     return withRemembered(next);
   }
 
-  /** The same configuration, named after {@code other}'s provider when it does not name one itself. */
+  /** 同一份配置，在它自己没点名提供方时，采用 {@code other} 的提供方名。 */
   public Config namedBy(Config other) {
     if (provider != null || other == null || other.provider() == null) {
       return this;
@@ -408,7 +396,7 @@ public record Config(
         vision);
   }
 
-  /** Forgets what is remembered for {@code provider}. */
+  /** 忘掉为 {@code provider} 记住的东西。 */
   public Config forgetting(String provider) {
     if (provider == null || !remembered.containsKey(provider.strip().toLowerCase())) {
       return this;
@@ -419,18 +407,15 @@ public record Config(
   }
 
   /**
-   * Takes this provider's remembered pair into the flat fields, when the ones there are not its own.
+   * 当扁平字段里那对不属于当前提供方时，把这个提供方记住的配对搬进扁平字段。
    *
-   * <p>The map holds what the providers you are not using brought with them; the flat fields hold the
-   * pair in effect now. Moving the entry out of the map keeps one copy of it: the active pair lives
-   * in the flat fields, everyone else's in the map.
+   * <p>map 里放着「你没在用的那些提供方」带来的东西；扁平字段放着当前生效的配对。把条目从 map 里挪出来，可以让
+   * 它只有一份：生效的配对住在扁平字段里，别人的住在 map 里。
    *
-   * <p>When nothing was ever entered for the provider being switched to and the pair in the flat
-   * fields is marked as another provider's, the pair is dropped rather than inherited: it is the
-   * address and the credential of the provider used a minute ago, and a run that just named a
-   * different provider must not send one vendor's key to the other's endpoint. A file with no mark
-   * at all is a hand-written one, and there the pair is left alone — "no mark" is not "someone
-   * else's", only "nobody recorded who entered it".
+   * <p>当要切换到的提供方从未填过任何东西、而扁平字段里的配对又标记着属于别的提供方时，这个配对会被丢掉而不是
+   * 继承：那是一分钟前用的那个提供方的地址和凭据，而一次刚刚点名了另一个提供方的运行，绝不能把一家厂商的密钥发到
+   * 另一家的端点上。完全没有标记的文件是手写的，那里配对就原样留着——「没有标记」不是「别人的」，只是「没人记录
+   * 过是谁填的」。
    */
   public Config recalling(String provider) {
     if (provider == null || provider.isBlank() || settingsBelongTo(provider)) {
@@ -442,9 +427,8 @@ public record Config(
     }
     Map<String, ProviderSettings> next = new LinkedHashMap<>(remembered);
     next.remove(provider.strip().toLowerCase());
-    // Resolved afterwards, so a pair that only names a key still gets this provider's own endpoint
-    // and key variable: what is being replaced is another provider's, and carrying its endpoint over
-    // is the mistake the mark exists to prevent.
+    // 之后再 resolved，这样只点名了密钥的配对仍然能拿到这个提供方自己的端点和密钥变量：被替换掉的是另一个
+    // 提供方的东西，而把它的端点一并带过来，正是那个标记要防止的错误。
     return new Config(
             this.provider,
             model,
@@ -466,13 +450,11 @@ public record Config(
   }
 
   /**
-   * The configuration after a settings change: what is being left is remembered, what is being
-   * switched to is recalled, and a change that names an endpoint or a key writes it as the active
-   * provider's.
+   * 一次设置变更之后的配置：要离开的会被记住，要切换到的会被取回，而一次点名了端点或密钥的变更会把它写成当前
+   * 提供方的。
    *
-   * <p>This is the rule that keeps a stored pair and the provider using it in step. Drop either half
-   * and a session ends up calling one vendor's address with another vendor's — or with nobody's —
-   * credential, which is what the map and {@code settingsFor} are for.
+   * <p>就是这条规则让「存下来的配对」与「正在用它的提供方」保持同步。丢掉任何一半，会话就会用一家厂商的地址去
+   * 调用、却带着另一家——或者谁也不是的——凭据，而这正是这个 map 和 {@code settingsFor} 存在的理由。
    */
   public Config changedBy(Config changes) {
     if (changes == null) {
@@ -483,26 +465,24 @@ public record Config(
         target != null && (provider == null || !target.strip().equalsIgnoreCase(provider.strip()));
     Config base = this;
     if (switching && settingsBelongTo(provider)) {
-      // Leaving: the pair in effect belongs to the provider being left, so it stays available under
-      // its name instead of being thrown away for being in the way. Whatever this request carries is
-      // for the provider it is switching *to* — that is what naming a provider means.
+      // 要离开了：生效的配对属于正在离开的提供方，所以它按自己的名字留下来，而不是因为挡路被扔掉。这次请求
+      // 携带的任何东西都是给要切换*到*的那个提供方的——点明一个提供方就是这个意思。
       base = base.remembering(provider, base.settings());
     }
     boolean replaces = changes.setsProviderSettings();
     if (switching || (replaces && !base.settingsBelongTo(target))) {
       base = base.forgetProviderSettings();
     }
-    // Marked before `resolved()` fills in the provider-dependent defaults: a defaulted endpoint is
-    // not something the user entered for this provider, and marking it would tell `recalling` that
-    // the active pair is already this provider's — which is how a remembered key stops being used.
+    // 在 `resolved()` 填上依赖提供方的默认值之前做标记：一个被填成默认值的端点不是用户为这个提供方填的，标记它
+    // 会告诉 `recalling` 说生效的配对已经是这个提供方的了——一个被记住的密钥就是这样不再被使用的。
     Config merged = base.merge(changes);
     if ((switching || replaces) && merged.setsProviderSettings()) {
       merged = merged.scopedTo(merged.provider());
     }
     merged = merged.resolved();
     if (changes.apiKey() != null && changes.apiKey().isBlank()) {
-      // Clearing a key means clearing it: the flat field goes, and a remembered copy would otherwise
-      // come back on the next switch. A key the user asked to forget is not a key to keep.
+      // 清空密钥就是清空：扁平字段清掉，否则一份被记住的副本会在下次切换时回来。用户要求忘掉的密钥，不是该
+      // 留着的密钥。
       merged = merged.withApiKey(null).forgetting(merged.provider());
     }
     return merged.recalling(merged.provider());
@@ -522,7 +502,7 @@ public record Config(
         vision);
   }
 
-  /** Fills in defaults that depend on the chosen provider. */
+  /** 补上取决于所选提供方的默认值。 */
   public Config resolved() {
     String resolvedProvider = provider == null || provider.isBlank() ? DEFAULT_PROVIDER : provider.strip().toLowerCase();
     String resolvedBaseUrl =
@@ -552,9 +532,8 @@ public record Config(
   }
 
   /**
-   * The language the prompt asks for. Blank and {@code auto} both mean "say nothing"; anything else is
-   * kept as written, because the list of languages is the prompt's to offer and a language this build
-   * has never heard of is still a name a model can follow.
+   * 提示词要求的语言。空白与 {@code auto} 都表示「什么都不说」；其他任何值都按原样保留，因为语言清单是提示词
+   * 该提供的，而一个这个构建从没听说过的语言，仍然是一个模型能遵从的名字。
    */
   public static String normalizeLanguage(String language) {
     if (language == null || language.isBlank() || Prompts.AUTO.equalsIgnoreCase(language.strip())) {
@@ -564,8 +543,8 @@ public record Config(
   }
 
   /**
-   * The effort tier, lower-cased and checked. An unknown value is a typo worth reporting rather than
-   * a setting to silently ignore: it changes what the model spends tokens on.
+   * 努力档位，转小写并校验。未知的值是值得报出来的笔误，而不是可以默默忽略的设置：它改变模型把 token 花在
+   * 什么上。
    */
   public static String normaliseReasoning(String reasoning) {
     if (reasoning == null || reasoning.isBlank()) {
@@ -574,7 +553,7 @@ public record Config(
     String value = reasoning.strip().toLowerCase();
     if (!REASONING_LEVELS.contains(value)) {
       throw new IllegalArgumentException(
-          "unknown reasoning level '" + reasoning + "'; use " + String.join(", ", REASONING_LEVELS));
+          "未知的推理档位 '" + reasoning + "'；请使用 " + String.join(", ", REASONING_LEVELS));
     }
     return value;
   }
@@ -587,7 +566,7 @@ public record Config(
     return "anthropic".equals(provider) ? ANTHROPIC_KEY_ENV : OPENAI_KEY_ENV;
   }
 
-  /** The model to use when none is configured, or null when the provider has no obvious one. */
+  /** 没有配置模型时该用的模型；该提供方没有显然的默认值时返回 null。 */
   public static String defaultModel(String provider) {
     if (provider == null) {
       return null;
@@ -600,14 +579,14 @@ public record Config(
   }
 
   /**
-   * A default model only makes sense against the provider's own endpoint. Relays name models
-   * freely, so guessing there would turn a clear configuration error into an obscure 404.
+   * 默认模型只有在提供方自己的端点上才说得通。中继给模型起的名字很随意，在那里猜会把一个清楚的配置错误变成
+   * 一个晦涩的 404。
    */
   private static String defaultModelFor(String provider, String baseUrl) {
     return defaultBaseUrl(provider).equals(baseUrl) ? defaultModel(provider) : null;
   }
 
-  /** The API key to send, or null when neither the config nor the environment provides one. */
+  /** 要发送的 API 密钥；配置与环境变量都没提供时为 null。 */
   public String resolvedApiKey(Map<String, String> env) {
     if (apiKey != null && !apiKey.isBlank()) {
       return apiKey.strip();
@@ -619,7 +598,7 @@ public record Config(
     return fromEnv == null || fromEnv.isBlank() ? null : fromEnv.strip();
   }
 
-  /** Reads {@code config.json}; a missing file yields {@link #empty()}. */
+  /** 读取 {@code config.json}；文件不存在则得到 {@link #empty()}。 */
   public static Config fromFile(Path file) {
     if (file == null || !Files.isRegularFile(file)) {
       return empty();
@@ -628,12 +607,12 @@ public record Config(
     try {
       root = Json.parse(Files.readString(file));
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot read " + file, e);
+      throw new UncheckedIOException("无法读取 " + file, e);
     } catch (IllegalArgumentException e) {
-      throw new IllegalArgumentException("invalid config file " + file + ": " + e.getMessage(), e);
+      throw new IllegalArgumentException("配置文件无效 " + file + "：" + e.getMessage(), e);
     }
     if (!root.isObject()) {
-      throw new IllegalArgumentException("invalid config file " + file + ": expected a JSON object");
+      throw new IllegalArgumentException("配置文件无效 " + file + "：应当是一个 JSON 对象");
     }
     return new Config(
         text(root, "provider"),
@@ -655,9 +634,8 @@ public record Config(
   }
 
   /**
-   * The {@code vision} block: the endpoint, credential, model and reply ceiling of the model that
-   * describes pictures. Absent, null or empty all mean the feature is off, and a block that is not an
-   * object is a typo worth reporting rather than a setting to ignore silently.
+   * {@code vision} 块：描述图片的那个模型的端点、凭据、模型名与回复上限。不存在、为 null 或为空都表示该功能
+   * 关闭；而不是对象的块是值得报出来的笔误，不是可以默默忽略的设置。
    */
   private static VisionConfig readVision(JsonNode root) {
     JsonNode node = root.get("vision");
@@ -665,7 +643,7 @@ public record Config(
       return null;
     }
     if (!node.isObject()) {
-      throw new IllegalArgumentException("config field 'vision' must be an object");
+      throw new IllegalArgumentException("配置字段 'vision' 必须是一个对象");
     }
     VisionConfig vision =
         new VisionConfig(
@@ -677,7 +655,7 @@ public record Config(
     return vision.isEmpty() ? null : vision;
   }
 
-  /** The {@code remembered} map: provider name to the endpoint and credential entered for it. */
+  /** {@code remembered} map：提供方名到为它填写的端点与凭据。 */
   private static Map<String, ProviderSettings> readRemembered(JsonNode root) {
     JsonNode entries = root.get("remembered");
     if (entries == null || !entries.isObject()) {
@@ -702,7 +680,7 @@ public record Config(
     return out;
   }
 
-  /** Reads {@code CCJ_*} variables. */
+  /** 读取 {@code CCJ_*} 变量。 */
   public static Config fromEnv(Map<String, String> env) {
     return new Config(
         env.get("CCJ_PROVIDER"),
@@ -724,11 +702,10 @@ public record Config(
   }
 
   /**
-   * The {@code CCJ_VISION_*} variables, as one block or null.
+   * {@code CCJ_VISION_*} 变量，作为一块或 null。
    *
-   * <p>Named after the block they fill rather than after the main provider's variables, because the
-   * model they configure is a different one: {@code CCJ_API_KEY} must not double as the key for a
-   * picture-describer, which is the whole reason vision is configured separately.
+   * <p>按它们填充的那个块命名，而不是按主提供方的变量命名，因为它们配置的是另一个模型：
+   * {@code CCJ_API_KEY} 绝不能兼作图片描述器的密钥，而这正是 vision 要单独配置的全部理由。
    */
   private static VisionConfig readEnvVision(Map<String, String> env) {
     VisionConfig vision =
@@ -742,12 +719,11 @@ public record Config(
   }
 
   /**
-   * Same as {@link #merge} with file, then environment, then the caller's overrides.
+   * 与 {@link #merge} 相同，顺序是文件、环境、调用方的覆盖值。
    *
-   * <p>A flag or a {@code CCJ_*} variable naming an endpoint or a key is an explicit act for whatever
-   * provider this run ends up using, so it is marked as that provider's and wins outright. A value
-   * read from the file is not: it may have been written for a provider the run is not using, so when
-   * it does not belong to the active provider the pair remembered for that provider is used instead.
+   * <p>点名端点或密钥的 flag 或 {@code CCJ_*} 变量，是对「这次运行最终用的提供方」的一次明确表态，所以它会被
+   * 标记为该提供方的，并直接胜出。从文件读到的值不是：它可能是为一次运行并不使用的提供方写的，所以当它不属于当前
+   * 提供方时，改用为该提供方记住的配对。
    */
   public static Config layered(Path configFile, Map<String, String> env, Config overrides) {
     Config fromEnvironment = fromEnv(env);
@@ -763,23 +739,22 @@ public record Config(
   }
 
   /**
-   * Writes the settings the UI manages into {@code file}, keeping every other key that is already
-   * there — a hand-written system prompt or output cap must survive a visit to the settings form.
+   * 把 UI 管理的设置写进 {@code file}，保留那里已有的其他每个键——手写的系统提示词或输出上限必须在一次设置
+   * 表单的访问之后活下来。
    *
-   * <p>Fields that are null are removed, and a blank {@code apiKey} is removed rather than stored as
-   * an empty string. The file is created owner-only because it may hold a key.
+   * <p>为 null 的字段会被移除，而空白的 {@code apiKey} 也会被移除，而不是存成空字符串。文件以仅限属主的权限
+   * 创建，因为它可能装着密钥。
    *
-   * <p>{@code settingsFor} travels with them: it is what says whose {@code baseUrl} and {@code
-   * apiKey} these are, so removing the fields removes the mark too. The {@code remembered} map holds
-   * the same pair for every other provider you have entered one for, which is what lets a provider be
-   * switched back to without pasting its key again.
+   * <p>{@code settingsFor} 与它们同行：正是它说明这些 {@code baseUrl} 和 {@code apiKey} 是谁的，所以移除
+   * 这些字段也就移除了这个标记。{@code remembered} map 为「你填过的其他每个提供方」保存着同一对东西，这正
+   * 让一个提供方可以切回来而无需再粘一遍它的密钥。
    */
   public static void writeInto(Path file, Config managed) {
     ObjectNode root;
     if (Files.isRegularFile(file)) {
       JsonNode existing = readTree(file);
       if (!existing.isObject()) {
-        throw new IllegalArgumentException("config file " + file + " must contain a JSON object");
+        throw new IllegalArgumentException("配置文件 " + file + " 必须包含一个 JSON 对象");
       }
       root = (ObjectNode) existing;
     } else {
@@ -788,18 +763,17 @@ public record Config(
 
     putText(root, "provider", managed.provider());
     putText(root, "model", managed.model());
-    // Same rule as Config.settings(): a value that is only the provider's default is not written, so
-    // the file never accumulates endpoints and key variables nobody chose.
+    // 与 Config.settings() 同一条规则：只是提供方默认值的值不写进去，这样文件永远不会积攒没人选过的端点和
+    // 密钥变量。
     putText(root, "baseUrl", chosenBaseUrl(managed));
     putText(root, "apiKey", managed.apiKey() == null || managed.apiKey().isBlank() ? null : managed.apiKey());
     putText(root, "apiKeyEnv", chosenKeyEnv(managed.provider(), managed.apiKeyEnv()));
-    // The mark means "these fields were entered for that provider": with no fields there is nothing
-    // for it to be about, and a stale name would only invite the next reader to file them wrongly.
+    // 这个标记意思是「这些字段是为那个提供方填的」：没有字段时它就没有可指向的东西，而一个过期的名字只会让
+    // 下一个读者把它们归错档。
     putText(root, "settingsFor", managed.setsProviderSettings() ? managed.settingsFor() : null);
     writeRemembered(root, managed.remembered());
     writeVision(root, managed.vision());
-    // The step ceiling is gone, and a key ccj no longer reads would advertise a
-    // setting that does nothing, so an old file is cleaned up as it is rewritten.
+    // 步数上限已经没了，而一个 ccj 不再读取的键会宣传一个毫无作用的设置，所以旧文件在重写时顺手清理掉。
     root.remove("maxSteps");
     putNumber(root, "temperature", managed.temperature());
     putNumber(root, "maxTokens", managed.maxTokens());
@@ -820,11 +794,11 @@ public record Config(
           StandardOpenOption.TRUNCATE_EXISTING);
       restrictToOwner(file);
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot write " + file, e);
+      throw new UncheckedIOException("无法写入 " + file, e);
     }
   }
 
-  /** Writes the remembered map, dropping nothing an existing file holds for other providers. */
+  /** 写出已记住的 map，不丢掉现有文件为其他提供方保存的任何东西。 */
   private static void writeRemembered(ObjectNode root, Map<String, ProviderSettings> remembered) {
     if (remembered == null || remembered.isEmpty()) {
       root.remove("remembered");
@@ -841,12 +815,11 @@ public record Config(
   }
 
   /**
-   * Writes the vision block as it stands, or removes it when there is none.
+   * 按现状写出 vision 块，没有则移除它。
    *
-   * <p>Unlike the provider fields there is no default to compare against: the endpoint is whatever
-   * the user named, so every field that is set is recorded and nothing is left out for looking
-   * ordinary. Fields are written individually, because a block that names only a model is a real
-   * configuration — of the endpoint it inherits from the file.
+   * <p>与提供方字段不同，这里没有默认值可以比较：端点就是用户点名的那个，所以每个被设置的字段都会被记录，
+   * 不会因为看起来普通而被略去。字段是逐个写的，因为一个只点名了模型的块是一份真实的配置——配置的是它从文件
+   * 继承来的那个端点。
    */
   private static void writeVision(ObjectNode root, VisionConfig vision) {
     if (vision == null || vision.isEmpty()) {
@@ -884,16 +857,16 @@ public record Config(
   private static JsonNode readTree(Path file) {    try {
       return Json.parse(Files.readString(file));
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot read " + file, e);
+      throw new UncheckedIOException("无法读取 " + file, e);
     }
   }
 
-  /** Best effort: non-POSIX filesystems keep their default rather than failing the save. */
+  /** 尽力而为：非 POSIX 文件系统保留自己的默认权限，而不是让这次保存失败。 */
   private static void restrictToOwner(Path file) {
     try {
       Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
     } catch (UnsupportedOperationException | IOException ignored) {
-      // Nothing to do; the save itself already succeeded.
+      // 无事可做；保存本身已经成功了。
     }
   }
 
@@ -915,40 +888,42 @@ public record Config(
     }
   }
 
-  /** Redacted view, safe to print. */
+  /** 脱敏后的视图，可以安全打印。 */
   public Map<String, String> describe(Map<String, String> env) {
     Map<String, String> out = new LinkedHashMap<>();
     out.put("provider", provider);
-    out.put("model", model == null ? "(unset)" : model);
+    out.put("model", model == null ? "（未设置）" : model);
     out.put("baseUrl", baseUrl);
-    out.put("apiKey", resolvedApiKey(env) == null ? "(unset)" : "***" + tail(resolvedApiKey(env)));
-    // Which provider the endpoint and the key above belong to; "(unknown)" is a file written by
-    // hand or by an older build, and a custom provider will not use an unowned pair.
-    out.put("settingsFor", settingsFor == null || settingsFor.isBlank() ? "(unknown)" : settingsFor);
+    out.put("apiKey", resolvedApiKey(env) == null ? "（未设置）" : "***" + tail(resolvedApiKey(env)));
+    // 上面那个端点和密钥属于哪个提供方；「（未知）」是手写的或旧版本写的文件，而自定义提供方不会使用一个
+    // 不属于任何人的配对。
+    out.put(
+        "settingsFor",
+        settingsFor == null || settingsFor.isBlank() ? "（未知）" : settingsFor);
     out.put("autoApprove", String.valueOf(autoApprove));
     out.put("outputLimitBytes", String.valueOf(outputLimitBytes));
-    out.put("reasoning", reasoning == null ? "(provider default)" : reasoning);
+    out.put("reasoning", reasoning == null ? "（提供方默认）" : reasoning);
     out.put(
         "maxContextTokens",
-        maxContextTokens == null ? "(no budget)" : String.valueOf(maxContextTokens));
+        maxContextTokens == null ? "（无预算）" : String.valueOf(maxContextTokens));
     out.put("vision", describeVision(env));
     return out;
   }
 
   /**
-   * The vision model as one line: off, or where it is, which model, and whether a key was found —
-   * never the key itself, which is the rule for every key this class reports.
+   * vision 模型写成一行：关闭，或者它在哪里、是哪个模型、有没有找到密钥——永远不是密钥本身，这是这个类报告
+   * 每一个密钥时都遵守的规则。
    */
   private String describeVision(Map<String, String> env) {
     if (vision == null || !vision.isConfigured()) {
-      return "(off)";
+      return "（关闭）";
     }
     String key = vision.resolvedApiKey(env);
     return vision.baseUrl()
         + " · "
         + vision.model()
         + " · "
-        + (key == null ? "(no key)" : "***" + tail(key));
+        + (key == null ? "（无密钥）" : "***" + tail(key));
   }
 
   private static String tail(String key) {
@@ -966,7 +941,7 @@ public record Config(
       return null;
     }
     if (!node.isTextual()) {
-      throw new IllegalArgumentException("config field '" + field + "' must be a string");
+      throw new IllegalArgumentException("配置字段 '" + field + "' 必须是字符串");
     }
     return node.asText();
   }
@@ -977,7 +952,7 @@ public record Config(
       return null;
     }
     if (!node.isInt()) {
-      throw new IllegalArgumentException("config field '" + field + "' must be an integer");
+      throw new IllegalArgumentException("配置字段 '" + field + "' 必须是整数");
     }
     return node.asInt();
   }
@@ -988,7 +963,7 @@ public record Config(
       return null;
     }
     if (!node.isNumber()) {
-      throw new IllegalArgumentException("config field '" + field + "' must be a number");
+      throw new IllegalArgumentException("配置字段 '" + field + "' 必须是数字");
     }
     return node.asDouble();
   }
@@ -999,7 +974,7 @@ public record Config(
       return null;
     }
     if (!node.isBoolean()) {
-      throw new IllegalArgumentException("config field '" + field + "' must be a boolean");
+      throw new IllegalArgumentException("配置字段 '" + field + "' 必须是布尔值");
     }
     return node.asBoolean();
   }
@@ -1011,7 +986,7 @@ public record Config(
     try {
       return Integer.valueOf(raw.strip());
     } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("not an integer: " + raw, e);
+      throw new IllegalArgumentException("不是整数：" + raw, e);
     }
   }
 
@@ -1022,7 +997,7 @@ public record Config(
     try {
       return Double.valueOf(raw.strip());
     } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("not a number: " + raw, e);
+      throw new IllegalArgumentException("不是数字：" + raw, e);
     }
   }
 
@@ -1034,7 +1009,7 @@ public record Config(
     return switch (value) {
       case "1", "true", "yes", "on" -> true;
       case "0", "false", "no", "off" -> false;
-      default -> throw new IllegalArgumentException("not a boolean: " + raw);
+      default -> throw new IllegalArgumentException("不是布尔值：" + raw);
     };
   }
 

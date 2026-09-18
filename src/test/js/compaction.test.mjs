@@ -1,22 +1,19 @@
-/* What the page does when a compaction lands, run without a browser.
+/* 一次压缩落地时页面做什么，不靠浏览器运行。
  *
- * Two bugs this pins down, both of which survived a server-side test pass because
- * curl cannot see a transcript:
+ * 它钉住两个 bug，两个都熬过了一轮服务器端测试，因为 curl 看不见转录：
  *
- *  1. `loadHistory` *appends* — it is written for a session switch, where the id
- *     changed and `noteSession` cleared the pane for it. A compaction keeps the
- *     same id, so fetching history after one drew the kept exchanges a second time
- *     underneath the ones already on screen.
- *  2. The summary itself was never drawn. It is a `summary` event now, but a page
- *     reloaded after a compaction showed the kept tails with no sign of what had
- *     happened — the exact thing a user checks to know the compaction worked.
+ *  1. `loadHistory` 是*追加*式的 —— 它是为会话切换写的，那种情况下 id 变了、`noteSession`
+ *     已经为它清过屏。压缩保持同一个 id，所以压缩之后取历史会把保留下来的往来在屏幕上
+ *     已有的那些下面再画一遍。
+ *  2. 摘要本身从来没被画出来过。它现在是一个 `summary` 事件，但一次压缩之后重新加载的
+ *     页面只显示保留下来的尾部，没有任何迹象说明发生过什么 —— 而那正是用户用来确认压缩
+ *     生效的东西。
  *
- * So what is asserted here is the order `onCompacted` does things in, and that the
- * summary event is rendered at all. The functions are lifted out of the shipped
- * file and run against a small node stub, the same trick the other cases use.
+ * 所以这里断言的是 `onCompacted` 做事的顺序，以及摘要事件到底有没有被渲染。这些函数是从
+ * 发布的文件里抽出来、跑在一个小小的 node 桩上的，其他用例用的是同一个手法。
  *
- * `node src/test/js/compaction.test.mjs` — also run, when a node is installed, by
- * com.ccj.agent.web.WebCompactTest, so `mvn test` covers it too. */
+ * `node src/test/js/compaction.test.mjs` —— 装了 node 时也会由
+ * com.ccj.agent.web.WebCompactTest 运行，所以 `mvn test` 也覆盖它。 */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -26,23 +23,21 @@ const here = dirname(fileURLToPath(import.meta.url));
 const APP = join(here, '..', '..', 'main', 'resources', 'web', 'app.js');
 const src = readFileSync(APP, 'utf8');
 
-new Function(src);   // the only lint a build-step-less file gets
+new Function(src);   // 没有构建步骤的文件，只能这样 lint
 
 let passed = 0;
-/* Awaiting the body matters: `onCompacted` awaits `loadHistory`, so a callback
- * left un-awaited keeps running after the next case has already cleared `calls`
- * — and the assertion then reads the previous case's notice. That is exactly the
- * kind of confusion this file exists to prevent, so it is not happening here. */
+/* 等待函数体这件事很重要：`onCompacted` 会等待 `loadHistory`，所以一个没被等到的回调
+ * 会在下一个用例已经清空 `calls` 之后继续跑 —— 而断言随后读到的是上一个用例的通知。
+ * 那正是这个文件存在的意义所在的那种混乱，所以这里不会发生。 */
 async function check(name, fn) {
   await fn();
   passed++;
   console.log(`  ok  ${name}`);
 }
 
-/* ---------------------------------------------------------------- the stub */
+/* ------------------------------------------------------------------ node 桩 */
 
-/* A DOM just real enough for the summary card: element creation, appending, and
- * the few properties `appendSummary` touches. */
+/* 一个刚好够摘要卡片用的 DOM：元素创建、追加，以及 `appendSummary` 会碰的那几个属性。 */
 function makeElement(tag) {
   return {
     tagName: tag,
@@ -61,8 +56,8 @@ function makeElement(tag) {
   };
 }
 
-/* `el(tag, className, text)` is the page's own helper; the slice below is run
- * with this in scope. */
+/* `el(tag, className, text)` 是页面自己的辅助函数；下面那段切片就是在它有作用域的
+ * 情况下跑的。 */
 function el(tag, className, text) {
   const node = makeElement(tag);
   if (className) { node.className = className; }
@@ -79,7 +74,7 @@ function str(value) {
   return value === undefined || value === null ? '' : String(value);
 }
 
-/* The transcript, plus the calls `appendSummary` and `onCompacted` make. */
+/* 转录，以及 `appendSummary` 和 `onCompacted` 会做的调用。 */
 const transcriptChildren = [];
 const calls = [];
 const dom = {
@@ -97,24 +92,23 @@ const state = { status: { sessionId: 'abc' }, sessionId: 'abc' };
 function appendNotice(text) { calls.push(['notice', text]); }
 function scrollToBottom() {}
 
-/* `clearTranscript` as the page defines it, minus the queue bookkeeping the stub
- * has no notion of: what matters is that it empties the pane. */
+/* 按页面定义来的 `clearTranscript`，去掉了桩没有概念的队列记账：重要的是它清空了
+ * 面板。 */
 function clearTranscript() {
   transcriptChildren.length = 0;
   calls.push(['clear']);
 }
 
-/* The real loadHistory appends whatever the server returns; the stub records the
- * call so the ordering can be checked. */
+/* 真正的 loadHistory 会追加服务器返回的任何东西；桩只记录这次调用，好让顺序能被
+ * 检查。 */
 async function loadHistory(sessionId) {
   calls.push(['loadHistory', sessionId]);
 }
 
-/* ------------------------------------------------------- the slice under test */
+/* ---------------------------------------------------------------- 被测代码切片 */
 
-/* `appendSummary` and `onCompacted`, exactly as shipped. Both are lifted by
- * marker rather than by line number so a reformat does not silently test
- * something else; a marker that has gone missing fails loudly below. */
+/* `appendSummary` 和 `onCompacted`，与发布的一模一样。两者都按标记而不是按行号抽取，
+ * 这样一次重排版不会悄悄测到别的东西；标记不见了会在下面大声失败。 */
 function sliceFrom(startMark, endMark, name) {
   const from = src.indexOf(startMark);
   const to = src.indexOf(endMark, from);
@@ -134,7 +128,7 @@ const onCompactedSrc = sliceFrom(
   'onCompacted',
 );
 
-/* The two helpers the slices call, in the scope they expect. */
+/* 切片会调用的两个辅助函数，放在它们期待的作用域里。 */
 const runner = new Function(
   'el', 'fmtCount', 'str', 'dom', 'state', 'appendNotice', 'clearTranscript', 'loadHistory',
   'scrollToBottom',
@@ -144,9 +138,9 @@ const page = runner(
   el, fmtCount, str, dom, state, appendNotice, clearTranscript, loadHistory, scrollToBottom,
 );
 
-/* ------------------------------------------------------------------- cases */
+/* -------------------------------------------------------------------- 用例 */
 
-await check('a summary event draws a card, collapsed, with its count', () => {
+await check('摘要事件画出一张折叠的卡片，带计数', () => {
   transcriptChildren.length = 0;
   const card = page.appendSummary({
     type: 'summary',
@@ -160,26 +154,26 @@ await check('a summary event draws a card, collapsed, with its count', () => {
   const head = card.children[0];
   assert.equal(head.tagName, 'summary');
   const texts = head.children.map((c) => c.textContent);
-  assert.ok(texts.some((t) => t.includes('Compacted conversation')), texts.join('|'));
-  assert.ok(texts.some((t) => t.includes('13 messages summarised')), texts.join('|'));
-  // The summary text itself is in the body, unescaped-in by textContent.
+  assert.ok(texts.some((t) => t.includes('已压缩的会话')), texts.join('|'));
+  assert.ok(texts.some((t) => t.includes('13 条消息已摘要')), texts.join('|'));
+  // 摘要正文本身在 body 里，由 textContent 原样放进去。
   const body = card.children[1];
   const rendered = body.children.find((c) => c.className === 'ev-summary-text');
   assert.ok(rendered, 'the summary text is not in the card');
   assert.equal(rendered.textContent, '1. Goal — fix the parser.');
-  // And it says how to get a detail back, which is the point of naming the file.
+  // 而且它说明了怎么把某个细节找回来，这正是点名那个文件的意义。
   const note = body.children.find((c) => c.className === 'ev-summary-note');
-  assert.ok(note.textContent.includes('read it back'), note.textContent);
+  assert.ok(note.textContent.includes('读回'), note.textContent);
 });
 
-await check('an empty summary draws nothing rather than an empty card', () => {
+await check('空摘要什么都不画，而不是画一张空卡片', () => {
   transcriptChildren.length = 0;
   assert.equal(page.appendSummary({ type: 'summary', text: '' }), null);
   assert.equal(transcriptChildren.length, 0);
 });
 
-await check('a compaction clears the transcript before fetching the new history', async () => {
-  // The bug: loadHistory appends, so without the clear the kept exchanges appear twice.
+await check('压缩在取新历史之前先清空转录', async () => {
+  // 那个 bug：loadHistory 是追加式的，所以不清屏的话保留下来的往来会出现两次。
   transcriptChildren.length = 0;
   transcriptChildren.push(makeElement('div'), makeElement('div'));
   calls.length = 0;
@@ -202,7 +196,7 @@ await check('a compaction clears the transcript before fetching the new history'
   assert.equal(calls[2][1], 'abc', 'history is re-fetched for the same session id');
 });
 
-await check('the notice says what changed, what it saved, and where the original is', async () => {
+await check('通知说明改了什么、省了多少，以及原件在哪里', async () => {
   calls.length = 0;
   await page.onCompacted({
     summarised: 13, kept: 63, beforeTokens: 30088, afterTokens: 27885, savedPercent: 61,
@@ -210,24 +204,24 @@ await check('the notice says what changed, what it saved, and where the original
   });
 
   const notice = calls.find((c) => c[0] === 'notice')[1];
-  assert.ok(notice.includes('13 earlier message(s)'), notice);
-  assert.ok(notice.includes('63 kept verbatim'), notice);
+  assert.ok(notice.includes('13 条较早的消息'), notice);
+  assert.ok(notice.includes('63 条原样保留'), notice);
   assert.ok(notice.includes('61%'), `the saving is the number the user cares about: ${notice}`);
   assert.ok(notice.includes('30088') && notice.includes('27885'), notice);
-  assert.ok(notice.includes('estimated'),
+  assert.ok(notice.includes('估算'),
     `an estimate must not read as a measurement: ${notice}`);
   assert.ok(notice.includes('/home/me/.oh-my-ccj/sessions/abc.jsonl'), notice);
 });
 
-await check('a compaction with no reported saving still renders', async () => {
-  // Defensive: an older server, or a shape that lost savedPercent, must not
-  // produce "undefined%" in the transcript.
+await check('没有报告节省量的压缩也照样渲染', async () => {
+  // 防御性：一个更老的服务器，或者一个丢了 savedPercent 的形状，不能在转录里
+  // 产生 "undefined%"。
   calls.length = 0;
   await page.onCompacted({ summarised: 2, kept: 8, source: 'x.jsonl' });
   const notice = calls.find((c) => c[0] === 'notice')[1];
   assert.ok(!notice.includes('undefined'), notice);
   assert.ok(!notice.includes('NaN'), notice);
-  assert.ok(notice.includes('2 earlier message(s)'), notice);
+  assert.ok(notice.includes('2 条较早的消息'), notice);
 });
 
 console.log(`compaction: ${passed} passed`);

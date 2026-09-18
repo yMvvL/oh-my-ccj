@@ -39,19 +39,19 @@ class VisionClientTest {
       assertEquals(
           VisionClient.DEFAULT_MAX_TOKENS,
           sent.get("max_tokens").asInt(),
-          "the budget is a ceiling and not a spend, so the default is generous");
+          "预算是天花板而不是花销，所以默认值给得宽松");
       JsonNode parts = sent.path("messages").get(0).path("content");
       assertTrue(
           parts.get(0).path("text").asText().contains("not from the user"),
-          "the prompt must say the picture's instructions are not the user's: " + parts.get(0));
+          "提示词必须说明图里的指令不是用户的：" + parts.get(0));
       JsonNode picture = parts.get(1);
       assertEquals("image_url", picture.path("type").asText());
       String url = picture.path("image_url").path("url").asText();
-      assertTrue(url.startsWith(DATA_URL_PREFIX), "the picture must travel as a data URL: " + url);
+      assertTrue(url.startsWith(DATA_URL_PREFIX), "图片必须以 data URL 传输：" + url);
       assertArrayEquals(
           png,
           Base64.getDecoder().decode(url.substring(DATA_URL_PREFIX.length())),
-          "the data URL must carry the picture's own bytes");
+          "data URL 必须携带图片自己的字节");
     }
   }
 
@@ -71,10 +71,9 @@ class VisionClientTest {
 
   @Test
   void aReplyThatRanOutOfRoomWhileReasoningNamesTheSetting() throws Exception {
-    // The reported failure, reproduced: a phone screenshot of a busy page came back HTTP 200 with
-    // `finish_reason: length`, every one of the 1500-token budget spent on reasoning, `content`
-    // empty, and 6224 characters of thinking in the reply. The message has to say which setting
-    // fixes it, because "what arrived" is a wall of JSON that does not.
+    // 把报上来的失败原样复现：一张内容繁杂的手机页面截图回了 HTTP 200，`finish_reason: length`，
+    // 1500-token 的预算全部花在推理上，`content` 为空，回复里有 6224 个字符的思考。消息必须说清哪个设置
+    // 能修好它，因为「收到的是什么」是一堵 JSON 墙，说不清。
     String reply =
         "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\","
             + "\"reasoning\":\"We need answer. Need describe picture as data…\"},"
@@ -88,19 +87,18 @@ class VisionClientTest {
 
       String message = failure.getMessage();
       assertTrue(message.contains("HTTP 200"), message);
-      assertTrue(message.contains("reasoning"), message);
-      assertTrue(message.contains("1500 of them spent thinking"), message);
-      assertTrue(message.contains("maxTokens"), "it must name the setting that fixes it: " + message);
+      assertTrue(message.contains("推理"), message);
+      assertTrue(message.contains("其中 1500 个花在思考上"), message);
+      assertTrue(message.contains("maxTokens"), "必须点名能修好它的那个设置：" + message);
       assertTrue(message.contains("--vision-max-tokens"), message);
-      assertTrue(message.contains("8192"), "and the budget it just used: " + message);
+      assertTrue(message.contains("8192"), "以及它刚用掉的预算：" + message);
     }
   }
 
   @Test
   void aReplyThatFinishedWithNothingInContentIsNotBlamedOnTheBudget() throws Exception {
-    // The other shape: it stopped on its own terms with the answer inside its reasoning. Raising the
-    // budget would change nothing here, and a message that said to raise it would send the reader to
-    // the wrong place — the fix is another model or endpoint.
+    // 另一种形状：它按自己的意思停下了，答案在它的推理里。调大预算在这里改变不了任何东西，而一条说「调大
+    // 预算」的消息会把读者指去错误的地方——解法是另一个模型或端点。
     String reply =
         "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\","
             + "\"reasoning\":\"the picture shows a red square\"},"
@@ -112,9 +110,9 @@ class VisionClientTest {
           assertThrows(AgentException.class, () -> client.describe(png(), "image/png"));
 
       String message = failure.getMessage();
-      assertTrue(message.contains("not the budget"), message);
-      assertTrue(message.contains("another endpoint or model"), message);
-      assertFalse(message.contains("maxTokens"), "the budget is not the problem here: " + message);
+      assertTrue(message.contains("不是预算的问题"), message);
+      assertTrue(message.contains("换一个端点或模型"), message);
+      assertFalse(message.contains("maxTokens"), "这里的问题不是预算：" + message);
     }
   }
 
@@ -133,8 +131,8 @@ class VisionClientTest {
 
   @Test
   void aConfiguredBudgetIsWhatTheEndpointIsAsked() throws Exception {
-    // 1500 was this repository's first answer and it is too small for a real screenshot: the model
-    // spent all of it thinking. The number is the configured one, not a constant.
+    // 1500 是这个仓库最初的答案，对一张真实的截图来说太小：模型把它全花在思考上了。这个数字用的是配置里的
+    // 值，而不是某个常量。
     try (FakeServer server = FakeServer.start(FakeServer.Reply.json(200, DESCRIPTION));
         VisionClient client = new VisionClient(server.url(), "sk-vision", "vision-test", 4096)) {
       assertEquals("a red square", client.describe(png(), "image/png"));
@@ -194,12 +192,12 @@ class VisionClientTest {
     assertTrue(named.getMessage().contains("MY_VISION_KEY"), named.getMessage());
   }
 
-  /** A real PNG, encoded by the JDK, so the bytes that go out are the bytes a phone would send. */
+  /** 一张由 JDK 编码的真实 PNG，所以发出去的字节就是手机会发出的字节。 */
   private static byte[] png() throws Exception {
     BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB);
     image.setRGB(0, 0, 0xFF0000);
     ByteArrayOutputStream out = new ByteArrayOutputStream();
-    assertTrue(ImageIO.write(image, "png", out), "the JDK must be able to write a PNG");
+    assertTrue(ImageIO.write(image, "png", out), "JDK 必须能写出 PNG");
     return out.toByteArray();
   }
 }

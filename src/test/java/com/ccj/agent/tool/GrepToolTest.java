@@ -37,7 +37,7 @@ class GrepToolTest {
     ToolResult sensitive = new GrepTool().execute("{\"pattern\":\"hello\"}", ToolContext.of(dir));
 
     assertTrue(insensitive.content().contains("a.txt:1:Hello World"), insensitive.content());
-    assertTrue(sensitive.content().contains("no matches"), sensitive.content());
+    assertTrue(sensitive.content().contains("没有匹配"), sensitive.content());
   }
 
   @Test
@@ -45,8 +45,8 @@ class GrepToolTest {
     ToolResult result = new GrepTool().execute("{\"pattern\":\"[\"}", ToolContext.of(dir));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().startsWith("invalid regex"), result.content());
-    assertTrue(result.content().contains("index"), result.content());
+    assertTrue(result.content().startsWith("正则 '[' 无效"), result.content());
+    assertTrue(result.content().contains("位置"), result.content());
   }
 
   @Test
@@ -54,7 +54,7 @@ class GrepToolTest {
     Files.writeString(dir.resolve("readable.txt"), "needle here\n");
     Path locked = dir.resolve("locked.txt");
     Files.writeString(locked, "needle but unreadable\n");
-    // A file the process cannot open: the search must still answer with what it did find.
+    // 一个进程打不开的文件：搜索仍然必须把它确实找到的东西答出来。
     Files.setPosixFilePermissions(locked, java.util.Set.of());
 
     ToolResult result = new GrepTool().execute("{\"pattern\":\"needle\"}", ToolContext.of(dir));
@@ -62,13 +62,13 @@ class GrepToolTest {
     assertFalse(result.error(), result.content());
     assertTrue(result.content().contains("readable.txt:1"), result.content());
     assertTrue(result.content().contains("locked.txt"), result.content());
-    assertTrue(result.content().contains("could not be read"), result.content());
+    assertTrue(result.content().contains("读不了"), result.content());
   }
 
   @Test
   void aNulBytePastTheHeadProbeStillMakesTheFileBinary() throws Exception {
-    // The cheap probe reads the first 8 KiB; a NUL further in is still not text, and quoting the
-    // line around it would put raw bytes in the conversation.
+    // 便宜的探测只读最前面 8 KiB；藏在更后面的 NUL 仍然不是文本，而引用它周围那一行会把原始字节
+    // 放进对话里。
     StringBuilder text = new StringBuilder();
     for (int i = 0; i < 2000; i++) {
       text.append("filler line ").append(i).append(" needle\n");
@@ -94,7 +94,7 @@ class GrepToolTest {
 
     assertFalse(result.content().contains("bin.dat"), result.content());
     assertTrue(result.content().contains("text.txt:1:match 1"), result.content());
-    assertTrue(result.content().contains("1 more matches omitted"), result.content());
+    assertTrue(result.content().contains("省略了 1 个匹配"), result.content());
   }
 
   @Test
@@ -107,6 +107,6 @@ class GrepToolTest {
 
     assertTrue(result.content().contains("A.java:1:needle"), result.content());
     assertFalse(result.content().contains("B.txt"), result.content());
-    assertFalse(result.content().contains("omitted"), result.content());
+    assertFalse(result.content().contains("省略了"), result.content());
   }
 }

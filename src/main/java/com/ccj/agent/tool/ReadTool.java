@@ -16,11 +16,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Line-numbered file reader.
+ * 带行号的文件读取器。
  *
- * <p>The whole file is streamed and validated even when only a window is returned: a NUL byte or a
- * malformed UTF-8 sequence anywhere is reported as "binary" instead of leaking replacement
- * characters into the conversation. Memory stays bounded by the requested window, not the file.
+ * <p>即使只返回一个窗口，整个文件也会被流式读取并校验：任意位置的 NUL 字节或残缺的 UTF-8 序列都会被
+ * 报成「binary」，而不是把替换字符漏进对话。内存只受所请求窗口的限制，不受文件大小限制。
  */
 public final class ReadTool implements Tool {
 
@@ -76,10 +75,10 @@ public final class ReadTool implements Tool {
     String label = ToolSupport.display(ctx, file);
 
     if (!Files.exists(file)) {
-      return ToolResult.error("file not found: " + label);
+      return ToolResult.error("找不到文件: " + label);
     }
     if (Files.isDirectory(file)) {
-      return ToolResult.error(label + " is a directory; use glob to list the files inside it");
+      return ToolResult.error(label + " 是目录；用 glob 列出它里面的文件");
     }
 
     List<String> window = new ArrayList<>();
@@ -106,11 +105,11 @@ public final class ReadTool implements Tool {
     }
 
     if (total == 0) {
-      return ToolResult.ok("(" + label + " is empty)");
+      return ToolResult.ok("(" + label + " 为空)");
     }
     if (offset > total) {
       return ToolResult.error(
-          "offset " + offset + " is past the end of " + label + " (" + total + " lines)");
+          "offset " + offset + " 越过了 " + label + " 的末尾（共 " + total + " 行）");
     }
 
     StringBuilder body = new StringBuilder();
@@ -124,9 +123,8 @@ public final class ReadTool implements Tool {
       if (bytes + length > ctx.outputLimitBytes()) {
         byteCapped = true;
         if (emitted == 0) {
-          // One line bigger than the whole budget. Skipping it would answer "resume with
-          // offset=N" for the same line every time, a page the reader can never turn, so the head
-          // of it is returned instead — bounded, and the next offset is past it.
+          // 有一行比整个预算还大。跳过它会让同一行每次都回答「resume with offset=N」，那是一页读者
+          // 永远翻不过去的页，所以改为返回它的开头——有界，且下一个 offset 会越过它。
           String clipped = ToolSupport.truncateUtf8(rendered, ctx.outputLimitBytes());
           body.append(clipped);
           bytes += ToolSupport.utf8Length(clipped);
@@ -142,36 +140,36 @@ public final class ReadTool implements Tool {
 
     int last = offset + emitted - 1;
     if (byteCapped) {
-      body.append("(output truncated at ")
+      body.append("(输出在 ")
           .append(ctx.outputLimitBytes())
-          .append(" bytes; ");
+          .append(" 字节处被截断；");
       if (lineTruncated) {
-        body.append("line ").append(last).append(" is longer than that and was cut short; ");
+        body.append("第 ").append(last).append(" 行比这更长，已被截短；");
       }
       body.append(label)
-          .append(" has ")
+          .append(" 共 ")
           .append(total)
-          .append(" lines; resume with offset=")
+          .append(" 行；用 offset=")
           .append(last + 1)
-          .append(')');
+          .append(" 继续)");
     } else if (last < total) {
       body.append('(')
           .append(label)
-          .append(" has ")
+          .append(" 共 ")
           .append(total)
-          .append(" lines; showing lines ")
+          .append(" 行；显示第 ")
           .append(offset)
           .append('-')
           .append(last)
-          .append("; resume with offset=")
+          .append(" 行；用 offset=")
           .append(last + 1)
-          .append(')');
+          .append(" 继续)");
     }
     return ToolResult.ok(body.toString());
   }
 
   private static String binaryMessage(String label) {
-    return "cannot read " + label + ": binary content (NUL byte or invalid UTF-8), not a text file";
+    return "无法读取 " + label + "：二进制内容（NUL 字节或非法 UTF-8），不是文本文件";
   }
 
   private static String renderLine(int number, String text) {

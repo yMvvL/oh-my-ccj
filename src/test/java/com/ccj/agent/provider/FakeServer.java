@@ -16,16 +16,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntFunction;
 
 /**
- * Scripted HTTP server for the provider tests.
+ * 给提供方测试用的脚本化 HTTP 服务器。
  *
- * <p>Every body piece is flushed as its own chunk, so a test can prove the client reassembles text
- * that arrives split at arbitrary byte offsets rather than only on frame boundaries.
+ * <p>每一段响应体都作为独立的 chunk 刷出，这样测试就能证明客户端能重新拼好那些在任意字节偏移处被切开、
+ * 而不只落在帧边界上的文本。
  */
 final class FakeServer implements AutoCloseable {
 
   /**
-   * A canned response: status, content type, the body pieces written as separate chunks, and any
-   * extra response headers a test needs to provoke.
+   * 一份预置的响应：状态码、content type、按独立 chunk 写出的响应体片段，以及测试需要引发的任何额外响
+   * 应首部。
    */
   record Reply(
       int status, String contentType, List<String> chunks, Map<String, String> headers) {
@@ -38,7 +38,7 @@ final class FakeServer implements AutoCloseable {
       return json(status, body, Map.of());
     }
 
-    /** A JSON reply with extra headers, e.g. a {@code Retry-After} on a 429. */
+    /** 带额外首部的 JSON 回复，例如 429 上的 {@code Retry-After}。 */
     static Reply json(int status, String body, Map<String, String> headers) {
       return new Reply(status, "application/json", List.of(body), Map.copyOf(headers));
     }
@@ -67,7 +67,7 @@ final class FakeServer implements AutoCloseable {
     this.server = server;
   }
 
-  /** Starts a server answering the scripted replies in order; the last one repeats. */
+  /** 启动一个按顺序回答脚本化回复的服务器；最后一条会被重复使用。 */
   static FakeServer start(Reply... script) {
     try {
       HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -83,7 +83,7 @@ final class FakeServer implements AutoCloseable {
 
   void script(Reply... script) {
     if (script.length == 0) {
-      throw new IllegalArgumentException("at least one scripted reply is required");
+      throw new IllegalArgumentException("至少需要一条脚本化回复");
     }
     this.responder = index -> script[Math.min(index, script.length - 1)];
   }

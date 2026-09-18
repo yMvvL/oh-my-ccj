@@ -6,22 +6,18 @@ import java.nio.file.Path;
 import java.util.Optional;
 
 /**
- * The check that runs by itself after an edit, and the line it puts into the tool's own result.
+ * 编辑之后自行运行的检查，以及它写进工具自身结果的那一行。
  *
- * <p>The point is *when* it runs: inside the `edit` or `write` call that caused it, so the compiler's
- * verdict is part of the same step as the change. A model that broke something finds out before it
- * says it is done, and a weak model — which is where this matters most — converges in one pass
- * instead of three.
+ * <p>关键在于它*何时*运行：就在引发它的那次 `edit` 或 `write` 调用之内，于是编译器的裁决与改动属于同一步。
+ * 弄坏了东西的模型在宣称自己做完之前就会知道，而弱模型——这里对它最要紧——会一趟收敛，而不是三趟。
  *
- * <p>Three things keep it cheap enough to do that. It runs at most one check per edit: the first
- * whose glob matches. It reports a bounded excerpt, not the whole build log, because the tool result
- * is a prompt the user pays for on every later turn. And a check that passes says so in one line —
- * the model should know the ground is solid, and the user watching the tool card should see that
- * something ran.
+ * <p>有三件事让它便宜到可以这么做。每次编辑最多运行一个检查：第一个 glob 匹配上的。它报告的是一段有界的
+ * 摘录，而不是整份构建日志，因为工具结果是一段用户此后每个回合都要为之付费的提示。而通过的检查只用一行说
+ * 明——模型应当知道脚下的地是实的，盯着工具卡片的用户也应当看到确实有东西跑过。
  */
 final class PostEditCheck {
 
-  /** How much of a failing check's output reaches the model, before the context's own cap. */
+  /** 失败的检查有多少输出能到达模型——在上下文自身的上限之前。 */
   private static final int REPORT_BYTES = 4 * 1024;
 
   private final Checks checks;
@@ -31,25 +27,24 @@ final class PostEditCheck {
   }
 
   /**
-   * Runs the check that applies to {@code edited}, if any, and renders what to append to the tool's
-   * result — or an empty string when no check applies, which is the common case.
+   * 运行适用于 {@code edited} 的那个检查（如果有），并渲染要追加到工具结果里的内容——没有检查适用
+   * 时返回空串，这是常见情况。
    *
-   * <p>A failure to read the config is reported rather than swallowed: a check block with a typo in
-   * it would otherwise look exactly like a project with no checks at all.
+   * <p>读取配置失败会被报出来而不是吞掉：否则一段有拼写错误的检查配置看起来会和一个没有任何检查的项目
+   * 一模一样。
    */
   String afterEditing(Path edited, ToolContext ctx) {
     Optional<Checks.Check> applicable;
     try {
       applicable = checks.forPath(edited, ctx.cwd());
     } catch (IllegalArgumentException | java.io.UncheckedIOException e) {
-      return "\n\n[check] the configured checks could not be read: " + e.getMessage();
+      return "\n\n[check] 配置的检查读不出来: " + e.getMessage();
     }
     if (applicable.isEmpty()) {
       return "";
     }
     Checks.Check check = applicable.get();
-    // Nothing starts once the turn has been aborted: a build is work, and work nobody is waiting
-    // for is the thing an abort exists to stop.
+    // 回合一旦被中止就不再启动任何东西：构建是活儿，而中止存在的意义正是停掉没人再等的活儿。
     if (ctx.isCancelled()) {
       return "";
     }
@@ -64,7 +59,7 @@ final class PostEditCheck {
               ctx);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      return "\n\n[check] " + check.command() + " — interrupted";
+      return "\n\n[check] " + check.command() + " — 已中断";
     }
     return "\n\n[check] " + check.command() + " — " + verdict(result, check);
   }
@@ -72,14 +67,13 @@ final class PostEditCheck {
   private static String verdict(ProcessRunner.Result result, Checks.Check check) {
     if (!result.finished()) {
       return result.cancelled()
-          ? "stopped: the turn was aborted"
-          : "timed out after " + check.timeoutSeconds() + "s; the process tree was killed";
+          ? "已停止：回合被中止了"
+          : "运行 " + check.timeoutSeconds() + "s 后超时；整个进程树已被杀掉";
     }
     if (result.exitCode() == 0) {
-      // "exit 0" rather than "clean": a command's own scope can be narrower than the glob that
-      // decided to run it — measured, `mvn -q -o -DskipTests compile` exits 0 for a broken file at
-      // the repository root because Maven only compiles `src/main/java` — and a word like "clean"
-      // would turn that into a claim the command never made.
+      // 说「exit 0」而不说「clean」：一条命令自身的覆盖范围可能比决定运行它的那个 glob 更窄——实测，
+      // `mvn -q -o -DskipTests compile` 对仓库根目录下一个坏掉的文件仍然退出 0，因为 Maven 只编译
+      // `src/main/java`——而「clean」这样的词会把这件事变成该命令从未做出的断言。
       return "exit 0 (" + result.millis() + "ms)";
     }
     String output = result.output().strip();
@@ -87,7 +81,7 @@ final class PostEditCheck {
         + result.exitCode()
         + " ("
         + result.millis()
-        + "ms) — fix this before going on:\n"
+        + "ms) — 继续之前先修好它:\n"
         + (output.isEmpty() ? "(no output)" : output);
   }
 }

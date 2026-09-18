@@ -1,11 +1,11 @@
 package com.ccj.agent.core;
 
 /**
- * Token and tool accounting for one session.
+ * 一个会话的 token 与工具用量记账。
  *
- * <p>Persisted next to the conversation so reopening a session continues its totals instead of
- * pretending the earlier turns were free. {@code cacheReported} exists because "no information" and
- * "nothing was cached" are different facts: only one of them is a 0% hit rate.
+ * <p>与对话存放在一起，这样重新打开会话时总计能接着算，而不是假装早先的回合不要钱。
+ * {@code cacheReported} 之所以存在，是因为「没有信息」和「没有命中缓存」是两个不同的事实：只有后者是
+ * 0% 命中率。
  */
 public record UsageTotals(
     long inputTokens,
@@ -20,10 +20,10 @@ public record UsageTotals(
     boolean cacheReported) {
 
   /**
-   * The books as they were before compaction existed: no compactions counted.
+   * 压缩功能出现之前的账目形态：不计压缩次数。
    *
-   * <p>Kept as an overload rather than making every caller spell out a field that is almost always
-   * zero — and it is what a session file written by an older build decodes to.
+   * <p>保留为重载，而不是让每个调用方都写出一个几乎总是零的字段——而且旧版本写下的会话文件解码出来就是
+   * 它。
    */
   public UsageTotals(
       long inputTokens,
@@ -52,7 +52,7 @@ public record UsageTotals(
     return new UsageTotals(0, 0, 0, 0, 0, 0, 0, 0, 0, false);
   }
 
-  /** True when nothing has been recorded: what a session that never ran a turn looks like. */
+  /** 什么都没记录时为 true：一个从未跑过回合的会话就长这样。 */
   public boolean isEmpty() {
     return inputTokens == 0
         && outputTokens == 0
@@ -65,7 +65,7 @@ public record UsageTotals(
         && !cacheReported;
   }
 
-  /** Cache hit rate, or null when the provider never reported cache figures. */
+  /** 缓存命中率；提供方从未报告过缓存数字时为 null。 */
   public Double cacheHitRate() {
     if (!cacheReported) {
       return null;
@@ -99,11 +99,10 @@ public record UsageTotals(
   }
 
   /**
-   * One compaction, which costs a real request but is not a turn of the conversation.
+   * 一次压缩，它花掉一次真实请求，但不是对话的一个回合。
    *
-   * <p>Counted separately because folding it into {@code modelTurns} would make the panel's "model
-   * turns" mean two different things, and folding it into nothing at all would hide tokens the user
-   * paid for. Its own field is the only shape where both stay true.
+   * <p>单独计数，是因为把它并进 {@code modelTurns} 会让面板上的「模型回合」有两种含义，而完全不记又会
+   * 藏起用户付了钱的 token。只有给它自己的字段，两者才都成立。
    */
   public UsageTotals plusCompaction() {
     return new UsageTotals(

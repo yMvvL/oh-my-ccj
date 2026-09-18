@@ -1,16 +1,13 @@
-/* The DeepSeek Harness design tokens, copied verbatim from the installed
- * package `@deepseek-ai/dsh` -> `@deepseek-ai/dsh-client-ui-theme/lib/styles/`.
+/* DeepSeek Harness 的设计 token，从已安装的包 `@deepseek-ai/dsh` ->
+ * `@deepseek-ai/dsh-client-ui-theme/lib/styles/` 原样拷贝而来。
  *
- * This file is the palette authority for the page: `style.css` below it only
- * consumes `--dsw-*` names, and the dark theme is the harness's own switch
- * (`body[data-ds-dark-theme]`). The sheets are byte-identical to the originals
- * — including their Chinese section comments — so a future upgrade is a
- * re-copy rather than a re-derivation. `shiki.css` is the one sheet left out:
- * the transcript renders plain code, with no highlighter to name its tokens.
+ * 本文件是这个页面的调色板权威：它下面的 `style.css` 只消费 `--dsw-*` 名字，而深色主题
+ * 用的是工具架自己的开关（`body[data-ds-dark-theme]`）。这些表与原版逐字节相同 —— 包括
+ * 它们的中文分节注释 —— 所以将来的升级是一次重新拷贝，而不是一次重新推导。唯一被排除
+ * 的表是 `shiki.css`：转录渲染的是纯代码，没有高亮器来给它的 token 命名。
  *
- * Order matters and follows the package's own README: base (font stacks,
- * easings) -> design-platform (static palette + alias semantics) -> shadows and
- * type ramp -> scrollbar skin.
+ * 顺序很重要，遵循该包自己的 README：base（字体栈、缓动）-> design-platform（静态
+ * 调色板 + 别名语义）-> 阴影与字号阶梯 -> 滚动条皮肤。
  */
 
 /* ===== base.css ===== */

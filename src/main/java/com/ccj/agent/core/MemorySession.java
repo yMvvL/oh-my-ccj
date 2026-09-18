@@ -3,7 +3,7 @@ package com.ccj.agent.core;
 import java.util.ArrayList;
 import java.util.List;
 
-/** In-memory session, used by tests and by one-shot runs that need no history on disk. */
+/** 内存中的会话，供测试使用，也供不需要在磁盘上留历史的单次运行使用。 */
 public final class MemorySession implements Session {
 
   private final String id;

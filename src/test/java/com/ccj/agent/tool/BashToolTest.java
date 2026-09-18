@@ -50,14 +50,14 @@ class BashToolTest {
     long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().contains("timed out"), result.content());
-    assertTrue(elapsedMillis < 15_000, "timeout did not stop the process: " + elapsedMillis + "ms");
+    assertTrue(result.content().contains("超时"), result.content());
+    assertTrue(elapsedMillis < 15_000, "超时没有停住这个进程: " + elapsedMillis + "ms");
   }
 
   @Test
   void commandsThatReadStdinSeeTheEndOfItInsteadOfHanging() throws Exception {
-    // The bug: the child's stdin pipe was never closed, so `cat` with no arguments waited for input
-    // that could not come and the call only returned when the timeout killed it.
+    // 曾经的 bug：子进程的 stdin 管道从未关闭，于是无参数的 `cat` 一直等一个不可能到来的输入，
+    // 这次调用直到超时把它杀掉才返回。
     long started = System.nanoTime();
 
     ToolResult result =
@@ -69,13 +69,13 @@ class BashToolTest {
     long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
     assertFalse(result.error(), result.content());
     assertTrue(result.content().contains("done"), result.content());
-    assertTrue(elapsedMillis < 5_000, "it must not wait for input: " + elapsedMillis + "ms");
+    assertTrue(elapsedMillis < 5_000, "它绝不能等待输入: " + elapsedMillis + "ms");
   }
 
   @Test
   void aCharacterCutInHalfByTheOutputBudgetIsDroppedRatherThanMangled() throws Exception {
-    // 59 bytes of head, a three-byte character, then enough tail to fill the budget: the character
-    // straddles the head's cut, and half of it must not become a replacement glyph.
+    // 59 字节的头部，一个三字节字符，然后填满预算的尾部：这个字符横跨头部的切口，它的一半绝不能
+    // 变成替换字形。
     String command = "printf 'a%.0s' {1..59}; printf '中'; printf 'b%.0s' {1..200}";
 
     ToolResult result =
@@ -87,15 +87,15 @@ class BashToolTest {
     assertFalse(result.error(), result.content());
     assertFalse(result.content().contains("\uFFFD"), result.content());
     assertTrue(
-        result.content().contains("a".repeat(59) + "\n... omitted"),
-        "the head keeps every whole byte: " + result.content());
+        result.content().contains("a".repeat(59) + "\n... 省略了"),
+        "头部保留每一个完整的字节: " + result.content());
     assertTrue(result.content().endsWith("b".repeat(40)), result.content());
   }
 
   @Test
   void outputThatFitsIsDecodedAsOneBuffer() throws Exception {
-    // Nothing is dropped, so the two buffers are contiguous: a character straddling their boundary
-    // must survive intact instead of being lost between two decodes.
+    // 什么都没被丢掉，所以两块缓冲是连续的：跨在它们边界上的字符必须完整存活，而不是在两次解码之间
+    // 丢失。
     String command = "printf 'a%.0s' {1..59}; printf '中'; printf 'b%.0s' {1..38}";
 
     ToolResult result =
@@ -106,7 +106,7 @@ class BashToolTest {
 
     assertFalse(result.error(), result.content());
     assertTrue(result.content().contains("中"), result.content());
-    assertFalse(result.content().contains("omitted"), result.content());
+    assertFalse(result.content().contains("省略了"), result.content());
   }
 
   @Test
@@ -117,8 +117,8 @@ class BashToolTest {
 
     assertFalse(result.error(), result.content());
     assertTrue(result.content().startsWith("exit code 0\n"), result.content());
-    assertTrue(result.content().contains("... omitted "), result.content());
-    assertTrue(result.content().contains(" bytes ..."), result.content());
+    assertTrue(result.content().contains("... 省略了 "), result.content());
+    assertTrue(result.content().contains(" 字节 ..."), result.content());
     assertTrue(result.content().contains("1\n2\n"), result.content());
     assertTrue(result.content().endsWith("5000\n"), result.content());
     assertTrue(result.content().length() < 500, result.content());
@@ -143,7 +143,7 @@ class BashToolTest {
                 new ToolContext(dir, Approver.ALWAYS, 4096));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().contains("not a directory"), result.content());
+    assertTrue(result.content().contains("不是目录"), result.content());
   }
 
   @Test

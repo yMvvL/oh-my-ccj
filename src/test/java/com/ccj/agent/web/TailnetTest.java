@@ -9,14 +9,13 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 /**
- * Finding the tailnet address is what makes {@code --host tailscale} a one-word answer instead of an
- * IP the user has to look up, so the two things that can go wrong are pinned here: reading the wrong
- * line out of the CLI's output, and accepting an address that is not a tailnet one.
+ * 找到 tailnet 地址，才让 {@code --host tailscale} 成为一个词的答案，而不是一个用户还得去查的
+ * IP；所以这里钉住了两件可能出错的事：从 CLI 输出里读错了行，以及接受一个并不是 tailnet 的
+ * 地址。
  *
- * <p>{@link Tailnet#address()} itself is machine-dependent by nature — the case for it is that this
- * host answers, and the case for every other host is that it does not — so what is asserted is the
- * invariant that matters either way: an address is only ever returned for an interface that looks
- * like Tailscale's, and it is always inside the range Tailscale allocates from.
+ * <p>{@link Tailnet#address()} 本身就依赖机器——它成立的理由是这台主机答得出，而对其他任何主机
+ * 成立的理由是它答不出——所以断言的是无论哪种情况都重要的那条不变量：只有看起来像 Tailscale 的
+ * 接口才会被返回地址，而且那个地址永远落在 Tailscale 分配的范围内。
  */
 class TailnetTest {
 
@@ -26,8 +25,8 @@ class TailnetTest {
         "100.72.92.41",
         Tailnet.parse("100.72.92.41\n").map(InetAddress::getHostAddress).orElse(""));
 
-    // A banner, a blank line and the tailnet address: the CLI has printed more than an address
-    // before now, and the answer is the line that is one.
+    // 一段横幅、一个空行，然后是 tailnet 地址：CLI 以前就打印过比一个地址更多的东西，而答案
+    // 就是那行确实是个地址的行。
     assertEquals(
         "100.101.102.103",
         Tailnet.parse("warning: no state\n\n100.101.102.103\n")
@@ -40,10 +39,10 @@ class TailnetTest {
     assertEquals(Optional.empty(), Tailnet.parse(""));
     assertEquals(Optional.empty(), Tailnet.parse(null));
     assertEquals(Optional.empty(), Tailnet.parse("tailscale: command not found"));
-    assertEquals(Optional.empty(), Tailnet.parse("192.168.1.20\n"), "a LAN address is not one");
-    assertEquals(Optional.empty(), Tailnet.parse("fd7a:115c:a1e0::1\n"), "and not an IPv6 one");
-    assertEquals(Optional.empty(), Tailnet.parse("100.63.255.255\n"), "just below the range");
-    assertEquals(Optional.empty(), Tailnet.parse("100.128.0.0\n"), "and just above it");
+    assertEquals(Optional.empty(), Tailnet.parse("192.168.1.20\n"), "局域网地址不算");
+    assertEquals(Optional.empty(), Tailnet.parse("fd7a:115c:a1e0::1\n"), "IPv6 的也不算");
+    assertEquals(Optional.empty(), Tailnet.parse("100.63.255.255\n"), "刚好在范围之下");
+    assertEquals(Optional.empty(), Tailnet.parse("100.128.0.0\n"), "以及刚好在它之上");
   }
 
   @Test
@@ -62,7 +61,7 @@ class TailnetTest {
     assertTrue(Tailnet.isTailnetInterface("Tailscale"));
     assertTrue(Tailnet.isTailnetInterface("tailscale1"));
     assertFalse(Tailnet.isTailnetInterface("eth0"));
-    assertFalse(Tailnet.isTailnetInterface("utun4"), "macOS names its tun devices nothing like this");
+    assertFalse(Tailnet.isTailnetInterface("utun4"), "macOS 给它的 tun 设备起的名字完全不是这样");
     assertFalse(Tailnet.isTailnetInterface(null));
   }
 
@@ -77,15 +76,15 @@ class TailnetTest {
         }
       }
     } catch (Exception e) {
-      // Nothing to inspect: the assertion below is then vacuous, which is the honest outcome.
+      // 没有东西可查：下面的断言于是成了空话，而这是诚实的结果。
     }
 
     Optional<InetAddress> found = Tailnet.address();
     assertFalse(
         found.isPresent() && !Tailnet.isTailnetAddress(found.get()),
-        "a tailnet address is in the tailnet range: " + found);
+        "tailnet 地址就在 tailnet 范围里：" + found);
     if (anyTailnetInterface) {
-      assertTrue(found.isPresent(), "an interface named like Tailscale carries the address");
+      assertTrue(found.isPresent(), "名字像 Tailscale 的接口就带着这个地址");
     }
   }
 }

@@ -15,12 +15,11 @@ import java.util.List;
 import java.util.PriorityQueue;
 
 /**
- * Glob matcher over the session tree.
+ * 在会话目录树上做 glob 匹配。
  *
- * <p>Patterns are matched against forward-slash relative paths so they behave the same on every
- * platform, and a leading {@code **}{@code /} also matches top-level files - users expect {@code
- * **}{@code /*.java} to include the file sitting in the working directory. Results are ordered by
- * modification time because when a session is looking for the file it just touched, newest wins.
+ * <p>模式匹配的是以正斜杠分隔的相对路径，因此在每个平台上的行为都一致；开头的 {@code **}{@code /} 也能
+ * 匹配顶层文件——用户期望 {@code **}{@code /*.java} 包含那个就放在工作目录里的文件。结果按修改时间排序，
+ * 因为当会话在找它刚碰过的那个文件时，最新的胜出。
  */
 public final class GlobTool implements Tool {
 
@@ -69,14 +68,14 @@ public final class GlobTool implements Tool {
     String pathArg = ToolSupport.optionalText(args, "path");
     Path base = pathArg == null || pathArg.isBlank() ? ctx.cwd() : ctx.resolve(pathArg);
     if (!Files.isDirectory(base)) {
-      return ToolResult.error("path is not a directory: " + ToolSupport.display(ctx, base));
+      return ToolResult.error("path 不是目录: " + ToolSupport.display(ctx, base));
     }
 
     List<PathMatcher> matchers;
     try {
       matchers = matchersFor(pattern);
     } catch (RuntimeException e) {
-      return ToolResult.error("invalid glob pattern '" + pattern + "': " + e.getMessage());
+      return ToolResult.error("glob 模式 '" + pattern + "' 无效: " + e.getMessage());
     }
 
     PriorityQueue<Found> newest = new PriorityQueue<>(Comparator.comparingLong(Found::modified));
@@ -118,18 +117,19 @@ public final class GlobTool implements Tool {
     }
     long omitted = matched[0] - shown;
     if (omitted > 0) {
-      out.append("... ").append(omitted).append(" more matches omitted ...\n");
+      out.append("... 省略了 ").append(omitted).append(" 个匹配 ...\n");
     }
     if (shown == 0) {
       return ToolResult.ok(
           matched[0] == 0
-              ? "no files match '" + pattern + "' under " + ToolSupport.display(ctx, base)
-              : matched[0]
-                  + " file(s) match '"
+              ? "'" + pattern + "' 在 " + ToolSupport.display(ctx, base) + " 下没有任何匹配的文件"
+              : "有 "
+                  + matched[0]
+                  + " 个文件匹配 '"
                   + pattern
-                  + "' but their paths do not fit the "
+                  + "'，但它们的路径放不进 "
                   + ctx.outputLimitBytes()
-                  + " byte output limit");
+                  + " 字节的输出上限");
     }
     return ToolResult.ok(out.toString());
   }

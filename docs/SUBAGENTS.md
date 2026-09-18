@@ -1,130 +1,112 @@
-# Sub-agents
+# 子代理
 
-A main agent that hands work to helpers, reads their results, and shows the user none of it.
+一个把工作交给帮手、读回它们的结果、并且一点过程都不给用户看的主 agent。
 
-## Why
+## 为什么
 
-The expensive thing in a long session is not time, it is context. An agent that reads thirty files to
-find the three that matter has spent thirty files' worth of tokens in the conversation, and every
-later request re-sends them — which is why sessions end up needing `/compact` at all. A sub-agent
-reads the thirty and reports the three. The main conversation grows by a conclusion instead of by a
-search.
+长会话里昂贵的东西不是时间，是上下文。一个读了三十个文件才找出其中重要的三个的 agent，已经
+在对话里花掉了三十个文件分量的 token，而之后每个请求都会重新发送它们——这正是会话最终需要
+`/compact` 的原因。子代理读完那三十个，只汇报那三个。主对话增长的是结论，而不是一次搜索过程。
 
-That is the whole value, and it is worth being precise about because the other one people expect —
-speed — is mostly not there. Real task graphs are deep chains (statement → solution → data → verify),
-and a chain does not parallelise. Parallelism pays at the two ends: the exploration before the work,
-and the verification after it. Quoting a ~40% saving would be optimistic; the context saving is the
-one that shows up every turn.
+这就是它的全部价值，值得把话说准：人们期待的另一项好处——速度——其实基本不存在。真实的任务
+图是深链条（陈述 → 方案 → 数据 → 验证），而链条无法并行。并行只在两端有收益：干活之前的探索，
+和干完之后的验证。说能省 40% 是乐观了；真正每个回合都体现出来的是上下文上的节省。
 
-## The shape
+## 形态
 
 ```
-main agent
-  ├── task(...) ──> sub-agent ──> returns a report      (read-only, parallel-safe)
-  ├── task(...) ──> sub-agent ──> returns a report
-  └── decides what to keep, deletes the rest
+主 agent
+  ├── task(...) ──> 子代理 ──> 返回一份报告          (只读，可并行)
+  ├── task(...) ──> 子代理 ──> 返回一份报告
+  └── 决定留下什么，删掉其余
 ```
 
-A sub-agent runs a real `AgentLoop` against a `MemorySession`: same loop, same tools, same approval
-machinery — but no file, no id in the sidebar, and no events on the wire. The user sees the main
-agent's summary and nothing else. That invisibility is the point, not a side effect.
+子代理在 `MemorySession` 上跑的是真正的 `AgentLoop`：同一个循环、同一套工具、同一套审批机制
+——但没有文件、侧栏里没有 id、wire 上也没有事件。用户只看到主 agent 的汇总，别的什么都看不到。
+这种不可见是目的本身，不是副作用。
 
-## Three roles, three sets of tools
+## 三种角色，三套工具
 
-The role decides the tools, and the tools decide what can go wrong.
+角色决定工具，工具决定可能会出什么问题。
 
-| Role | Tools | Why |
+| 角色 | 工具 | 理由 |
 |---|---|---|
-| `explore` | `read`, `glob`, `grep` | Nothing it does can change anything, so nothing it does needs asking. The default. |
-| `verify` | `read`, `glob`, `grep` | A verifier that can fix what it finds is not verifying. It reports; the main agent acts. |
-| `build` | all of the above plus `write`, `edit` | The only role that changes files. It works in the session's own directory and asks before it writes, like the main agent. |
+| `explore` | `read`, `glob`, `grep` | 它做的事不可能改变任何东西，所以它做的事都不需要询问。默认角色。 |
+| `verify` | `read`, `glob`, `grep` | 一个能顺手修掉自己发现的问题的验证者，就不是在验证了。它只报告，由主 agent 行动。 |
+| `build` | 以上全部，外加 `write`, `edit` | 唯一会改动文件的角色。它在会话自己的工作目录里干活，写之前先询问，和主 agent 一样。 |
 
-`explore` and `verify` take the same tools on purpose — they differ in what the prompt asks for, not
-in what they may touch. Splitting them by capability would be inventing a constraint the work does
-not have.
+`explore` 和 `verify` 用同一套工具是刻意的——它们的区别在于提示词要求它们做什么，而不是它们
+能碰什么。按能力把两者拆开，等于凭空造出一条工作本身并不存在的约束。
 
-No role gets `task`. Recursion is refused by construction rather than by a depth counter: a
-sub-agent's registry simply does not contain the tool, so it cannot ask for one, and there is no
-depth limit to get wrong.
+任何角色都拿不到 `task`。递归是靠结构本身拒绝掉的，而不是靠深度计数器：子代理的注册表里根本
+没有这个工具，所以它没法请求一个，也就不存在会设错的深度上限。
 
-## Where a sub-agent writes
+## 子代理在哪里写文件
 
-In the session's own working directory, like the main agent — with no staging area and no promote step.
+在会话自己的工作目录里，和主 agent 一样——没有暂存区，也没有 promote 这一步。
 
-An earlier version staged a writing sub-agent's files in `<cwd>/.ccj-work/rN/` for the main agent to
-promote. The reasoning was sound and the result was worse. Staging was only defensible while
-sub-agents ran with `Approver.ALWAYS` — it kept an unapprovable writer out of the project — but it
-bought that at a price paid on every run:
+早先的版本会把写文件的子代理的产出暂存在 `<cwd>/.ccj-work/rN/`，再由主 agent promote。
+推理是成立的，结果却更糟。暂存只有在子代理以 `Approver.ALWAYS` 运行时才说得通——它把不可审批的
+写者挡在项目之外——但为此付的代价每一次运行都要付：
 
-- the main agent had to promote each file by hand, in the same turn;
-- a promotion that did not happen in that turn was discarded at the end of it, with a notice the user
-  had to be watching for;
-- the report had to explain which paths were finished work and which were by-products, and a main
-  agent that read that list wrong lost the file;
-- and none of it was needed once the approval travels to the user.
+- 主 agent 必须在同一个回合里手工 promote 每个文件；
+- 没在那个回合里完成的 promote 会在回合结束时被丢弃，只留一条用户必须正好看到才能发现的
+  通知；
+- 报告必须说明哪些路径是成品、哪些是副产物，而主 agent 一旦读错这份清单，文件就丢了；
+- 而且一旦审批能够到达用户，这一切就都不需要了。
 
-So a sub-agent asks. Its request goes through the conversation that started it — it runs on that
-turn's thread, so the prompt appears in the transcript the user is already watching, attributed to
-that conversation — and the same refusal stops the same write. Aborting the turn answers any pending
-request. The sub-agent is invisible in what it reads; it is not invisible in what it does.
+所以子代理会先询问。它的请求走的是启动它的那个对话——它跑在那个回合的线程上，所以提示会
+出现在用户本来就在看的转录里，并归属于那个对话——同样的拒绝也会挡住同样的写入。中止该回合会为
+所有待批的请求作答。子代理在读什么这件事上不可见；它在做什么这件事上并非不可见。
 
-## Reports, not transcripts
+## 报告，而不是转录
 
-A sub-agent returns a structured report, not its conversation:
+子代理返回的是一份结构化报告，而不是它的对话：
 
 ```
 STATUS: done | blocked | failed
-SUMMARY: one paragraph, what was found or produced
+SUMMARY: 一段话，说明发现了什么或产出了什么
 FILES:
-  path        final | disposable    one line on what it is
-FINDINGS:   (verify/explore) the actual answer, with paths and line numbers
+  path        final | disposable    一行说明它是什么
+FINDINGS:   (verify/explore) 真正的答案，带上路径和行号
 ```
 
-The `FILES` block is what lets the main agent decide what to keep **without reading the files**. If it
-had to open each one to judge it, the context saving this feature exists for would be spent on the
-judgement instead.
+正是 `FILES` 这一段让主 agent 能**不读文件**就决定留下什么。如果它必须逐个打开才能判断，
+那这个特性所要节省的上下文，就会花在判断本身上了。
 
-An oversized report is truncated with a marker, the way tool output already is. A verbose sub-agent
-must not be able to blow the budget of the conversation it was meant to protect.
+过大的报告会像工具输出那样带一个标记被截断。一个话多的子代理，不能有能力把它本该保护的那个
+对话的预算撑爆。
 
-## Rules the implementation enforces
+## 实现强制执行的规则
 
-Each of these is a claim the code holds. Most of them began as a measured failure rather than a
-design intention, which is why they are written down here.
+下面每一条都是代码所坚持的断言。它们大多起源于一次实测出来的失败，而不是某个设计意图——这
+正是要把它们写下来的原因。
 
-- **Approval reaches the user, and it is the guard.** A `build` sub-agent runs with the
-  conversation's own approver, so a write or a shell command is put to the same person the main agent
-  asks — in the transcript they are already watching, because the sub-agent runs on that turn's
-  thread — and a refusal stops the write. The sub-agent is invisible in what it *reads*, never in what
-  it *does*. The staging directory that once made an unapprovable writer tolerable is gone (see
-  above): the approval is what replaced it.
-- **One writer at a time.** Two writing runs cannot overlap. Deciding whether two tasks will touch the
-  same file needs to understand what they mean, which this cannot do — so it does not try. Readers are
-  unaffected and still run in parallel.
-- **The deadline covers the queue.** A writer waiting for the lock is already consuming the caller's
-  patience, so the wait is a timed `tryLock` bounded by the same deadline rather than starting the
-  clock afterwards. Waiting on a lock is not a state `abort()` can reach — the worker thread is not
-  set and no model call is in flight — which is why the wait ends on the deadline rather than on an
-  interrupt.
-- **Cancellation propagates, and is checked at the boundaries.** Aborting the main turn aborts the
-  sub-agents it started, through the same flag the tools already honour. A 100 ms poller alone is a
-  race against a fast provider, so the flag is also read before the work starts and again after it
-  finishes.
-- **A deadline, always.** A sub-agent that runs away cannot hold the main conversation open. On
-  expiry it is cancelled and reports what it had.
-- **No `task` in a sub-registry.** Recursion is refused by construction rather than by a depth
-  counter: the tool is simply absent, so a sub-agent cannot ask for one and there is no limit to get
-  wrong.
-- **Token accounting stays honest.** A sub-agent's usage is added to the conversation that started it,
-  because that is who paid. Hiding the reading is the feature; hiding the cost would be a token count
-  that quietly omits half of what was spent.
+- **审批能到达用户，而它就是那道关卡。** `build` 子代理使用该对话自己的审批器，所以一次写入
+  或一条 shell 命令会交给主 agent 所询问的同一个人——而且就出现在他们本来就在看的转录里，因为
+  子代理跑在那个回合的线程上——拒绝则会让这次写入停下。子代理在它*读*什么上不可见，在它*做*
+  什么上绝不可见。那个曾让不可审批的写者变得尚可忍受的暂存目录已经没了（见上）：替代它的就是
+  审批。
+- **同一时间只有一个写者。** 两次写操作不能重叠。要判断两个任务是否会碰到同一个文件，需要
+  理解它们的含义，而这里做不到——所以它不去试。读取不受影响，仍然并行执行。
+- **截止时间把排队也算在内。** 写者等锁的时候已经在消耗调用者的耐心了，所以这个等待是一个
+  受同一截止时间约束的定时 `tryLock`，而不是等拿到锁之后才开始计时。等待锁不是 `abort()` 能
+  触及的状态——worker 线程还没设置，也没有模型调用在途中——所以这个等待是在截止时间上结束，
+  而不是靠中断。
+- **取消会传播，并且在边界处检查。** 中止主回合会中止它启动的子代理，用的是工具本来就遵守
+  的同一个标志。只靠 100 ms 的轮询器，是在和快速的提供方赛跑，所以这个标志在工作开始前也会
+  读一次，结束后再读一次。
+- **永远有截止时间。** 一个跑飞的子代理不能把主对话一直挂住。到期时它会被取消，并报告它
+  已有的成果。
+- **子注册表里没有 `task`。** 递归是靠结构本身拒绝掉的，而不是靠深度计数器：这个工具根本
+  不存在，所以子代理没法请求一个，也就不存在会设错的上限。
+- **token 统计保持诚实。** 子代理的用量会累加到启动它的那个对话上，因为是它付的钱。把
+  「读了多少」藏起来正是特性所在；把成本藏起来，则等于一份悄悄漏掉一半开销的 token 计数。
 
-## What is deliberately not here
+## 故意没有的东西
 
-- **Sub-agents talking to each other.** They report to the main agent, which is the only thing that
-  sees the whole picture. A mesh of agents that can address each other is a different design with a
-  different failure mode.
-- **A depth limit.** Not needed once `task` is absent from every sub-registry, and a number that
-  cannot be reached is a number nobody maintains.
-- **Parallel writers.** See above: it is not a matter of being careful, it is that the failure is
-  invisible.
+- **子代理之间互相说话。** 它们只向主 agent 汇报，而主 agent 是唯一能看到全貌的东西。一个
+  可以互相寻址的代理网状结构是另一种设计，也有另一种失效模式。
+- **深度上限。** 一旦每个子注册表里都没有 `task`，它就不需要了；而一个永远到不了的数字，
+  是没人会去维护的数字。
+- **并行的写者。** 见上：这不是「小心一点」的问题，而是失败本身不可见的问题。

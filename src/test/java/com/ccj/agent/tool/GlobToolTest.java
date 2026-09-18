@@ -49,7 +49,7 @@ class GlobToolTest {
       ToolResult result = new GlobTool().execute("{\"pattern\":\"**/*.java\"}", ToolContext.of(dir));
 
       assertFalse(result.content().contains("Linked.java"), result.content());
-      assertTrue(result.content().contains("no files match"), result.content());
+      assertTrue(result.content().contains("没有任何匹配的文件"), result.content());
     } finally {
       Files.deleteIfExists(outside.resolve("Linked.java"));
       Files.deleteIfExists(outside);
@@ -66,7 +66,7 @@ class GlobToolTest {
     ToolResult result = new GlobTool().execute("{\"pattern\":\"many/*.txt\"}", ToolContext.of(dir));
 
     assertFalse(result.error(), result.content());
-    assertTrue(result.content().contains("10 more matches omitted"), result.content());
+    assertTrue(result.content().contains("省略了 10 个匹配"), result.content());
   }
 
   @Test
@@ -74,6 +74,6 @@ class GlobToolTest {
     ToolResult result = new GlobTool().execute("{\"pattern\":\"[unclosed\"}", ToolContext.of(dir));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().contains("invalid glob pattern"), result.content());
+    assertTrue(result.content().contains("glob 模式 '[unclosed' 无效"), result.content());
   }
 }

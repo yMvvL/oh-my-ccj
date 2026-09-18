@@ -12,8 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The catalogue is the seam a future router implements, so its shape is pinned: providers carry the
- * protocol and the endpoint, models carry where they came from.
+ * 目录是未来某个路由器要实现的那道接缝，所以它的形状被钉住了：提供方带着协议和端点，模型带着它们来自哪里。
  */
 class ConfigModelCatalogTest {
 
@@ -59,16 +58,16 @@ class ConfigModelCatalogTest {
 
   @Test
   void anEmptiedListOffersNothingInsteadOfEveryBuiltIn() {
-    // The bug: `shown()` returned an empty list both for "never narrowed" and for "I removed the
-    // last provider", so deleting the final one read as "no opinion" and every built-in came back.
+    // 那个 bug：`shown()` 对「从未收窄」和「我删掉了最后一个提供方」都返回空列表，于是删掉最后一个被读成
+    // 「没有意见」，所有内置项又回来了。
     ProviderStore store = ProviderStore.open(tmp);
     store.setShown(List.of("openai"));
     store.setShown(List.of());
     ConfigModelCatalog catalog = new ConfigModelCatalog(store);
 
     assertTrue(store.shown().isEmpty());
-    assertTrue(store.narrowed(), "an emptied list is still an answer");
-    assertTrue(catalog.providers().isEmpty(), "and the catalogue honours it: " + catalog.providers());
+    assertTrue(store.narrowed(), "被清空的列表仍是一个答案");
+    assertTrue(catalog.providers().isEmpty(), "而目录照办：" + catalog.providers());
     assertTrue(catalog.models().isEmpty());
   }
 

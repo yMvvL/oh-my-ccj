@@ -21,7 +21,7 @@ class AnthropicProviderTest {
       "{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\"}}}";
   private static final String TOOL_ARGUMENTS = "{\"pattern\":\"*.java\"}";
 
-  /** Chunks are cut every 19 characters, so frames and the JSON inside them split mid-token. */
+  /** 每 19 个字符切一刀，所以帧和帧里的 JSON 都会从 token 中间断开。 */
   private static final String STREAM =
       """
       event: message_start
@@ -214,8 +214,8 @@ class AnthropicProviderTest {
 
   @Test
   void aTruncatedToolCallStillLeavesASendableRequest() throws Exception {
-    // A stream cut off mid-call leaves half-written arguments behind. Throwing while the *next*
-    // request is built would strand the session: every later turn rebuilds the same history.
+    // 一次在调用中途被切断的流会留下只写了一半的参数。在构建*下一个*请求时抛出会让这个会话搁浅：之后每个
+    // 回合都会重建同一段历史。
     try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
       AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
       Provider.Request request =
@@ -237,7 +237,7 @@ class AnthropicProviderTest {
       assertEquals(
           Json.parse("{}"),
           Json.parse(server.body(0)).path("messages").path(1).path("content").path(0).path("input"),
-          "an unparsable argument string becomes an empty input, not a dead session");
+          "无法解析的参数串会变成空 input，而不是一个死掉的会话");
       provider.close();
     }
   }
@@ -276,9 +276,8 @@ class AnthropicProviderTest {
 
   @Test
   void thinkingBlocksAreKeptAndHandedBackWhenThinkingIsOn() throws Exception {
-    // The API verifies the signature of every thinking block it is handed, and rejects a turn that
-    // drops the ones the model produced; keeping them is the difference between a working
-    // extended-thinking conversation and one that fails on its second request.
+    // API 会校验交给它的每一个思考块的签名，并拒绝丢掉模型产出的那些块的回合；留住它们，就是一段能用的扩展
+    // 思考对话和一段在第二次请求上就失败的对话之间的区别。
     String script =
         """
         event: content_block_start
@@ -314,9 +313,9 @@ class AnthropicProviderTest {
       assertEquals(
           List.of(new Message.Thinking("Let me look", "sig-abc", "")),
           assistant.thinking(),
-          "the block and its signature travel with the turn");
+          "这个块和它的签名跟着回合一起走");
 
-      // And the next request hands it back, before anything else in that assistant turn.
+      // 而下一个请求会把它交还回去，放在那个助手回合里所有内容之前。
       provider.complete(
           new Provider.Request(
               "claude-test",
@@ -340,15 +339,15 @@ class AnthropicProviderTest {
               ]
               """),
           assistantTurn.path("content"),
-          "thinking first, then the call it reasoned about");
+          "思考在前，然后是它推理出的那次调用");
       provider.close();
     }
   }
 
   @Test
   void thinkingBlocksAreNotReplayedWhenThinkingIsOff() throws Exception {
-    // The blocks belong to a setting the request is no longer asking for; sending them anyway is
-    // how a user who switches the tier back to `default` would get a rejected turn.
+    // 这些块属于一个请求已经不再要求的设置；照发不误，正是把档位切回 `default` 的用户会得到一个被拒回合的
+    // 原因。
     try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
       AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
       Message.Assistant withThinking =
@@ -372,15 +371,14 @@ class AnthropicProviderTest {
               "[{\"type\": \"text\", \"text\": \"answer\","
                   + " \"cache_control\": {\"type\": \"ephemeral\"}}]"),
           content,
-          "no thinking block without a reasoning tier");
+          "没有推理档位就不带思考块");
       provider.close();
     }
   }
 
   @Test
   void anUnsignedThinkingBlockIsNotReplayed() throws Exception {
-    // A stream cut before the signature arrived leaves text without a signature; the API would
-    // reject it, so it is dropped rather than sent.
+    // 在签名到达之前被切断的流会留下没有签名的文本；API 会拒绝它，所以宁可丢掉也不发出去。
     try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
       AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
       Message.Assistant unsigned =
@@ -458,17 +456,16 @@ class AnthropicProviderTest {
 
   @Test
   void cacheBreakpointsLandOnTheSystemTheToolsAndTheEndOfTheConversation() throws Exception {
-    // Prompt caching is the reason a long agent session does not cost its whole history every turn:
-    // turn n+1 sends everything turn n sent plus its answer, so the stable prefix is the system
-    // prompt, the tool set, and the conversation up to now. Those are the three breakpoints, and the
-    // API allows four — a fourth would be spent for nothing.
+    // 前缀缓存正是长代理会话不必每个回合都为整段历史付钱的原因：回合 n+1 会发出回合 n 发过的一切加上它的回
+    // 答，所以稳定的前缀是系统提示词、工具集，以及到目前为止的对话。这就是那三个断点，而 API 允许四个——第
+    // 四个会白花掉。
     try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(STREAM))) {
       AnthropicProvider provider = new AnthropicProvider(server.url(), "sk-ant-test");
       provider.complete(request(), event -> {});
 
       JsonNode body = Json.parse(server.body(0));
-      assertEquals(3, countCacheControl(body), "three breakpoints: " + body);
-      assertTrue(body.path("system").isArray(), "the system prompt is a block array now: " + body);
+      assertEquals(3, countCacheControl(body), "三个断点：" + body);
+      assertTrue(body.path("system").isArray(), "系统提示词现在是一个块数组：" + body);
       assertEquals(
           "ephemeral",
           body.path("system").get(0).path("cache_control").path("type").asText(),
@@ -477,24 +474,24 @@ class AnthropicProviderTest {
       assertEquals(
           "ephemeral",
           tools.get(tools.size() - 1).path("cache_control").path("type").asText(),
-          "after the last tool, so tools and system cache together: " + body);
+          "在最后一个工具之后，好让工具和系统一起缓存：" + body);
       ArrayNode messages = (ArrayNode) body.path("messages");
       JsonNode lastContent = messages.get(messages.size() - 1).path("content");
       assertEquals(
           "ephemeral",
           lastContent.get(lastContent.size() - 1).path("cache_control").path("type").asText(),
-          "and at the end of the conversation: " + body);
-      // Nothing earlier carries one: a breakpoint in the middle would be a prefix nobody reuses.
+          "以及在对话的末尾：" + body);
+      // 前面没有任何一条带着它：放在中间的断点会是一段没人复用的前缀。
       for (int i = 0; i < messages.size() - 1; i++) {
         assertTrue(
             countCacheControl(messages.get(i)) == 0,
-            "message " + i + " must not carry a breakpoint: " + messages.get(i));
+            "消息 " + i + " 不能带断点：" + messages.get(i));
       }
       provider.close();
     }
   }
 
-  /** How many caching breakpoints a piece of the body carries, at any depth. */
+  /** 响应体的某一部分携带了多少个缓存断点，任意深度。 */
   private static int countCacheControl(JsonNode node) {
     if (node == null || node.isNull()) {
       return 0;
@@ -535,8 +532,8 @@ class AnthropicProviderTest {
 
       provider.complete(request(), events::add);
 
-      // 9 + 100 + 20: cache reads and writes are billed on top of input_tokens, so a cached turn
-      // must not look smaller than an uncached one.
+      // 9 + 100 + 20：缓存读取与写入是在 input_tokens 之上另行计费的，所以一个命中缓存的回合不能显得比没
+      // 命中的还小。
       assertTrue(events.contains(new Provider.Event.Usage(129, 4, 100)), events.toString());
       provider.close();
     }
@@ -544,9 +541,8 @@ class AnthropicProviderTest {
 
   @Test
   void explicitNullCacheFieldsLeaveTheCacheUnreported() throws Exception {
-    // A gateway sends explicit nulls where the API omits the field. Jackson hands back a NullNode,
-    // so a plain null check read "not reported" as "nothing was cached" and the UI showed a 0% hit
-    // rate that looked like a measurement.
+    // 网关会在 API 省略字段的地方发来显式的 null。Jackson 交回的是 NullNode，所以单纯判 null 会把「没有
+    // 上报」读成「什么都没缓存」，UI 于是显示出一个看起来像测量值的 0% 命中率。
     String stream =
         """
         event: message_start
@@ -578,8 +574,7 @@ class AnthropicProviderTest {
 
   @Test
   void thinkingDeltasReachTheListenerAndStayOutOfTheReply() throws Exception {
-    // With a reasoning tier set the API can think for seconds; discarding the deltas left the user
-    // watching a spinner with nothing to read.
+    // 设了推理档位后，API 可能思考好几秒；丢掉这些增量会让用户盯着一个转圈、无字可读。
     String stream =
         """
         event: content_block_start
@@ -610,7 +605,7 @@ class AnthropicProviderTest {
 
       Message.Assistant assistant = provider.complete(request(), events::add);
 
-      assertEquals("answer", assistant.text(), "thinking is not part of the reply");
+      assertEquals("answer", assistant.text(), "思考不是回复的一部分");
       assertEquals(
           List.of(
               new Provider.Event.ReasoningDelta("Let me check"),
@@ -642,7 +637,7 @@ class AnthropicProviderTest {
       assertEquals(
           List.of(new Message.ToolCall("toolu_1", "read", "{\"path\":\"a\"}")),
           assistant.toolCalls(),
-          "arguments that arrive with the block must not be dropped");
+          "随块一起到达的参数不能被丢掉");
       provider.close();
     }
   }
@@ -657,7 +652,7 @@ class AnthropicProviderTest {
           assertThrows(
               IllegalStateException.class, () -> provider.complete(request(), event -> {}));
 
-      assertTrue(failure.getMessage().contains("no events"), failure.getMessage());
+      assertTrue(failure.getMessage().contains("没有返回任何事件"), failure.getMessage());
       assertTrue(failure.getMessage().contains("upstream exploded"), failure.getMessage());
       provider.close();
     }
@@ -672,14 +667,14 @@ class AnthropicProviderTest {
       JsonNode low = Json.parse(server.body(0));
       assertEquals("enabled", low.path("thinking").path("type").asText());
       assertEquals(2048, low.path("thinking").path("budget_tokens").asInt());
-      assertFalse(low.has("temperature"), "the API rejects a custom temperature while thinking");
+      assertFalse(low.has("temperature"), "开着思考时 API 会拒绝自定义 temperature");
 
       provider.complete(reasoningRequest("max"), event -> {});
       JsonNode max = Json.parse(server.body(1));
       assertEquals(32768, max.path("thinking").path("budget_tokens").asInt());
       assertTrue(
           max.path("max_tokens").asInt() > 32768,
-          "max_tokens must exceed the thinking budget: " + max.path("max_tokens").asInt());
+          "max_tokens 必须大于思考预算：" + max.path("max_tokens").asInt());
 
       provider.close();
     }
@@ -694,7 +689,7 @@ class AnthropicProviderTest {
 
       JsonNode body = Json.parse(server.body(0));
       assertFalse(body.has("thinking"), body.toString());
-      assertEquals(0.7, body.path("temperature").asDouble(), 0.001, "temperature still applies");
+      assertEquals(0.7, body.path("temperature").asDouble(), 0.001, "temperature 仍然生效");
       provider.close();
     }
   }

@@ -17,7 +17,7 @@ class AgentLoopTest {
 
   @TempDir Path cwd;
 
-  /** Records every invocation so tests can assert the loop actually called the tool. */
+  /** 记录每一次调用，好让测试断言循环确实调用了该工具。 */
   private static class RecordingTool implements Tool {
     private final String name;
     private final List<String> seenArguments = new ArrayList<>();
@@ -98,7 +98,7 @@ class AgentLoopTest {
     return new Harness(loop, provider, session, notices, text);
   }
 
-  /** A tool that only reads and takes its time, so overlap is measurable. */
+  /** 一个只读、且肯花时间的工具，这样重叠才是可测量的。 */
   private static final class SlowReader extends RecordingTool {
     private final long millis;
 
@@ -123,7 +123,7 @@ class AgentLoopTest {
     }
   }
 
-  /** A tool that ends the run where it stands, the way the `restart` tool does. */
+  /** 一个就地结束本次运行的工具，就像 `restart` 工具那样。 */
   private static final class EndingTool extends RecordingTool {
 
     EndingTool(String name) {
@@ -140,10 +140,9 @@ class AgentLoopTest {
 
   @Test
   void aToolThatEndsTheRunStopsTheCallsBesideIt() {
-    // `restart` installs the jar and ends the run where it stands. The calls the model asked for in
-    // the same turn will never be sent, so the second tool must not run — and the call it was given
-    // is recorded as not run, because a conversation with a call and no result is one no provider
-    // will accept again.
+    // `restart` 会装上 jar 并就地结束本次运行。模型在同一回合里请求的那些调用永远不会发出去，
+    // 所以第二个工具绝不能执行 —— 而它收到的那个调用会被记为「未运行」，因为一段有调用却
+    // 没有结果的对话，任何提供方都不会再接受。
     EndingTool ender = new EndingTool("restart");
     RecordingTool writer = new RecordingTool("write", "wrote");
     ScriptedProvider provider =
@@ -159,8 +158,8 @@ class AgentLoopTest {
 
     AgentLoop.Result result = h.loop().run("install the new jar");
 
-    assertEquals(List.of(), writer.seenArguments, "the call beside the ending one must not run");
-    assertEquals(1, result.steps(), "one model turn, and that turn ended the run");
+    assertEquals(List.of(), writer.seenArguments, "与结束运行的那个调用并排的调用绝不能执行");
+    assertEquals(1, result.steps(), "只有一个模型回合，而那个回合结束了运行");
     Message.ToolResult unrun =
         h.session().messages().stream()
             .filter(Message.ToolResult.class::isInstance)
@@ -170,13 +169,13 @@ class AgentLoopTest {
             .orElseThrow(
                 () ->
                     new AssertionError(
-                        "the unrun call must be recorded: " + h.session().messages()));
+                        "未运行的调用必须被记录：" + h.session().messages()));
     assertTrue(unrun.error(), unrun.content());
   }
 
   @Test
   void readOnlyCallsInOneTurnOverlapAndKeepTheirOrder() {
-    // Three files read in one turn is one round trip's worth of waiting, not three.
+    // 一个回合里读三个文件，等待的是一次往返的时间，而不是三次。
     RecordingTool first = new SlowReader("read_a", 300);
     RecordingTool second = new SlowReader("read_b", 300);
     RecordingTool third = new SlowReader("read_c", 300);
@@ -200,9 +199,9 @@ class AgentLoopTest {
     assertEquals("read all three", result.finalText());
     assertTrue(
         elapsedMillis < 850,
-        "three 300 ms reads must overlap, not queue: " + elapsedMillis + "ms");
+        "三次 300 毫秒的读取必须重叠，而不是排队：" + elapsedMillis + "ms");
 
-    // The session reads in the order the model asked, whatever the file system did.
+    // 无论文件系统如何调度，会话都按模型请求的顺序记录读取结果。
     List<Message> history = h.session().messages();
     List<String> resultIds =
         history.stream()
@@ -215,8 +214,7 @@ class AgentLoopTest {
 
   @Test
   void aWritingCallBetweenReadsBreaksTheBatch() {
-    // Overlap is only safe for tools that change nothing, and a run of reads either side of a write
-    // must not be reordered around it.
+    // 只有不改变任何东西的工具才适合重叠执行，而一次写两侧的那些读操作不得绕过它重排。
     List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
     RecordingTool readA = new SlowReader("read_a", 50);
     RecordingTool write = new RecordingTool("write", "written");
@@ -247,7 +245,7 @@ class AgentLoopTest {
 
   @Test
   void aLongConversationIsProjectedOntoTheContextBudgetAndSaidSo() {
-    // The session keeps everything; what goes on the wire is what fits.
+    // 会话保留一切；真正发到线上的只是装得下的那部分。
     RecordingTool tool = new RecordingTool("read", "x".repeat(40_000));
     List<ScriptedProvider.Reply> script = new ArrayList<>();
     for (int i = 0; i < 4; i++) {
@@ -261,47 +259,46 @@ class AgentLoopTest {
 
     h.loop().run("read it all");
 
-    assertEquals(10, h.session().messages().size(), "the session keeps every message");
+    assertEquals(10, h.session().messages().size(), "会话保留每条消息");
     Provider.Request last = provider.requests().get(provider.requests().size() - 1);
     assertTrue(
         TokenEstimate.of(last.messages()) <= 5_000,
-        "the request must fit the budget: " + TokenEstimate.of(last.messages()));
+        "请求必须落在预算之内：" + TokenEstimate.of(last.messages()));
     assertTrue(
         h.session().messages().size() > last.messages().size(),
-        "and the session must still hold what the request left out");
+        "而会话仍要保留请求略去的那些内容");
     assertTrue(
-        h.notices().stream().anyMatch(notice -> notice.startsWith("context:")),
-        "a trimmed prompt is reported: " + h.notices());
+        h.notices().stream().anyMatch(notice -> notice.startsWith("上下文：")),
+        "被裁剪的提示词会被报告：" + h.notices());
   }
 
   @Test
   void abortStopsATurnThatIsStillStreamingFromTheModel() throws Exception {
-    // Reported: pressing stop while the model was thinking took ages to do anything. The loop checked
-    // its flag between steps, and a provider blocked mid-stream is not *between* anything — the turn
-    // only ended when the whole reply had arrived. Stopping has to interrupt the call it is waiting
-    // on, not wait for it to finish.
+    // 用户反馈：模型还在思考时按下停止，很久都没有反应。循环只在步骤之间检查标志，而一个阻塞在
+    // 流式输出中途的提供方并不处于任何「步骤之间」—— 整个回复到齐之前回合不会结束。停止必须
+    // 打断它正在等待的那次调用，而不是等它自己结束。
     ScriptedProvider provider =
         new ScriptedProvider(ScriptedProvider.Reply.text("never arrives")).streaming(300, 30);
     Harness h = harness(AgentOptions.defaults(), ToolRegistry.of(), provider);
 
     Thread runner = new Thread(() -> h.loop().run("think for a while"), "abort-streaming-test");
     runner.start();
-    // Wait until the provider is actually inside the call, then stop.
+    // 等到提供方确实进入了这次调用，再按停止。
     long waitForCall = System.nanoTime() + 5_000_000_000L;
     while (provider.callCount() == 0 && System.nanoTime() < waitForCall) {
       Thread.sleep(10);
     }
-    assertEquals(1, provider.callCount(), "the provider must have been called");
+    assertEquals(1, provider.callCount(), "提供方必须已被调用");
 
     long started = System.nanoTime();
     h.loop().abort();
     runner.join(5_000);
     long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
 
-    assertFalse(runner.isAlive(), "abort must end a turn waiting on the model");
+    assertFalse(runner.isAlive(), "中止必须能结束一个正在等待模型的回合");
     assertTrue(
         elapsedMillis < 2_000,
-        "abort must not wait for the reply to finish arriving: " + elapsedMillis + "ms");
+        "中止不得等待回复完全到齐：" + elapsedMillis + "ms");
   }
 
   @Test
@@ -323,24 +320,24 @@ class AgentLoopTest {
     runner.join(10_000);
     long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
 
-    assertFalse(runner.isAlive(), "the run must come back");
+    assertFalse(runner.isAlive(), "运行必须返回");
     assertTrue(
         elapsedMillis < 3_000,
-        "abort must reach the running command, not wait out its timeout: " + elapsedMillis + "ms");
-    assertEquals(1, provider.callCount(), "the model is not asked again after an abort");
+        "中止必须触达正在运行的命令，而不是等它超时：" + elapsedMillis + "ms");
+    assertEquals(1, provider.callCount(), "中止之后不会再问模型");
     List<Message> history = h.session().messages();
     assertEquals(3, history.size(), history.toString());
     Message.ToolResult result = (Message.ToolResult) history.get(2);
     assertTrue(result.error(), result.content());
     assertTrue(
-        result.content().contains("aborted"),
-        "the transcript says why the command stopped: " + result.content());
+        result.content().contains("用户已中止"),
+        "转录会说明命令为何停止：" + result.content());
   }
 
   @Test
   void anAbortBetweenTheTurnAndItsToolsStillLeavesAUsableSession() {
-    // The bug this exists for: the assistant turn is appended before its calls run, so an abort in
-    // between left a session that every later request was refused for — permanently.
+    // 这个测试所针对的 bug：assistant 回合在它的工具调用执行之前就被写入，所以此时若发生中止，
+    // 会话就会变成之后每个请求都被拒绝的状态 —— 而且是永久性的。
     RecordingTool tool = new RecordingTool("read", "contents");
     ScriptedProvider provider =
         new ScriptedProvider(
@@ -348,15 +345,14 @@ class AgentLoopTest {
                 new Message.ToolCall("call_1", "read", "{}"),
                 new Message.ToolCall("call_2", "read", "{}")));
     Harness h = harness(AgentOptions.defaults(), ToolRegistry.of(tool), provider);
-    // Abort from inside the turn that asked for the calls: the narrowest possible window, and the
-    // one a user's Abort button lands in all the time.
+    // 就在请求这些调用的那个回合中途中止：这是最窄的窗口，而用户的「中止」按钮偏偏总落在这里。
     AgentLoop loop = abortOnAssistant(h.session(), ToolRegistry.of(tool), provider);
 
     AgentLoop.Result result = loop.run("read both files");
 
     assertTrue(result.aborted());
-    assertEquals(1, provider.callCount(), "the model is not asked again");
-    assertEquals(List.of(), tool.seenArguments, "neither call ran");
+    assertEquals(1, provider.callCount(), "不会再问模型");
+    assertEquals(List.of(), tool.seenArguments, "两个调用都没有执行");
     List<Message> history = h.session().messages();
     for (Message message : history) {
       if (message instanceof Message.Assistant assistant) {
@@ -368,13 +364,13 @@ class AgentLoopTest {
                           m instanceof Message.ToolResult r
                               && r.toolCallId().equals(call.id())
                               && r.error()),
-              "every call the turn made must have a result: " + history);
+              "回合发出的每个调用都必须有结果：" + history);
         }
       }
     }
   }
 
-  /** A loop whose listener aborts the run the moment a turn asks for a tool. */
+  /** 一个监听器在回合请求工具的那一刻就中止运行的循环。 */
   private AgentLoop abortOnAssistant(
       MemorySession session, ToolRegistry registry, ScriptedProvider provider) {
     AgentLoop[] holder = new AgentLoop[1];
@@ -401,8 +397,8 @@ class AgentLoopTest {
 
   @Test
   void aHistoryBrokenByAnEarlierInterruptionIsRepairedForTheNextRequest() {
-    // What the user sees: a conversation interrupted once, then every later message refused with
-    // "an assistant message with tool_calls must be followed by tool messages".
+    // 用户看到的现象：对话被打断过一次，之后每条消息都被拒绝，理由是
+    // "an assistant message with tool_calls must be followed by tool messages"。
     MemorySession session = new MemorySession("broken");
     session.append(new Message.User("read the file"));
     session.append(
@@ -436,14 +432,14 @@ class AgentLoopTest {
                     m instanceof Message.ToolResult r
                         && r.toolCallId().equals("call_1")
                         && r.error());
-    assertTrue(answered, "the request must answer the call that was left hanging: " + sent);
+    assertTrue(answered, "请求必须回应那个被悬置的调用：" + sent);
     assertTrue(
-        notices.stream().anyMatch(text -> text.contains("interrupted tool call")),
-        "and the user is told why it suddenly works: " + notices);
-    // The session file keeps its own record: the repair is a projection, not a rewrite.
+        notices.stream().anyMatch(text -> text.contains("被中断的工具调用被标记为未运行")),
+        "并且要告诉用户为何它忽然又能用了：" + notices);
+    // 会话文件保留自己的记录：修复只是一次投影，而不是重写。
     assertTrue(
         session.messages().stream().noneMatch(Message.ToolResult.class::isInstance),
-        "nothing was written back into the session: " + session.messages());
+        "没有把任何东西写回会话：" + session.messages());
   }
 
   @Test
@@ -459,7 +455,7 @@ class AgentLoopTest {
     assertEquals(
         List.of(new Message.User("do the thing"), new Message.Assistant("all done", List.of())),
         h.session().messages());
-    assertEquals(List.of("all done"), h.text(), "deltas must reach the listener as they arrive");
+    assertEquals(List.of("all done"), h.text(), "增量到达时必须送达监听器");
   }
 
   @Test
@@ -491,8 +487,8 @@ class AgentLoopTest {
 
     assertInstanceOf(Message.Assistant.class, history.get(3));
     assertTrue(
-        h.notices().stream().allMatch(n -> n.startsWith("tokens:")),
-        "a turn that ends in an answer warns about nothing: " + h.notices());
+        h.notices().stream().allMatch(n -> n.startsWith("token：")),
+        "以回答结束的回合不会发出任何告警：" + h.notices());
   }
 
   @Test
@@ -548,15 +544,15 @@ class AgentLoopTest {
 
     AgentLoop.Result result = h.loop().run("go");
 
-    assertEquals("recovered", result.finalText(), "the loop must survive bad tool calls");
+    assertEquals("recovered", result.finalText(), "循环必须能在坏的工具调用下存活");
     List<Message> history = h.session().messages();
     Message.ToolResult unknown = (Message.ToolResult) history.get(2);
     Message.ToolResult badArgs = (Message.ToolResult) history.get(3);
     assertTrue(unknown.error());
-    assertTrue(unknown.content().contains("unknown tool 'teleport'"), unknown.content());
-    assertTrue(unknown.content().contains("edit"), "the error should list available tools");
+    assertTrue(unknown.content().contains("未知工具 'teleport'"), unknown.content());
+    assertTrue(unknown.content().contains("edit"), "错误里应当列出可用的工具");
     assertTrue(badArgs.error());
-    assertTrue(badArgs.content().contains("invalid arguments"), badArgs.content());
+    assertTrue(badArgs.content().contains("参数无效"), badArgs.content());
   }
 
   @Test
@@ -591,18 +587,17 @@ class AgentLoopTest {
     AgentLoop.Result result = h.loop().run("run it");
 
     assertTrue(result.aborted());
-    assertEquals(1, provider.callCount(), "no further model turn after abort");
+    assertEquals(1, provider.callCount(), "中止之后不再有模型回合");
     assertEquals(1, result.steps());
   }
 
   /**
-   * There is no step ceiling: a run is ended by the model answering or by an abort, nothing else. A
-   * long piece of work must not be cut off at a number somebody guessed, so the pin here is that a
-   * run past the old default of 25 steps simply continues to its answer.
+   * 没有步数上限：一次运行只由模型给出回答、或由中止来结束，别无其他。长时间的活计不该被某个人
+   * 猜出来的数字砍断，所以这里钉住的是：超过旧默认值 25 步的运行会径直走到它的答案。
    */
   @Test
   void aRunIsNotCutOffByAStepCeiling() {
-    int steps = 40;   // comfortably past the 25 the loop used to stop at
+    int steps = 40;   // 远超过循环过去会停下的 25 步
     List<ScriptedProvider.Reply> script = new ArrayList<>();
     for (int i = 0; i < steps; i++) {
       script.add(ScriptedProvider.Reply.calls(new Message.ToolCall("c" + i, "bash", "{}")));
@@ -615,8 +610,8 @@ class AgentLoopTest {
 
     AgentLoop.Result result = h.loop().run("a long task");
 
-    assertEquals(steps, tool.seenArguments.size(), "every requested call ran");
-    assertEquals(steps + 1, provider.callCount(), "the model was asked again every time");
+    assertEquals(steps, tool.seenArguments.size(), "每个被请求的调用都执行了");
+    assertEquals(steps + 1, provider.callCount(), "每次都重新询问了模型");
     assertEquals("done after " + steps + " tool turns", result.finalText());
     assertFalse(result.aborted());
   }
@@ -703,7 +698,7 @@ class AgentLoopTest {
     h.loop().run("go");
 
     assertTrue(
-        h.notices().stream().anyMatch(n -> n.contains("100 in (80% cached) / 5 out")),
+        h.notices().stream().anyMatch(n -> n.contains("token：100 输入（缓存 80%） / 5 输出")),
         h.notices().toString());
   }
 
@@ -716,10 +711,10 @@ class AgentLoopTest {
     h.loop().run("go");
 
     assertTrue(
-        h.notices().stream().anyMatch(n -> n.contains("100 in / 5 out")), h.notices().toString());
+        h.notices().stream().anyMatch(n -> n.contains("token：100 输入 / 5 输出")), h.notices().toString());
     assertTrue(
-        h.notices().stream().noneMatch(n -> n.contains("cached")),
-        "an unreported rate must not be invented: " + h.notices());
+        h.notices().stream().noneMatch(n -> n.contains("缓存")),
+        "未被报告的比率不得凭空捏造：" + h.notices());
   }
 
   @Test

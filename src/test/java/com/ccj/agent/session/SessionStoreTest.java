@@ -77,7 +77,7 @@ class SessionStoreTest {
     systemOnly.append(new Message.System("only system"));
     systemOnly.close();
 
-    assertEquals("", SessionStore.list(empty).get(0).title(), "no user message, no title to invent");
+    assertEquals("", SessionStore.list(empty).get(0).title(), "没有用户消息，就没有标题可编");
   }
 
   @Test
@@ -88,7 +88,7 @@ class SessionStoreTest {
 
     String title = SessionStore.list(dir).get(0).title();
 
-    assertTrue(title.length() <= 65, "title is " + title.length() + " chars");
+    assertTrue(title.length() <= 65, "标题有 " + title.length() + " 个字符");
     assertTrue(title.endsWith("…"), title);
   }
 
@@ -98,20 +98,17 @@ class SessionStoreTest {
     session.append(new Message.System("only system"));
     session.close();
 
-    assertEquals("(no messages)", SessionStore.list(dir).get(0).preview());
+    assertEquals("（暂无消息）", SessionStore.list(dir).get(0).preview());
   }
 
   @Test
   void aListingIsServedFromWhatWasDerivedOnceNotOncePerCall() throws IOException {
-    // The sidebar re-reads this list after every finished turn, and deriving a row means parsing the
-    // file until its first user message — the title is the first user message, so it is somewhere in
-    // the middle of a long file. What is pinned here is that a second listing of an unchanged
-    // directory reads nothing at all.
+    // 侧栏在每个回合结束后都会重读这份列表，而推导一行意味着解析文件直到它的第一条用户消息——标题就是
+    // 第一条用户消息，所以它位于一个长文件的中间某处。这里钉住的是：对一个没变过的目录再做一次列表，
+    // 什么都不会读。
     //
-    // A timing assertion would pass on a fast machine with no cache, so the file is made unreadable
-    // instead: a listing that still reads it fails, and a listing served from the derivation it
-    // already has does not have to. stat still works on a file with no read permission, which is
-    // exactly what the cache is built on.
+    // 用时间断言在一台没上缓存的快机器上也会通过，所以改成把文件设成不可读：仍然去读它的列表会失败，而
+    // 从已有的推导结果端出来的列表则不必去读。stat 对一个没有读权限的文件仍然有效，缓存正是建立在这上面。
     SessionStore.create(dir).append(new Message.User("count the reads"));
     assertEquals("count the reads", SessionStore.list(dir).get(0).title());
 
@@ -121,7 +118,7 @@ class SessionStoreTest {
     try {
       for (int i = 0; i < 5; i++) {
         SessionStore.Summary row = SessionStore.list(dir).get(0);
-        assertEquals("count the reads", row.title(), "the row must come from the derivation already held");
+        assertEquals("count the reads", row.title(), "这一行必须来自已经持有的推导结果");
         assertEquals(1, row.messageCount());
       }
     } finally {
@@ -131,8 +128,8 @@ class SessionStoreTest {
 
   @Test
   void aSessionThatGrewIsReReadEvenWhenItsTimestampDidNotMove() throws IOException {
-    // A message appended within the same millisecond as the last one leaves mtime where it was, so a
-    // cache keyed on time alone would report the old row forever. Size is what catches it.
+    // 一条在上一条的同一毫秒内追加的消息会让 mtime 停在原地，所以只按时间缓存的表会永远报告旧的一行。
+    // 抓住它的是大小。
     FileSession session = SessionStore.create(dir);
     session.append(new Message.User("first"));
     session.close();
@@ -143,17 +140,17 @@ class SessionStoreTest {
         session.file(),
         "{\"type\":\"assistant\",\"text\":\"second\",\"tool_calls\":[]}\n",
         java.nio.file.StandardOpenOption.APPEND);
-    Files.setLastModifiedTime(session.file(), modified); // the same instant, deliberately
+    Files.setLastModifiedTime(session.file(), modified); // 同一个瞬间，刻意如此
 
     SessionStore.Summary row = SessionStore.list(dir).get(0);
-    assertEquals(2, row.messageCount(), "the appended message must be counted");
+    assertEquals(2, row.messageCount(), "追加的那条消息必须被数进去");
     assertFalse(row.title().isEmpty());
   }
 
   @Test
   void aFileChangedOrDeletedUnderTheListingIsBelieved() throws IOException {
-    // Nothing here is a second source of truth: a file edited by hand, or removed by hand, has to be
-    // reported as it is now — that is the promise that makes `rm session.jsonl` a way to forget one.
+    // 这里没有任何东西是第二个真相来源：被手工编辑或手工删除的文件，必须按它现在的样子被报告——正是这个
+    // 承诺让 `rm session.jsonl` 成为遗忘一个会话的方式。
     Path file = dir.resolve("20260101-000000-abcd.jsonl");
     Files.writeString(file, "{\"type\":\"user\",\"text\":\"original\"}\n");
     assertEquals("original", SessionStore.list(dir).get(0).title());
@@ -162,12 +159,12 @@ class SessionStoreTest {
     assertEquals("rewritten by hand", SessionStore.list(dir).get(0).title());
 
     Files.delete(file);
-    assertTrue(SessionStore.list(dir).isEmpty(), "a deleted file is not a session any more");
+    assertTrue(SessionStore.list(dir).isEmpty(), "被删掉的文件不再是一个会话");
   }
 
   @Test
   void theCountBesideAWorkspaceDoesNotParseAnything() throws IOException {
-    // The workspace tree shows a number per folder, and it used to build every summary to get it.
+    // 工作区树给每个文件夹显示一个数字，而它过去为了拿到这个数字会构建每一份摘要。
     SessionStore.create(dir).append(new Message.User("one"));
     SessionStore.create(dir).append(new Message.User("two"));
     Files.writeString(dir.resolve("not-a-session.txt"), "ignored");
@@ -179,9 +176,8 @@ class SessionStoreTest {
 
   @Test
   void oneDamagedFileDoesNotHideTheSessionsBesideIt() throws IOException {
-    // The format appends one line per message, so the only corruption it can suffer is a partial
-    // last line — and failing a whole listing over one would hide sessions that are perfectly
-    // readable. The damaged one is still shown, as damaged; opening it still names the line.
+    // 这个格式每条消息追加一行，所以它能遭遇的唯一损坏就是最后一行不完整——而为一个这样的文件让整份列表
+    // 失败，会把完全可读的会话藏起来。损坏的那个仍然会以损坏的样子被列出；打开它时仍然会指出那一行。
     FileSession readable = SessionStore.create(dir);
     readable.append(new Message.User("readable session"));
     readable.close();
@@ -196,10 +192,10 @@ class SessionStoreTest {
     assertEquals(2, sessions.size(), sessions.toString());
     SessionStore.Summary broken =
         sessions.stream().filter(s -> s.id().equals(damaged.id())).findFirst().orElseThrow();
-    assertTrue(broken.title().contains("unreadable"), broken.title());
+    assertTrue(broken.title().contains("无法读取"), broken.title());
     assertTrue(
         sessions.stream().anyMatch(s -> s.preview().equals("readable session")),
-        "the readable session is still listed: " + sessions);
+        "可读的会话仍然被列出：" + sessions);
     assertThrows(IllegalArgumentException.class, () -> FileSession.open(dir, damaged.id()));
   }
 
@@ -216,24 +212,23 @@ class SessionStoreTest {
     assertEquals(
         List.of(keep.id()),
         SessionStore.list(sessions).stream().map(SessionStore.Summary::id).toList());
-    assertFalse(SessionStore.delete(sessions, drop.id()), "deleting twice is not an error, just nothing");
+    assertFalse(SessionStore.delete(sessions, drop.id()), "删两次不算错误，只是什么都没删");
 
     assertThrows(IllegalArgumentException.class, () -> SessionStore.delete(sessions, "../escape"));
     assertThrows(IllegalArgumentException.class, () -> SessionStore.delete(sessions, "/etc/passwd"));
     assertThrows(IllegalArgumentException.class, () -> SessionStore.delete(sessions, null));
-    assertEquals(1, SessionStore.list(sessions).size(), "the refusals must not have deleted anything");
+    assertEquals(1, SessionStore.list(sessions).size(), "这些拒绝不能删掉任何东西");
   }
 
   @Test
   void aLongSessionIsListedWithoutDecodingEveryMessage() throws Exception {
-    // Reported bug: with a big session running, the sidebar got slow — every listing re-derived the
-    // row by decoding the whole file, and a session being written changes on every append, so the
-    // cache missed every time. A listing needs the first user message and a count, and nothing else.
+    // 报告过的缺陷：跑着一个大会话时，侧栏变慢——每次列表都靠解码整个文件重新推导那一行，而正在被写入的
+    // 会话每次追加都会变，于是缓存每次都落空。列表需要的是第一条用户消息和一个计数，别的什么都不要。
     Path sessions = Files.createDirectories(dir.resolve("sessions"));
     Path big = sessions.resolve("20260913-000000-big1.jsonl");
     StringBuilder content = new StringBuilder();
     content.append("{\"type\":\"user\",\"text\":\"the first thing asked\"}\n");
-    // A conversation of the size that made this visible, with bulky tool results like a real one.
+    // 一段足以让这件事显形的会话，带着像真实会话那样笨重的工具结果。
     for (int i = 0; i < 5_000; i++) {
       content
           .append("{\"type\":\"assistant\",\"text\":\"step ")
@@ -255,16 +250,16 @@ class SessionStoreTest {
 
     assertEquals(1, listed.size());
     assertEquals("the first thing asked", listed.get(0).title());
-    assertEquals(10_001, listed.get(0).messageCount(), "every message is still counted");
-    // The bound is loose on purpose — this is a regression guard, not a benchmark — but decoding
-    // 10k messages of a multi-megabyte file would blow past it by an order of magnitude.
+    assertEquals(10_001, listed.get(0).messageCount(), "每一条消息仍然被数进去");
+    // 这个界限刻意留得松——它是回归防线，不是基准测试——但解码一个多兆字节文件里的 1 万条消息会以数量级
+    // 的差距冲过去。
     assertTrue(
         elapsedMillis < 500,
-        "listing "
+        "列出 "
             + bytes
-            + " bytes took "
+            + " 字节花了 "
             + elapsedMillis
-            + "ms; a listing must not decode the conversation");
+            + "ms；一次列表不能解码整段会话");
   }
 
   @Test
@@ -275,13 +270,13 @@ class SessionStoreTest {
     session.totals(new UsageTotals(10, 20, 0, 1, 1, 0, 0, 5, false));
     session.close();
 
-    assertEquals(2, SessionStore.list(dir).get(0).messageCount(), "the usage record is not a message");
+    assertEquals(2, SessionStore.list(dir).get(0).messageCount(), "usage 记录不是一条消息");
   }
 
   @Test
   void deletingASessionTakesItsPicturesWithIt() throws IOException {
-    // The pictures live beside the session so that this can be true. A deleted conversation that
-    // left its photographs behind would grow a directory nobody lists and nobody ever cleans.
+    // 图片住在会话旁边，正是为了这句话能成立。被删掉的会话若把照片留在磁盘上，就会长出一个没人列出、
+    // 也没人清理的目录。
     Path sessions = Files.createDirectories(dir.resolve("sessions"));
     FileSession kept = FileSession.create(sessions);
     kept.append(new Message.User("keep me"));
@@ -294,19 +289,19 @@ class SessionStoreTest {
 
     assertTrue(SessionStore.delete(sessions, dropped.id()));
 
-    assertFalse(Files.exists(store.directory()), "the pictures went with the conversation");
+    assertFalse(Files.exists(store.directory()), "图片随这段会话一起走了");
     assertTrue(SessionStore.list(sessions).stream().anyMatch(s -> s.id().equals(kept.id())));
 
-    // And the bulk path, which is what a workspace's "delete all" calls.
+    // 还有批量那条路，也就是工作区的「全部删除」所调用的。
     AttachmentStore other = AttachmentStore.forSession(kept.file());
     other.save("board.png", png());
     assertEquals(1, SessionStore.deleteAll(sessions));
     assertFalse(
         Files.exists(kept.file().getParent().resolve(kept.id() + AttachmentStore.DIRECTORY_SUFFIX)),
-        "delete all is not a session file loop that forgot the pictures");
+        "「全部删除」不是那种忘了图片的会话文件循环");
   }
 
-  /** The smallest thing that is really a PNG: the magic number is what the store reads. */
+  /** 真正算是 PNG 的最小东西：存储读的就是 magic number。 */
   private static byte[] png() {
     return new byte[] {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0};
   }
@@ -323,7 +318,7 @@ class SessionStoreTest {
     assertEquals(3, SessionStore.deleteAll(sessions));
 
     assertEquals(0, SessionStore.list(sessions).size());
-    assertTrue(Files.exists(sessions.resolve("notes.txt")), "only session files are removed");
+    assertTrue(Files.exists(sessions.resolve("notes.txt")), "只有会话文件被移除");
     assertEquals(0, SessionStore.deleteAll(sessions));
     assertEquals(0, SessionStore.deleteAll(dir.resolve("missing")));
   }

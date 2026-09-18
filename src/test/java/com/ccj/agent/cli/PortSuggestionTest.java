@@ -10,8 +10,8 @@ import java.net.ServerSocket;
 import org.junit.jupiter.api.Test;
 
 /**
- * A busy port is the most common way a first run fails, so the message has to name a port that
- * actually works rather than a number the user then finds occupied too.
+ * 端口被占用是第一次运行最常见的失败方式，所以消息必须点名一个真正能用的端口，而不是一个用户
+ * 随后发现也被占用的数字。
  */
 class PortSuggestionTest {
 
@@ -25,7 +25,7 @@ class PortSuggestionTest {
 
       int suggested = Cli.freePortFrom(occupied);
 
-      assertTrue(suggested > occupied, "the busy port itself is no good: " + suggested);
+      assertTrue(suggested > occupied, "被占用的那个端口本身不行：" + suggested);
       try (ServerSocket second = new ServerSocket()) {
         second.setReuseAddress(true);
         second.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), suggested), 1);
@@ -35,6 +35,6 @@ class PortSuggestionTest {
 
   @Test
   void returnsMinusOneWhenTheSearchFindsNothing() {
-    assertEquals(-1, Cli.freePortFrom(70_000), "an impossible range must not invent an answer");
+    assertEquals(-1, Cli.freePortFrom(70_000), "不可能的区间不能凭空编出一个答案");
   }
 }

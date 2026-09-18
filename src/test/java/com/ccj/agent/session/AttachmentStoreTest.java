@@ -64,14 +64,14 @@ class AttachmentStoreTest {
 
     assertTrue(refusal.getMessage().contains("74 68 69 73"), refusal.getMessage());
     assertTrue(refusal.getMessage().contains("PNG"), refusal.getMessage());
-    assertFalse(Files.exists(store.directory()), "a refused upload must not create the directory");
+    assertFalse(Files.exists(store.directory()), "被拒绝的上传不能创建目录");
     assertEquals(List.of(), entries(dir));
   }
 
   @Test
   void riffContainerThatIsNotWebpIsRefused() {
     AttachmentStore store = AttachmentStore.forSession(SessionStore.create(dir).file());
-    // A RIFF container, but WAVE rather than WEBP: the four bytes at offset 8 are what decide.
+    // 一个 RIFF 容器，但是 WAVE 而不是 WEBP：偏移 8 处的四个字节才作数。
     byte[] wave = "RIFF\0\0\0\0WAVEfmt ".getBytes(StandardCharsets.ISO_8859_1);
 
     assertThrows(IllegalArgumentException.class, () -> store.save("sound.webp", wave));
@@ -107,7 +107,7 @@ class AttachmentStoreTest {
     }
     assertFalse(Files.exists(dir.resolve("evil.png")));
     assertFalse(Files.exists(pointingOutside));
-    assertEquals(1, entries(dir).size(), "only the attachment directory is under the session's dir");
+    assertEquals(1, entries(dir).size(), "会话目录下只有那个附件目录");
   }
 
   @Test
@@ -131,12 +131,12 @@ class AttachmentStoreTest {
         new InputStream() {
           @Override
           public int read() {
-            throw new AssertionError("the body was read despite a declared length over the limit");
+            throw new AssertionError("尽管声明的长度超过了上限，请求体还是被读了");
           }
 
           @Override
           public int read(byte[] buffer, int offset, int length) {
-            throw new AssertionError("the body was read despite a declared length over the limit");
+            throw new AssertionError("尽管声明的长度超过了上限，请求体还是被读了");
           }
         };
 
@@ -152,7 +152,7 @@ class AttachmentStoreTest {
   void readBoundedRefusesABodyThatOverrunsTheLimitWhileReading() {
     long over = AttachmentStore.MAX_BYTES + 1024;
 
-    // No length at all, and a length that understates the body: the read is what has to stop it.
+    // 完全没有长度，以及一个把请求体说小了的长度：要拦住它的是读取本身。
     assertThrows(IOException.class, () -> AttachmentStore.readBounded(repeating(over), -1));
     assertThrows(IOException.class, () -> AttachmentStore.readBounded(repeating(over), 16));
   }
@@ -176,18 +176,18 @@ class AttachmentStoreTest {
     assertArrayEquals(png, AttachmentStore.readBounded(new ByteArrayInputStream(png), 5000));
   }
 
-  /** Real encoder output, so what the sniffer is handed is an image and not a typed-out header. */
+  /** 真正的编码器输出，好让嗅探器拿到的是图像，而不是手打出来的文件头。 */
   private static byte[] image(String format, int width, int height) throws IOException {
     BufferedImage pixels = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
     pixels.setRGB(0, 0, 0x3366CC);
     ByteArrayOutputStream out = new ByteArrayOutputStream();
     if (!ImageIO.write(pixels, format, out)) {
-      throw new IllegalStateException("this JDK has no " + format + " writer");
+      throw new IllegalStateException("这个 JDK 没有 " + format + " 写出器");
     }
     return out.toByteArray();
   }
 
-  /** A stream of {@code count} bytes that reads in chunks, as a socket body does. */
+  /** 一条 {@code count} 字节的流，像 socket 请求体那样分块读出。 */
   private static InputStream repeating(long count) {
     return new InputStream() {
       private long remaining = count;

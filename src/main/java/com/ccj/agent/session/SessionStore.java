@@ -16,41 +16,39 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * Entry point for the session directory: create, reopen and enumerate history.
+ * 会话目录的入口：创建、重新打开、列出历史。
  *
- * <p>A listing still reads what is actually on disk — there is no separate index file to fall out of
- * step with the directory, and deleting a session file by hand remains a supported way to forget it.
- * What is cached is the expensive part of that read: deriving a row's title means parsing the file
- * until the first user message, and the sidebar asks for the whole list after every finished turn.
- * {@link SessionIndex} holds those derivations per file and drops one the moment its file changes, so
- * the cost is paid once per session rather than once per listing.
+ * <p>列表读的仍然是磁盘上实际的东西——没有单独的索引文件会与目录脱节，手动删掉一个会话文件也依然是
+ * 遗忘它的受支持方式。缓存的是这次读里昂贵的那部分：推导一行的标题意味着解析文件直到第一条用户消息，
+ * 而侧栏在每个回合结束后都要索要整份列表。{@link SessionIndex} 按文件保存这些推导结果，文件一变就丢掉
+ * 对应的那条，于是这份开销每个会话只付一次，而不是每次列表都付。
  */
 public final class SessionStore {
 
-  /** Preview length; {@code --list-sessions} has a column for it. */
+  /** 预览长度；{@code --list-sessions} 为它留了一列。 */
   private static final int PREVIEW_LIMIT = 60;
 
-  /** Title length: enough of the first request to tell two sessions apart in a sidebar. */
+  /** 标题长度：足以在侧栏里把两个会话区分开的第一句请求。 */
   static final int TITLE_LIMIT = 64;
 
-  /** What a session whose file cannot be read is called in a listing. */
-  private static final String UNREADABLE = "(unreadable: the session file is damaged)";
+  /** 文件读不出来的会话在列表里被叫作什么。 */
+  private static final String UNREADABLE = "（无法读取：会话文件已损坏）";
 
   /**
-   * Derivations kept per file, keyed by path.
+   * 按文件保存的推导结果，以路径为键。
    *
-   * <p>Static because every caller reaches sessions through this class, and a per-instance cache
-   * would be defeated by the CLI, the web hub and the tests each holding their own.
+   * <p>之所以是 static，是因为每个调用方都通过这个类访问会话，而按实例缓存会被 CLI、web hub 和测试
+   * 各自持有一份而失效。
    */
   private static final SessionIndex INDEX = new SessionIndex();
 
   /**
-   * One row of {@code --list-sessions}.
+   * {@code --list-sessions} 的一行。
    *
-   * @param title what the first user message said, for a list that has to be read rather than
-   *     scanned by id; empty when no user message was ever written
-   * @param preview first user message, flattened to a single truncated line
-   * @param lastModified file modification time, which advances on every append
+   * @param title 第一条用户消息说了什么，供一份必须被人读、而不是按 id 扫的列表使用；从未写过用户
+   *     消息时为空
+   * @param preview 第一条用户消息，压成截断后的单行
+   * @param lastModified 文件修改时间，每次追加都会推进
    */
   public record Summary(
       String id, String title, String preview, int messageCount, Instant lastModified, Path file) {
@@ -73,13 +71,12 @@ public final class SessionStore {
     return FileSession.open(sessionsDir, id);
   }
 
-  /** Deletes one session file. Returns false when there was nothing to delete. */
+  /** 删除一个会话文件。没有东西可删时返回 false。 */
   public static boolean delete(Path sessionsDir, String id) {
     if (!FileSession.isValidId(id)) {
-      throw new IllegalArgumentException("invalid session id: " + id);
+      throw new IllegalArgumentException("无效的会话 id：" + id);
     }
-    // Every generation goes, not just the newest: the older ones are this conversation too, and
-    // leaving them behind would resurrect the session on the next listing under the same id.
+    // 每一代都删，不只是最新的那一代：旧的也是这段会话，把它们留下会让它在下次列表时以同一个 id 复活。
     boolean removed = false;
     try {
       for (int generation : FileSession.generations(sessionsDir, id)) {
@@ -90,18 +87,18 @@ public final class SessionStore {
         removed |= Files.deleteIfExists(file);
       }
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot delete session " + id, e);
+      throw new UncheckedIOException("无法删除会话 " + id, e);
     }
-    // Its pictures go with it. Deleting the conversation and leaving the photographs it was sent
-    // behind is how a directory of unlisted files accumulates that nothing will ever read again.
+    // 它的图片也跟着走。删掉会话却把它收到过的照片留下，正是那个堆满再也不会有人读的未列出文件的目录的
+    // 成因。
     removed |= AttachmentStore.deleteFor(FileSession.fileFor(sessionsDir, id));
     return removed;
   }
 
   /**
-   * Deletes every session in one directory — the cleanup path for a pile of test runs.
+   * 删除一个目录里的每个会话——一堆测试跑完后的清理路径。
    *
-   * @return how many files were removed
+   * @return 删掉了多少个文件
    */
   public static int deleteAll(Path sessionsDir) {
     if (sessionsDir == null || !Files.isDirectory(sessionsDir)) {
@@ -112,8 +109,7 @@ public final class SessionStore {
       for (Path file : entries.toList()) {
         String name = file.getFileName().toString();
         if (name.endsWith(AttachmentStore.DIRECTORY_SUFFIX)) {
-          // A session's pictures: they are not sessions, they are counted with the one they belong
-          // to, and leaving them would leave the whole point of this cleanup behind.
+          // 会话的图片：它们不是会话，要和所属的那个一起算，留下它们就等于把这次清理的意义留下了。
           AttachmentStore.deleteDirectory(file);
           continue;
         }
@@ -123,28 +119,26 @@ public final class SessionStore {
         }
       }
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot clear sessions in " + sessionsDir, e);
+      throw new UncheckedIOException("无法清空以下目录中的会话 " + sessionsDir, e);
     }
     return deleted;
   }
 
   /**
-   * Newest-first summaries; an absent directory is simply an empty history.
+   * 最新的在前；目录不存在就是一段空历史。
    *
-   * <p>A session has <em>one</em> row however many generation files it has: a compaction writes a new
-   * file but does not create a new session, so listing per file would make every compaction look like
-   * a second conversation appearing out of nowhere. The newest generation is the one whose contents,
-   * size and timestamp the row reports, because that is the one {@link FileSession#open} reads.
+   * <p>一个会话无论有多少个代文件，都只有<em>一行</em>：一次压缩会写出新文件，但并不创建新会话，所以
+   * 按文件列出会让每次压缩都看起来像是凭空多出第二段会话。这一行报告的是最新一代的内容、大小和时间戳，
+   * 因为 {@link FileSession#open} 读的正是它。
    *
-   * <p>Every generation file is still stat'd on each call, which is what keeps the answer honest: a
-   * session that grew, was compacted, or was deleted since the last listing is reported as it is now
-   * rather than from what used to be true.
+   * <p>每次调用仍然会对每个代文件做 stat，正是这一点让答案保持诚实：自上次列表以来长大过、被压缩过或
+   * 被删掉的会话，报告的是它现在的样子，而不是曾经为真的样子。
    */
   public static List<Summary> list(Path sessionsDir) {
     if (sessionsDir == null || !Files.isDirectory(sessionsDir)) {
       return List.of();
     }
-    // id -> the newest generation of it, which is the file the row describes.
+    // id -> 它最新的那一代，也就是这一行所描述的文件。
     Map<String, Path> newest = new LinkedHashMap<>();
     List<Path> present = new ArrayList<>();
     try (Stream<Path> entries = Files.list(sessionsDir)) {
@@ -160,7 +154,7 @@ public final class SessionStore {
         }
       }
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot list sessions in " + sessionsDir, e);
+      throw new UncheckedIOException("无法列出以下目录中的会话 " + sessionsDir, e);
     }
 
     List<Summary> summaries = new ArrayList<>(newest.size());
@@ -173,16 +167,15 @@ public final class SessionStore {
         modified = Files.getLastModifiedTime(file).toInstant();
         size = Files.size(file);
       } catch (IOException e) {
-        // Vanished between the listing and the stat: not a session any more, and reporting a row for a
-        // file that is gone is worse than one row fewer.
+        // 在列表和 stat 之间消失了：不再是一个会话，为一个已经不在的文件报告一行，比少一行更糟。
         INDEX.forget(file);
         continue;
       }
       present.add(file);
       summaries.add(INDEX.summaryFor(file, id, modified, size, SessionStore::derive));
     }
-    // A file deleted without a listing in between keeps its derivation until this runs, so the ones
-    // that are gone are dropped here rather than growing the map for the life of the process.
+    // 中间没有经历过列表就被删掉的文件的推导结果会保留到这一步，所以已经不在的那些在这里被丢掉，而不是
+    // 让这张 map 在整个进程的生命周期里一直长下去。
     INDEX.retain(sessionsDir, present);
     summaries.sort(
         Comparator.comparing(Summary::lastModified)
@@ -192,10 +185,10 @@ public final class SessionStore {
   }
 
   /**
-   * The session id a file name belongs to, or empty when the name is not a session file.
+   * 一个文件名属于哪个会话 id，名字不是会话文件时为空。
    *
-   * <p>Both a plain {@code <id>.jsonl} and a generation {@code <id>.g1.jsonl} map to {@code <id>},
-   * which is what lets a listing collapse them into one row.
+   * <p>普通的 {@code <id>.jsonl} 和某一代 {@code <id>.g1.jsonl} 都映射到 {@code <id>}，正是这一点让
+   * 列表能把它们并成一行。
    */
   static String idOf(String fileName) {
     if (!fileName.endsWith(FileSession.EXTENSION)) {
@@ -212,7 +205,7 @@ public final class SessionStore {
     return FileSession.isValidId(stem) ? stem : "";
   }
 
-  /** The generation a session file holds: 0 for the plain name, n for {@code <id>.gn.jsonl}. */
+  /** 一个会话文件属于哪一代：普通名字为 0，{@code <id>.gn.jsonl} 为 n。 */
   private static int generationOf(String fileName, String id) {
     String stem = fileName.substring(0, fileName.length() - FileSession.EXTENSION.length());
     if (stem.equals(id)) {
@@ -226,20 +219,18 @@ public final class SessionStore {
   }
 
   /**
-   * How many sessions are in a directory, counted from the directory rather than from
-   * {@link #list}.
+   * 一个目录里有多少个会话，从目录本身数起，而不是从 {@link #list} 数起。
    *
-   * <p>The workspace tree shows this number beside every workspace it knows about, and deriving it by
-   * building full summaries would parse every session file on the machine to produce one integer per
-   * folder. A directory entry is not a session — a partial file, an editor backup and a stray rename
-   * all end up in there — so the extension is what decides.
+   * <p>工作区树会在它认识的每个工作区旁边显示这个数字，而靠构建完整摘要来得出它，会为了给每个文件夹产出
+   * 一个整数而解析这台机器上的每一个会话文件。目录里的一个条目并不等于一个会话——半个文件、编辑器备份、
+   * 改错名字的东西都会跑进去——所以由扩展名来决定。
    */
   public static int count(Path sessionsDir) {
     if (sessionsDir == null || !Files.isDirectory(sessionsDir)) {
       return 0;
     }
-    // Counted by id, so the number beside a workspace is how many conversations there are rather than
-    // how many files they occupy — a compacted session is one session, not two.
+    // 按 id 计数，所以工作区旁边的数字是多少段会话，而不是它们占了多少个文件——压缩过的会话是一个会话，
+    // 不是两个。
     Set<String> ids = new HashSet<>();
     try (Stream<Path> entries = Files.list(sessionsDir)) {
       for (Path file : entries.toList()) {
@@ -249,23 +240,22 @@ public final class SessionStore {
         }
       }
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot list sessions in " + sessionsDir, e);
+      throw new UncheckedIOException("无法列出以下目录中的会话 " + sessionsDir, e);
     }
     return ids.size();
   }
 
   /**
-   * The part of a listing that costs a read: how many messages there are and what the first user
-   * message said. Reached only when a file is new or has moved since the last time it was asked.
+   * 列表里需要真读一次的那部分：有多少条消息，第一条用户消息说了什么。只有文件是新的、或自上次被问过之后
+   * 动过时才会走到这里。
    */
   private static Summary derive(String id, Path file, Instant modified) {
     List<Message> messages;
     try {
       messages = FileSession.readAll(file);
     } catch (IllegalArgumentException e) {
-      // One unreadable file must not hide every other session. The file is still a session, and it
-      // is still the reason a listing exists — so it is listed as damaged, and opening it reports
-      // the same error with the line number it failed on.
+      // 一个读不了的文件不能把其它会话都藏起来。它仍然是一个会话，也仍然是列表存在的理由——所以它以
+      // 「已损坏」被列出，打开它时会报出同一个错误，附带失败的行号。
       return new Summary(id, UNREADABLE, UNREADABLE, 0, modified, file);
     }
     return new Summary(id, title(messages), preview(messages), messages.size(), modified, file);
@@ -277,12 +267,12 @@ public final class SessionStore {
         return truncate(user.text());
       }
     }
-    return "(no messages)";
+    return "（暂无消息）";
   }
 
   /**
-   * The same first user message as {@link #preview}, one line and a little longer: a list keyed by
-   * timestamp ids is a list nobody can pick from, so the sidebar reads this instead of the id.
+   * 与 {@link #preview} 相同的第一条用户消息，一行，稍长一些：一份以时间戳 id 为键的列表是谁也挑不出
+   * 东西的列表，所以侧栏读的是这个，而不是 id。
    */
   private static String title(List<Message> messages) {
     for (Message message : messages) {
@@ -295,10 +285,10 @@ public final class SessionStore {
 
   private static String truncate(String text) {
     String flat = flatten(text, PREVIEW_LIMIT);
-    return flat.isEmpty() ? "(empty message)" : flat;
+    return flat.isEmpty() ? "（空消息）" : flat;
   }
 
-  /** One line, at most {@code limit} characters, with an ellipsis when something was cut. */
+  /** 一行，最多 {@code limit} 个字符，有截断时带省略号。 */
   static String flatten(String text, int limit) {
     String flat = text == null ? "" : text.replaceAll("\\s+", " ").strip();
     return flat.length() <= limit ? flat : flat.substring(0, limit).stripTrailing() + "…";

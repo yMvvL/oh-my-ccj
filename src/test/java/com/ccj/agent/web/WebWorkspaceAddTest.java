@@ -8,15 +8,13 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * "Add workspace" is browser code — it lives in {@code web/app.js}, a classic script with no
- * exports — so its cases are a node script ({@code src/test/js/workspace-add.test.mjs}) that lifts
- * the section out of the shipped file and runs it against a small node stub, the same way
- * {@link WebSessionRowTest} runs the row's cases.
+ * 「添加工作区」是浏览器代码——它住在 {@code web/app.js} 里，那是一个没有导出的经典脚本——所以
+ * 它的用例是一个 node 脚本（{@code src/test/js/workspace-add.test.mjs}），把这一段从发布出去的
+ * 文件里抠出来，对着一个小小的 node 桩运行，就像 {@link WebSessionRowTest} 跑那一行的用例那样。
  *
- * <p>What it pins down is the gesture: one click opens the desktop's chooser and the chosen folder
- * is added under its own name. This class also checks the two halves that only make sense together —
- * the request the page sends and the route that answers it — because a page that sends
- * {@code {"path": ...}} needs a server that accepts a path with no name.
+ * <p>它钉住的是那个手势：点一下就打开桌面的选择器，选中的文件夹以自己的名字被加进来。这个类还
+ * 检查只有凑在一起才成立的两半——页面发出的请求和应答它的路由——因为一个发送
+ * {@code {"path": ...}} 的页面，需要一个接受不带名字的路径的服务器。
  */
 class WebWorkspaceAddTest {
 
@@ -24,7 +22,7 @@ class WebWorkspaceAddTest {
 
   @Test
   void theAddWorkspaceScriptPasses() throws IOException, InterruptedException {
-    WebSessionRowTest.runNodeCases(SCRIPT, "the add-workspace");
+    WebSessionRowTest.runNodeCases(SCRIPT, "添加工作区");
   }
 
   @Test
@@ -32,24 +30,24 @@ class WebWorkspaceAddTest {
     String script = appSource();
     if (script == null) { return; }
 
-    // Following the markdown cases: the shipped script must talk to the chooser on the trigger and
-    // post a path, because that is what the server derives the name from.
-    assertTrue(script.contains("pickWorkspaceFolder"), "the page must use the desktop's chooser");
-    assertTrue(script.contains("addWorkspaceByPicking"), "the trigger must add, not just fill a field");
+    // 跟随 markdown 那批用例的做法：发布出去的脚本必须在那个触发器上跟选择器对话、并且提交一个
+    // 路径，因为服务器正是据此推出名字的。
+    assertTrue(script.contains("pickWorkspaceFolder"), "页面必须使用桌面的选择器");
+    assertTrue(script.contains("addWorkspaceByPicking"), "触发器必须真的添加，而不只是往字段里填个值");
 
     int trigger = script.indexOf("dom.workspaceAdd.addEventListener");
     int submit = script.indexOf("dom.workspaceAddForm.addEventListener");
-    assertTrue(trigger > 0 && submit > trigger, "the trigger and the form must both be wired");
+    assertTrue(trigger > 0 && submit > trigger, "触发器和表单都必须接好线");
     assertTrue(
         script.substring(trigger, submit).contains("addWorkspaceByPicking()"),
-        "one click on the trigger is the chooser");
+        "在触发器上点一下就调用选择器");
 
-    // And the form no longer has a name to type: the folder names the workspace.
+    // 而表单已经没有名字可输了：由文件夹来给工作区命名。
     String page = pageSource();
     if (page != null) {
-      assertTrue(page.contains("id=\"ws-new-path\""), "the path field stays as the fallback");
-      assertTrue(page.contains("id=\"workspace-pick\""), "the form can still call the chooser");
-      assertTrue(!page.contains("ws-new-name"), "the name field is gone");
+      assertTrue(page.contains("id=\"ws-new-path\""), "路径字段作为兜底保留着");
+      assertTrue(page.contains("id=\"workspace-pick\""), "表单仍然能调用选择器");
+      assertTrue(!page.contains("ws-new-name"), "名字字段已经没了");
     }
   }
 

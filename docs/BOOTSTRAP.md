@@ -1,104 +1,62 @@
-# Self-bootstrap
+# 自我引导
 
-How ccj rebuilds itself, installs the result, and comes back on the new code — and the three things
-that make it non-obvious enough to be worth writing down.
+ccj 如何重建自己、安装结果、并在新代码上回来——以及三件让它不那么显然、值得写下来的事。
 
 ```bash
-ccj                                     # or ./ccj, or the symlink on PATH
-# ... the agent edits src/main/java/...
+ccj                                     # 或者 ./ccj，或者 PATH 上的符号链接
+# ... 代理编辑 src/main/java/...
 #     mvn -q -DskipTests -Djar.name=ccj-next package
 #     restart {"built": "target/ccj-next.jar"}
-# -> the process exits, the launcher starts the new jar, the session is on disk
+# -> 进程退出，启动器启动新的 jar，会话在磁盘上
 ```
 
-Nothing extra is needed to try it: `ccj` is the launcher, and the `restart` tool is in the standard
-tool set. `ccj --repl`, then ask for a change to ccj itself.
+要试它不需要任何额外的东西：`ccj` 就是启动器，而 `restart` 工具在标准工具集里。`ccj --repl`，然后要求对 ccj 自己做一个改动。
 
-## Why this is not just `mvn package && exec java -jar`
+## 为什么这不仅仅是 `mvn package && exec java -jar`
 
-Three separate facts, each of which turns the naive version into a crash.
+三个各自独立的事实，每一个都能把天真的版本变成一次崩溃。
 
-**1. A build truncates the jar it writes, and truncating an executing jar kills the JVM.**
-`mvn package` does not replace the jar atomically. The jar plugin truncates `target/ccj.jar` and
-writes a new one; the shade plugin then replaces that in place. A JVM running from that file has
-mmapped it, and the bytes underneath it change. Classes already loaded keep working — which is why
-the failure looks arbitrary — and the next class that has to be *loaded* fails:
+**1. 构建会截断它写入的 jar，而截断一个正在执行的 jar 会杀掉 JVM。** `mvn package` 不会原子地替换 jar。jar 插件截断 `target/ccj.jar` 并写入一个新的；shade 插件随后原地替换掉它。一个从该文件运行的 JVM 已经把它 mmap 了，而它下面的字节变了。已经加载的类继续工作——这就是为什么这个失败看起来是随机的——而下一个必须被*加载*的类则失败：
 
 ```
 Exception in thread "main" java.lang.NoClassDefFoundError: com/ccj/agent/core/AgentLoop$Result
 	at com.ccj.agent.core.AgentLoop.run(AgentLoop.java:138)
 ```
 
-Nothing in that message says "the jar was rewritten". That is the whole reason this is an operation
-in the tool set instead of a shell one-liner people are expected to get right.
+那条消息里没有一个字说「jar 被重写了」。这就是为什么这是一项工具集里的操作，而不是一条期望人们能弄对的 shell 一行命令。
 
-**2. Renaming over it is fine.** Overwriting the bytes of an open file is not; replacing the
-*directory entry* is. `mv new.jar target/ccj.jar` is an atomic rename on one filesystem, the running
-process keeps the inode it already opened, and it can keep lazy-loading classes from it — verified
-with a jar whose classes are loaded one per tick while it is renamed over. So a build writes a
-different filename (`-Djar.name=ccj-next`) and the swap is a rename, and the process that did the
-work survives long enough to say so.
+**2. 覆盖重命名没问题。** 覆盖一个已打开文件的字节不行；替换*目录项*行。`mv new.jar target/ccj.jar` 在同一个文件系统上是一次原子重命名，正在运行的进程保留它已经打开的 inode，并且可以继续从它那里惰性加载类——这是用一个 jar 验证过的：它的类在重命名期间被逐个 tick 加载。所以构建写的是另一个文件名（`-Djar.name=ccj-next`），而交换是一次重命名，干了活的进程活得足够久，能说明这一点。
 
-**3. A process cannot replace its own code, so it asks to be restarted.** After the swap, this
-process is running bytes no longer on disk. It exits with status 75 (`EX_TEMPFAIL`, chosen because
-the CLI itself never returns it — 0, 1 and 2 are taken), and the launcher loop starts the installed
-jar. The session is a file and the next process is told to open it (see the launcher's rules), so
-the conversation continues; the tool ends the run rather than letting the model ask for one more turn
-it will never get to send.
+**3. 一个进程无法替换自己的代码，所以它请求被重启。** 交换之后，这个进程运行的是不再在磁盘上的字节。它以状态 75 退出（`EX_TEMPFAIL`，选它是因为 CLI 自己从不返回它——0、1 和 2 都被占了），而启动器循环启动已安装的 jar。会话是一个文件，下一个进程被告知去打开它（见启动器的规则），所以对话继续；工具结束这次运行，而不是让模型再要一个它永远发不出去的回合。
 
-## The pieces
+## 零件
 
-| Piece | What it does |
+| 零件 | 它做什么 |
 |---|---|
-| `pom.xml` `-Djar.name` | the jar filename is a property, so a rebuild of this project can write `target/ccj-next.jar` and never touch the live jar |
-| `RestartTool` (`restart`) | approval-gated; refuses anything but "install the scratch build over the installed jar"; renames it, marks the restart, ends the run |
-| `ToolContext.endRun()` | how a tool ends a run that is not failing and not being aborted |
-| `Cli` | turns the request into exit 75 from `-p`, the REPL and the web server (which releases its block instead of waiting for Ctrl-C) |
-| `ResumePoint` | the note in `<home>/resume`: which conversation the next process should open, written before the exit and spent when it is read |
-| the `ccj` launcher | re-runs the process on a restart, and knows when not to: a one-shot `-p` prompt is answered, not re-issued |
+| `pom.xml` `-Djar.name` | jar 文件名是一个属性，所以这个项目的重建可以写 `target/ccj-next.jar` 而绝不碰正在用的 jar |
+| `RestartTool`（`restart`） | 经审批；除了「把暂存构建安装到已安装的 jar 上」以外什么都拒绝；重命名它、标记这次重启、结束运行 |
+| `ToolContext.endRun()` | 一个工具如何结束一次既没有失败也没有被中止的运行 |
+| `Cli` | 把请求变成退出码 75，从 `-p`、REPL 和网页服务器（后者释放它的阻塞，而不是等 Ctrl-C） |
+| `ResumePoint` | `<home>/resume` 里的那张便条：下一个进程该打开哪个对话，在退出前写入、在被读取时用掉 |
+| `ccj` 启动器 | 在重启时重新运行进程，并且知道什么时候不该：一次性的 `-p` 提示已经被回答过了，不再重发 |
 
-## The launcher's rules
+## 启动器的规则
 
-A restart is only worth honouring once. A run that ends in a restart has *already* installed the jar
-it wanted, so restarting the same request again would run identical code through an identical
-request.
+一次重启只值得兑现一次。一次以重启结束的运行*已经*安装了它想要的 jar，所以把同一个请求再重启一次，只会让同样的代码跑一遍同样的请求。
 
-- With `--repl` or the web UI (the default), the new jar is started **on the conversation the old
-  one was on**: the process that is ending writes that session id into `<home>/resume` before it
-  returns `75`, and the next process reads it and opens it. The note is spent when it is read, so it
-  resumes exactly one restart — a later start is a new session again, unless `--resume`/`--continue`
-  says otherwise (an explicit choice always wins). Without this, a restart would hand the user an
-  empty conversation at the moment they asked for their work to be updated, which is what made the
-  handover feel like a crash even though nothing was lost.
-- With `-p`, the prompt is **not** re-issued: the work it asked for is done, and the answer was the
-  restart. The launcher says so and exits 0.
-- A second restart in a row stops with the restart code, which is a state a human should look at —
-  it means a run is installing and re-requesting itself in a loop.
+- 用 `--repl` 或网页 UI（默认）时，新 jar 是**在旧那个所在的对话上**启动的：正在结束的进程在返回 `75` 之前把那个 session id 写进 `<home>/resume`，下一个进程读取它并打开它。便条在被读取时用掉，所以它正好恢复一次重启——之后再次启动又是一个新会话，除非 `--resume`/`--continue` 另有指示（显式选择总是赢）。没有这个，重启就会在用户要求把工作更新的时候递给他们一个空对话，这正是让这次交接感觉像崩溃的原因，尽管什么都没丢。
+- 用 `-p` 时，提示**不**重发：它要求的工作已经做完，而答案就是这次重启。启动器说明了这一点并以 0 退出。
+- 连续第二次重启会以重启码停下，而这是一个人应该看一眼的状态——它意味着一次运行正陷入「安装自己、再请求自己」的循环。
 
-## Costs and limits
+## 代价与限制
 
-- **The installed jar is only replaced between builds.** Anything already running keeps its old code
-  until it restarts. That is inherent: two processes cannot share one filename across an upgrade.
-- **The agent can brick this project.** It edits the source it runs from, and a bad change means the
-  next start fails. The session files survive — they are JSONL under `--home` — and so does the
-  previous jar if it is copied aside first (`cp target/ccj.jar target/ccj.jar.bak`), which is the
-  cheap habit worth having before a self-modifying run.
-- **A one-shot run cannot be continued.** Its session is on disk, but there is no live process, so
-  the new jar is left installed and waiting.
-- **A restart is not a hot reload.** It is a new process; nothing in memory survives it.
+- **已安装的 jar 只在两次构建之间被替换。** 任何已经在运行的东西都保留它的旧代码，直到它重启。这是固有的：两个进程无法在一次升级中共享一个文件名。
+- **代理可以把项目搞砖。** 它编辑自己运行所依据的源码，而一个坏改动意味着下一次启动失败。会话文件能存活——它们是 `--home` 下的 JSONL——先复制到一边的话，上一个 jar 也能存活（`cp target/ccj.jar target/ccj.jar.bak`），这是自我修改的运行之前值得养成的便宜习惯。
+- **一次性的运行无法继续。** 它的会话在磁盘上，但没有活着的进程，所以新 jar 就安装好、在那里等着。
+- **重启不是热重载。** 它是一个新进程；内存里没有任何东西能活过它。
 
-## Testing
+## 测试
 
-`RestartToolTest` pins the decisions rather than the process lifecycle: the swap happens and ends the
-run, a rejected restart changes nothing, and each refusal (missing jar, no installed jar, the
-installed jar itself, an unrelated jar) comes back as an error. `ResumePointTest` pins the handover
-note on its own — written, replaced, spent, and never fatal when it is missing or damaged.
-`CliEndToEndTest` covers the pair: the process after a restart opens the conversation the previous
-one was on, an explicit `--resume` still wins over the note, and a note naming a session that no
-longer exists starts fresh instead of failing to start.
+`RestartToolTest` 钉的是那些决定，而不是进程生命周期：交换发生并结束运行、一次被拒绝的重启什么都不改，而每一种拒绝（jar 缺失、没有已安装的 jar、已安装的 jar 本身、一个不相干的 jar）都作为错误回来。`ResumePointTest` 单独钉住交接便条——写入、被替换、被用掉，以及在它缺失或损坏时绝不致命。`CliEndToEndTest` 覆盖这一对：重启之后的进程打开上一个进程所在的对话，显式的 `--resume` 仍然胜过便条，而一张点名了已不存在会话的便条会全新开始，而不是启动失败。
 
-The end-to-end behaviour — that a build staged as `ccj-next` really does let the old process install
-and hand over, and that the process which comes back is on the same conversation — is verified by
-running it, which is the only way to test an exit that restarts a process. Both front ends were run
-that way: `--repl` printed the same session id before and after the restart, and the web server came
-back reporting the same session with its full history.
+端到端行为——一次以 `ccj-next` 暂存的构建真的能让旧进程安装并交接，以及回来的那个进程在同一个对话上——是跑出来的，这是测试一次会重启进程的退出的唯一方式。两个前端都是那样跑的：`--repl` 在重启前后打印了同一个 session id，网页服务器回来时报告同一个会话和它的完整历史。

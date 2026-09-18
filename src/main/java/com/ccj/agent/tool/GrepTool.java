@@ -17,11 +17,10 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 /**
- * Line-oriented regex search.
+ * 按行进行的正则搜索。
  *
- * <p>This runs over whatever tree the model points at, so every candidate file is vetted cheaply
- * before being read: size cap, NUL probe, then a strict UTF-8 decode. Without those filters a
- * single stray binary in a source tree floods the conversation with garbage.
+ * <p>它跑在模型指向的任何目录树上，所以每个候选文件在被读取之前都先经过便宜的甄别：体积上限、NUL 探测，
+ * 然后是严格的 UTF-8 解码。没有这些过滤，源码树里一个走失的二进制文件就会用垃圾冲垮对话。
  */
 public final class GrepTool implements Tool {
 
@@ -96,20 +95,20 @@ public final class GrepTool implements Tool {
               ignoreCase ? Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE : 0);
     } catch (PatternSyntaxException e) {
       return ToolResult.error(
-          "invalid regex '" + pattern + "': " + e.getDescription() + " at index " + e.getIndex());
+          "正则 '" + pattern + "' 无效: " + e.getDescription() + "（位置 " + e.getIndex() + "）");
     }
     PathMatcher filter = null;
     if (glob != null && !glob.isBlank()) {
       try {
         filter = FileSystems.getDefault().getPathMatcher("glob:" + glob);
       } catch (RuntimeException e) {
-        return ToolResult.error("invalid glob '" + glob + "': " + e.getMessage());
+        return ToolResult.error("glob '" + glob + "' 无效: " + e.getMessage());
       }
     }
 
     Path base = pathArg == null || pathArg.isBlank() ? ctx.cwd() : ctx.resolve(pathArg);
     if (!Files.exists(base)) {
-      return ToolResult.error("path not found: " + ToolSupport.display(ctx, base));
+      return ToolResult.error("找不到路径: " + ToolSupport.display(ctx, base));
     }
 
     List<String> hits = new ArrayList<>();
@@ -142,16 +141,16 @@ public final class GrepTool implements Tool {
                   matched,
                   unreadable));
     } else {
-      return ToolResult.error("path is neither a file nor a directory: " + ToolSupport.display(ctx, base));
+      return ToolResult.error("路径既不是文件也不是目录: " + ToolSupport.display(ctx, base));
     }
 
     String skipped =
         unreadable.isEmpty()
             ? ""
-            : " (" + unreadable.size() + " file(s) could not be read)";
+            : "（有 " + unreadable.size() + " 个文件读不了）";
     if (matched[0] == 0) {
       return ToolResult.ok(
-          "no matches for /" + pattern + "/ under " + ToolSupport.display(ctx, base) + skipped);
+          "/" + pattern + "/ 在 " + ToolSupport.display(ctx, base) + " 下没有匹配" + skipped);
     }
 
     StringBuilder out = new StringBuilder();
@@ -168,13 +167,13 @@ public final class GrepTool implements Tool {
     }
     long omitted = matched[0] - shown;
     if (omitted > 0) {
-      out.append("... ").append(omitted).append(" more matches omitted ...\n");
+      out.append("... 省略了 ").append(omitted).append(" 个匹配 ...\n");
     }
     if (!unreadable.isEmpty()) {
-      // Naming a few of them is enough to act on; all of them would bury the matches.
-      out.append("... ")
+      // 点出其中几个就够采取行动了；全部列出会把匹配埋掉。
+      out.append("... 有 ")
           .append(unreadable.size())
-          .append(" file(s) could not be read: ")
+          .append(" 个文件读不了: ")
           .append(String.join(", ", unreadable.subList(0, Math.min(3, unreadable.size()))))
           .append(unreadable.size() > 3 ? ", …" : "")
           .append('\n');
@@ -204,15 +203,15 @@ public final class GrepTool implements Tool {
     } catch (CharacterCodingException e) {
       return;
     } catch (IOException e) {
-      // One unreadable file — a permission bit, a file that vanished mid-walk, a block device —
-      // must not throw away every match found so far. It is named in the result instead.
+      // 一个读不了的文件——权限位、遍历中途消失的文件、块设备——不能把此前找到的所有匹配都丢掉。
+      // 改为在结果里点出它的名字。
       unreadable.add(label);
       return;
     }
     for (String line : lines) {
       if (line.indexOf('\0') >= 0) {
-        // The 8 KiB head probe cannot see a NUL that lives further in; a line that carries one is
-        // not text, and quoting it would put raw bytes in the conversation.
+        // 8 KiB 的头部探测看不到藏在更后面的 NUL；带这种字节的行不是文本，引用它就会把原始字节放进
+        // 对话里。
         return;
       }
     }
@@ -231,7 +230,7 @@ public final class GrepTool implements Tool {
     }
   }
 
-  /** A glob filter matches either the path relative to the search root or the bare file name. */
+  /** glob 过滤器匹配搜索根下的相对路径，或者光秃秃的文件名。 */
   private static boolean matchesFilter(PathMatcher filter, String relative, Path file) {
     if (relative != null && filter.matches(Path.of(relative))) {
       return true;

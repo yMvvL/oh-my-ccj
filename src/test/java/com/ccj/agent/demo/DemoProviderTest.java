@@ -10,9 +10,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
- * The demo provider is user-facing (it is what {@code ccj --demo} runs), so its routing and its
- * termination rule are pinned here: every route must produce a valid call, and a tool result must
- * always end the turn in prose or the loop would never stop.
+ * demo 提供方是给人用的（{@code ccj --demo} 跑的就是它），所以它的路由和终止规则钉在这里：每条路由都
+ * 必须产出一个合法的调用，而工具结果必须总是以散文结束这个回合，否则循环永远不会停。
  */
 class DemoProviderTest {
 
@@ -49,7 +48,7 @@ class DemoProviderTest {
   void aBareVerbIsAnsweredInsteadOfMisreadAsAPath() {
     Message.Assistant reply = decide("read");
 
-    assertTrue(reply.toolCalls().isEmpty(), "a bare verb must not become a tool call");
+    assertTrue(reply.toolCalls().isEmpty(), "光秃秃的动词不能变成一个工具调用");
     assertTrue(reply.text().contains("read <path>"), reply.text());
   }
 
@@ -70,8 +69,8 @@ class DemoProviderTest {
                 new Message.User("run ls"),
                 new Message.ToolResult("demo-bash-1", "bash", "exit code 0\nfile-a\nfile-b", false)));
 
-    assertTrue(reply.toolCalls().isEmpty(), "the loop would never terminate otherwise");
-    assertEquals("tool said: exit code 0 … (3 lines)", reply.text());
+    assertTrue(reply.toolCalls().isEmpty(), "否则循环永远不会终止");
+    assertEquals("工具说：exit code 0 …（共 3 行）", reply.text());
   }
 
   @Test
@@ -85,7 +84,7 @@ class DemoProviderTest {
     String first = decide("read a.txt").toolCalls().get(0).id();
     String second = decide("read a.txt").toolCalls().get(0).id();
 
-    assertTrue(!first.equals(second), "ids must not collide: " + first);
+    assertTrue(!first.equals(second), "id 不能相撞：" + first);
   }
 
   @Test
@@ -107,7 +106,7 @@ class DemoProviderTest {
               }
             });
 
-    assertEquals(List.of(), deltas, "a tool call has no prose to stream");
+    assertEquals(List.of(), deltas, "工具调用没有散文可以流式发送");
     assertEquals(List.of("read"), started);
     assertEquals(reply.toolCalls().get(0).id(), reply.toolCalls().get(0).id());
   }

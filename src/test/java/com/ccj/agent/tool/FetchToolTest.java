@@ -32,16 +32,16 @@ class FetchToolTest {
 
       assertFalse(result.error(), result.content());
       assertTrue(result.content().startsWith("HTTP 200 text/html ("), result.content());
-      assertTrue(result.content().contains("(" + page.length() + " bytes)\n"), result.content());
-      // Markup is left alone: stripping tags would be this tool guessing at the document.
+      assertTrue(result.content().contains("(" + page.length() + " 字节)\n"), result.content());
+      // 标记原样保留：剥掉标签等于这个工具在猜那份文档。
       assertTrue(result.content().endsWith(page), result.content());
     }
   }
 
   @Test
   void aRefusedFetchDialsNothing() throws Exception {
-    // Approval before the first byte leaves the machine, and "nothing was dialled" is the property
-    // worth asserting: a prompt that arrives after the request has been made is not a gate.
+    // 在第一个字节离开本机之前先审批，而值得断言的性质是「什么都没拨出去」：请求已经发出之后才到达
+    // 的提示不是闸门。
     try (Stub stub = Stub.start(send(200, "text/plain", "should never be read"))) {
       ToolResult result =
           new FetchTool()
@@ -51,8 +51,8 @@ class FetchToolTest {
                       dir, request -> com.ccj.agent.core.ApprovalAnswer.DENY, 4096));
 
       assertTrue(result.error(), result.content());
-      assertEquals("rejected by user", result.content());
-      assertEquals(0, stub.count(), "the request must not have been made");
+      assertEquals("被用户拒绝", result.content());
+      assertEquals(0, stub.count(), "这个请求绝不能被发出去");
     }
   }
 
@@ -73,15 +73,15 @@ class FetchToolTest {
 
       assertEquals(1, asked.size());
       assertEquals("fetch", asked.get(0).tool());
-      assertEquals(stub.url("/page"), asked.get(0).command(), "the URL is the rule's subject");
+      assertEquals(stub.url("/page"), asked.get(0).command(), "URL 才是规则的主语");
       assertTrue(asked.get(0).detail().startsWith("GET http://127.0.0.1:"), asked.get(0).detail());
     }
   }
 
   @Test
   void fetchIsNotReadOnlyBecauseItLeavesTheMachine() {
-    // The loop reads this flag to decide what may overlap and what must be approved; a fetch that
-    // claimed to be read-only would run beside a write, unasked.
+    // 循环读这个标志来决定什么可以并行、什么必须先过审批；一个自称只读的 fetch 会不经询问地挨着
+    // 一次写入一起跑。
     assertFalse(new FetchTool().readOnly());
   }
 
@@ -100,7 +100,7 @@ class FetchToolTest {
       assertTrue(ftp.content().contains("ftp"), ftp.content());
       assertTrue(script.error(), script.content());
       assertTrue(script.content().contains("javascript"), script.content());
-      assertEquals(0, stub.count(), "a refused scheme must not be dialled");
+      assertEquals(0, stub.count(), "被拒绝的 scheme 绝不能被拨出去");
     }
   }
 
@@ -110,7 +110,7 @@ class FetchToolTest {
 
     assertTrue(result.error(), result.content());
     assertTrue(result.content().contains("/etc/passwd"), result.content());
-    assertTrue(result.content().contains("no scheme"), result.content());
+    assertTrue(result.content().contains("没有指定 scheme"), result.content());
   }
 
   @Test
@@ -137,9 +137,9 @@ class FetchToolTest {
                   "{\"url\":\"" + stub.url("/big") + "\",\"max_bytes\":32}", ToolContext.of(dir));
 
       assertFalse(result.error(), result.content());
-      assertTrue(result.content().startsWith("HTTP 200 text/plain (32 bytes, truncated; "),
+      assertTrue(result.content().startsWith("HTTP 200 text/plain (32 字节，已截断；"),
           result.content());
-      assertTrue(result.content().contains("68 bytes omitted of 100"), result.content());
+      assertTrue(result.content().contains("100 字节中省略了 68"), result.content());
       assertFalse(result.content().contains("x".repeat(33)), result.content());
     }
   }
@@ -151,8 +151,7 @@ class FetchToolTest {
             exchange -> {
               byte[] bytes = "y".repeat(80).getBytes(StandardCharsets.UTF_8);
               exchange.getResponseHeaders().set("content-type", "text/plain");
-              // 0 rather than a length: the response is chunked and declares nothing, which is what
-              // a streaming endpoint does.
+              // 传 0 而不是长度：这个响应是分块传输且什么都不声明，流式端点就是这样。
               exchange.sendResponseHeaders(200, 0);
               try (OutputStream out = exchange.getResponseBody()) {
                 out.write(bytes);
@@ -165,8 +164,8 @@ class FetchToolTest {
                   ToolContext.of(dir));
 
       assertFalse(result.error(), result.content());
-      assertTrue(result.content().contains("(16 bytes, truncated;"), result.content());
-      assertTrue(result.content().contains("size was not declared"), result.content());
+      assertTrue(result.content().contains("(16 字节，已截断；"), result.content());
+      assertTrue(result.content().contains("没有声明它的大小"), result.content());
       assertEquals(16, result.content().split("\n", 2)[1].length(), result.content());
     }
   }
@@ -178,7 +177,7 @@ class FetchToolTest {
 
       assertTrue(result.error(), result.content());
       assertTrue(result.content().contains("application/octet-stream"), result.content());
-      assertFalse(result.content().contains("not for a model"), "the body must not be returned");
+      assertFalse(result.content().contains("not for a model"), "响应体绝不能被返回");
     }
   }
 
@@ -232,8 +231,8 @@ class FetchToolTest {
 
       assertTrue(result.error(), result.content());
       assertTrue(result.content().contains("file"), result.content());
-      assertTrue(result.content().contains("http and https"), result.content());
-      assertEquals(1, stub.count(), "the hop must be refused before it is dialled");
+      assertTrue(result.content().contains("http 与 https"), result.content());
+      assertEquals(1, stub.count(), "这一跳必须在拨出去之前就被拒绝");
     }
   }
 
@@ -257,7 +256,7 @@ class FetchToolTest {
             "{\"url\":\"" + url + "\",\"max_bytes\":" + maxBytes + "}", ToolContext.of(dir));
   }
 
-  /** A canned answer: status, content type and the body written with a declared length. */
+  /** 一份预置的答复：状态码、内容类型，以及按声明长度写出的响应体。 */
   private static Responder send(int status, String contentType, String body) {
     return exchange -> {
       byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
@@ -269,13 +268,13 @@ class FetchToolTest {
     };
   }
 
-  /** What a stub answers one request with. */
+  /** 桩为一次请求答复的东西。 */
   @FunctionalInterface
   private interface Responder {
     void answer(HttpExchange exchange) throws IOException;
   }
 
-  /** A loopback server for one test, counting every request it is asked to answer. */
+  /** 为单个测试准备的环回服务器，统计它被要求答复的每一次请求。 */
   private static final class Stub implements AutoCloseable {
 
     private final HttpServer server;

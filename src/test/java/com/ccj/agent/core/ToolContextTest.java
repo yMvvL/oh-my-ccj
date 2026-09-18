@@ -9,8 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The working-directory check that the approval prompt is built on: whether a path stays inside is a
- * question about where it really points, not about how its name reads.
+ * 审批提示所依据的工作目录检查：一个路径是否留在里面，问的是它真正指向哪里，而不是它的名字
+ * 读起来如何。
  */
 class ToolContextTest {
 
@@ -20,30 +20,29 @@ class ToolContextTest {
   void aPathThatDoesNotExistYetIsStillInside() throws Exception {
     ToolContext ctx = ToolContext.of(dir);
 
-    assertTrue(ctx.insideCwd(dir.resolve("new-file.txt")), "a file about to be created has no real path");
+    assertTrue(ctx.insideCwd(dir.resolve("new-file.txt")), "一个即将创建的文件还没有真实路径");
     assertFalse(ctx.insideCwd(dir.resolve("../elsewhere.txt")));
     assertFalse(ctx.insideCwd(dir.getParent().resolve("sibling.txt")));
   }
 
   @Test
   void aSymlinkOutOfTheWorkingDirectoryCountsAsOutside() throws Exception {
-    // The name says otherwise, which is the whole reason a lexical check is not enough for the
-    // sentence a human reads before approving.
+    // 名字说的正好相反，这正是人们批准之前所读的那句话不能只靠词法检查的全部理由。
     Path outside = Files.createDirectories(dir.resolveSibling(dir.getFileName() + "-elsewhere"));
     Files.writeString(outside.resolve("secret.txt"), "top secret\n");
     Files.createSymbolicLink(dir.resolve("escape"), outside);
 
     ToolContext ctx = ToolContext.of(dir);
 
-    assertFalse(ctx.insideCwd(dir.resolve("escape/secret.txt")), "the link leaves the workspace");
+    assertFalse(ctx.insideCwd(dir.resolve("escape/secret.txt")), "这个链接离开了工作区");
     assertFalse(ctx.insideCwd(dir.resolve("escape")));
-    assertTrue(ctx.insideCwd(dir.resolve("plain.txt")), "an ordinary path stays inside");
+    assertTrue(ctx.insideCwd(dir.resolve("plain.txt")), "普通路径留在里面");
   }
 
   @Test
   void aWorkingDirectoryReachedThroughASymlinkIsNotAFalseAlarm() throws Exception {
-    // /tmp is a symlink on macOS and a user's project often sits behind one; comparing real paths on
-    // both sides is what keeps every path from looking foreign.
+    // /tmp 在 macOS 上是一个符号链接，而用户的项目也常常位于某个链接之后；两侧都比较真实路径，
+    // 才能让每个路径都不至于看起来像外来的。
     Path real = Files.createDirectories(dir.resolve("real"));
     Files.writeString(real.resolve("file.txt"), "content\n");
     Path link = dir.resolve("link");
@@ -51,7 +50,7 @@ class ToolContextTest {
 
     ToolContext ctx = ToolContext.of(link);
 
-    assertTrue(ctx.insideCwd(link.resolve("file.txt")), "inside, however the directory was reached");
-    assertTrue(ctx.insideCwd(real.resolve("file.txt")), "and the same file through its real name");
+    assertTrue(ctx.insideCwd(link.resolve("file.txt")), "无论怎么到达这个目录，都在里面");
+    assertTrue(ctx.insideCwd(real.resolve("file.txt")), "同一个文件用它的真实名字也一样");
   }
 }

@@ -14,10 +14,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The wallpaper directory: what it offers, and what a name from a browser can reach.
+ * 壁纸目录：它提供什么，以及一个来自浏览器的名字能够到哪儿。
  *
- * <p>Two properties matter more than the rest and are tested first: the order a numbered set is
- * listed in, and that a name arriving from the page cannot leave the directory.
+ * <p>有两条性质比其余的都重要，所以先测：一组编号的图片列出来的顺序，以及一个从页面来的名字
+ * 出不了这个目录。
  */
 class WallpapersTest {
 
@@ -51,8 +51,8 @@ class WallpapersTest {
 
   @Test
   void numberedPicturesAreListedInTheOrderAPersonReadsThem() throws IOException {
-    // A set called 1..16 must not be read 1, 10, 11, … 2: the rotation follows the list, so the
-    // order of the list is the order the pictures appear in.
+    // 一组叫 1..16 的图片不能被读成 1, 10, 11, … 2：轮换跟着列表走，所以列表的顺序就是图片
+    // 出现的顺序。
     write("2.png", PNG);
     write("10.jpg", PNG);
     write("1.png", PNG);
@@ -64,7 +64,7 @@ class WallpapersTest {
 
   @Test
   void theBytesDecideTheTypeRatherThanTheName() throws IOException {
-    // A file named .jpg holding a PNG is a PNG — the browser is told what it actually is.
+    // 一个名叫 .jpg 却装着 PNG 的文件就是 PNG——浏览器被告知的是它实际是什么。
     write("10.jpg", PNG);
 
     Wallpapers wallpapers = new Wallpapers(dir);
@@ -86,7 +86,7 @@ class WallpapersTest {
   void onlyImagesAreOffered() throws IOException {
     write("1.png", PNG);
     write("notes.txt", "hello".getBytes(StandardCharsets.UTF_8));
-    // An SVG is a document that can carry script; it is not a background picture here.
+    // SVG 是一份能携带脚本的文档；在这里它不是一张背景图片。
     write("logo.svg", "<svg xmlns='http://www.w3.org/2000/svg'/>".getBytes(StandardCharsets.UTF_8));
 
     assertEquals(List.of("1.png"), new Wallpapers(dir).names());
@@ -100,9 +100,9 @@ class WallpapersTest {
     Wallpapers wallpapers = new Wallpapers(dir);
 
     assertTrue(wallpapers.resolve("1.png").isPresent());
-    assertTrue(wallpapers.resolve("../secret.png").isEmpty(), "a separator is refused outright");
+    assertTrue(wallpapers.resolve("../secret.png").isEmpty(), "分隔符直接被拒");
     assertTrue(wallpapers.resolve("../secret.png".replace("/", "\\")).isEmpty());
-    assertTrue(wallpapers.resolve("/etc/passwd").isEmpty(), "an absolute path is not a name here");
+    assertTrue(wallpapers.resolve("/etc/passwd").isEmpty(), "绝对路径在这里不是一个名字");
     assertTrue(wallpapers.resolve(".").isEmpty());
     assertTrue(wallpapers.resolve("").isEmpty());
     assertTrue(wallpapers.resolve(null).isEmpty());
@@ -117,8 +117,8 @@ class WallpapersTest {
 
     Wallpapers wallpapers = new Wallpapers(dir);
 
-    assertTrue(wallpapers.resolve("link.png").isEmpty(), "the link leaves the directory");
-    assertFalse(wallpapers.names().contains("link.png"), "and it is not listed either: " + wallpapers.names());
+    assertTrue(wallpapers.resolve("link.png").isEmpty(), "这个链接离开了目录");
+    assertFalse(wallpapers.names().contains("link.png"), "而且它也不在列表里：" + wallpapers.names());
   }
 
   @Test

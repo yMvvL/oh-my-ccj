@@ -3,25 +3,23 @@ package com.ccj.agent.core;
 import java.util.List;
 
 /**
- * A cheap estimate of what a conversation costs in tokens, for budgeting rather than billing.
+ * 对一段对话要花多少 token 的廉价估算，用于做预算，而不是计费。
  *
- * <p>It is a heuristic and says so: every provider tokenises differently, and an exact count means a
- * round trip to a tokeniser this runtime deliberately does not ship. What it has to get right is the
- * shape — code, JSON and English at roughly four characters per token; CJK, Hangul, kana and emoji at
- * roughly one — because an estimate that is wrong by a factor of three would make the budget worse
- * than no budget at all.
+ * <p>它是启发式的，这一点摆在明面上：每个提供方的分词方式都不同，而要精确计数就得来回调用一个本运行时刻意
+ * 不带的分词器。它必须算对的是量级——代码、JSON 和英文大致每 token 四个字符；CJK、谚文、假名和 emoji 大致
+ * 每 token 一个字符——因为一个错到三倍的估算会让预算比没有预算还糟。
  */
 public final class TokenEstimate {
 
-  /** Characters of ASCII-ish text per token, which is the rate BPE vocabularies settle around. */
+  /** 近似 ASCII 文本每 token 的字符数，这是 BPE 词表大致收敛到的比率。 */
   private static final int CHARS_PER_TOKEN = 4;
 
-  /** Tokens a message costs before its content: role, delimiters, tool plumbing. */
+  /** 一条消息在内容之外的开销：角色、分隔符、工具的管道部分。 */
   private static final int MESSAGE_OVERHEAD = 4;
 
   private TokenEstimate() {}
 
-  /** Estimated tokens for a string, never zero for a non-empty one. */
+  /** 一个字符串的估算 token 数；非空字符串永远不会是零。 */
   public static int of(String text) {
     if (text == null || text.isEmpty()) {
       return 0;
@@ -38,7 +36,7 @@ public final class TokenEstimate {
       if (Character.isHighSurrogate(c)
           && i + 1 < text.length()
           && Character.isLowSurrogate(text.charAt(i + 1))) {
-        wide++; // an emoji: one token, two chars
+        wide++; // 一个 emoji：一个 token，两个字符
         i++;
         continue;
       }
@@ -52,7 +50,7 @@ public final class TokenEstimate {
     return Math.max(1, tokens);
   }
 
-  /** Estimated tokens for one message, including what the wire format adds around it. */
+  /** 一条消息的估算 token 数，包含线路格式在它周围添加的部分。 */
   public static int of(Message message) {
     if (message == null) {
       return 0;
@@ -66,9 +64,8 @@ public final class TokenEstimate {
       case Message.Assistant assistant -> {
         int tokens = MESSAGE_OVERHEAD + of(assistant.text());
         for (Message.Thinking block : assistant.thinking()) {
-          // `data` is the whole payload of a redacted block, and a block goes back on the wire
-          // exactly as it arrived — counting only text and signature would budget a long redacted
-          // conversation as if the blocks were empty.
+          // `data` 是被涂改块的全部负载，而块会按它到达时的样子原样回到线上——只算 text 和 signature
+          // 会把一段很长的被涂改对话按「块都是空的」来预算。
           tokens +=
               MESSAGE_OVERHEAD + of(block.text()) + of(block.signature()) + of(block.data());
         }
@@ -80,7 +77,7 @@ public final class TokenEstimate {
     };
   }
 
-  /** Estimated tokens for a whole conversation. */
+  /** 整段对话的估算 token 数。 */
   public static int of(List<Message> messages) {
     if (messages == null || messages.isEmpty()) {
       return 0;
@@ -92,14 +89,14 @@ public final class TokenEstimate {
     return tokens;
   }
 
-  /** True for the scripts whose characters are worth about a token each. */
+  /** 当该文字系统的字符大致各值一个 token 时为 true。 */
   private static boolean isWide(char c) {
-    return (c >= 0x3040 && c <= 0x30FF) // hiragana, katakana
-        || (c >= 0x3400 && c <= 0x4DBF) // CJK extension A
-        || (c >= 0x4E00 && c <= 0x9FFF) // CJK unified ideographs
-        || (c >= 0x3000 && c <= 0x303F) // CJK punctuation
-        || (c >= 0xAC00 && c <= 0xD7AF) // hangul syllables
-        || (c >= 0xF900 && c <= 0xFAFF) // CJK compatibility ideographs
-        || (c >= 0xFF00 && c <= 0xFF60); // fullwidth forms
+    return (c >= 0x3040 && c <= 0x30FF) // 平假名、片假名
+        || (c >= 0x3400 && c <= 0x4DBF) // CJK 扩展 A
+        || (c >= 0x4E00 && c <= 0x9FFF) // CJK 统一表意文字
+        || (c >= 0x3000 && c <= 0x303F) // CJK 标点
+        || (c >= 0xAC00 && c <= 0xD7AF) // 谚文音节
+        || (c >= 0xF900 && c <= 0xFAFF) // CJK 兼容表意文字
+        || (c >= 0xFF00 && c <= 0xFF60); // 全角形式
   }
 }

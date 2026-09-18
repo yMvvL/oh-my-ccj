@@ -90,8 +90,8 @@ class FileSessionTest {
 
     FileSession session = FileSession.create(sessions);
 
-    assertFalse(Files.exists(session.file()), "an id is free; a file is a claim");
-    assertFalse(Files.exists(sessions), "not even the directory yet");
+    assertFalse(Files.exists(session.file()), "id 是免费的；文件是一句声称");
+    assertFalse(Files.exists(sessions), "连目录都还没有");
 
     session.append(new Message.User("hello"));
 
@@ -106,7 +106,7 @@ class FileSessionTest {
     FileSession.create(sessions);
     FileSession.create(sessions);
 
-    assertEquals(0, SessionStore.list(sessions).size(), "pressing new session must not pile up sessions");
+    assertEquals(0, SessionStore.list(sessions).size(), "按「新建会话」不能把会话堆起来");
 
     FileSession second = FileSession.create(sessions);
     second.append(new Message.User("real"));
@@ -124,7 +124,7 @@ class FileSessionTest {
 
     FileSession reopened = FileSession.open(sessions, session.id());
 
-    assertEquals(2, reopened.messages().size(), "an accounting line is not a message");
+    assertEquals(2, reopened.messages().size(), "记账行不是一条消息");
     assertEquals(new UsageTotals(100, 20, 80, 1, 2, 3, 1, 1500, true), reopened.totals());
     assertEquals(0.8, reopened.totals().cacheHitRate(), 0.001);
     assertEquals(1, SessionStore.list(sessions).size());
@@ -164,16 +164,16 @@ class FileSessionTest {
         List.of(new Message.Summary("what happened so far", 2, "x"), new Message.User("next question"));
     Path generation = session.compactInto(compacted, UsageTotals.empty());
 
-    assertNotEquals(original, generation, "a compaction writes a new file, never the old one");
+    assertNotEquals(original, generation, "一次压缩写的是新文件，绝不是旧的那个");
     assertEquals(
         session.id() + ".g1.jsonl",
         generation.getFileName().toString(),
-        "the generation is named for the session, not for the file it replaced");
-    assertEquals(before, Files.readString(original), "the generation it replaced is untouched");
+        "这一代是按会话命名的，不是按它替换掉的那个文件");
+    assertEquals(before, Files.readString(original), "被替换掉的那一代原封不动");
     assertEquals(List.of(0, 1), FileSession.generations(dir, session.id()));
     assertEquals(1, FileSession.newestGeneration(dir, session.id()));
 
-    // The session itself is now the new generation, in memory and on disk.
+    // 这个会话本身现在就是新一代，内存里和磁盘上都是。
     assertEquals(compacted, session.messages());
     assertEquals(generation, session.file());
     assertEquals(compacted, FileSession.readAll(generation));
@@ -205,15 +205,15 @@ class FileSessionTest {
     assertEquals(List.of(0, 1, 2), FileSession.generations(dir, session.id()));
     assertEquals(2, FileSession.newestGeneration(dir, session.id()));
     assertEquals(FileSession.generationFile(dir, session.id(), 2), session.file());
-    // Every earlier generation is still readable, which is what makes a bad summary recoverable.
+    // 每一个更早的代都仍然可读，正是这一点让一份糟糕的摘要可以挽回。
     assertEquals("gen0", ((Message.User) FileSession.readAll(FileSession.fileFor(dir, session.id())).get(0)).text());
     assertEquals("gen1", ((Message.User) FileSession.readAll(FileSession.generationFile(dir, session.id(), 1)).get(1)).text());
   }
 
   @Test
   void aSessionThatWasNeverCompactedStillLooksLikeItself() throws IOException {
-    // Generation 0 keeps the plain name, so a reader that knows nothing about generations — and every
-    // session file written before compaction existed — is unaffected.
+    // 第 0 代保留普通名字，所以对「代」一无所知的读取方——以及在压缩存在之前写下的每个会话文件——都不受
+    // 影响。
     FileSession session = FileSession.create(dir);
     session.append(new Message.User("hello"));
     session.close();
@@ -234,8 +234,8 @@ class FileSessionTest {
     session.close();
 
     UsageTotals reopened = FileSession.open(dir, session.id()).totals();
-    assertEquals(1, reopened.compactions(), "the compaction it just did is counted");
-    assertEquals(100, reopened.inputTokens(), "and nothing else about the books moved");
+    assertEquals(1, reopened.compactions(), "它刚做的那次压缩被数进去了");
+    assertEquals(100, reopened.inputTokens(), "而账目的其它部分没有动");
     assertEquals(1500, reopened.elapsedMillis());
   }
 }

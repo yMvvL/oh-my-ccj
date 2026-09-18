@@ -23,10 +23,9 @@ class WriteToolTest {
 
   @Test
   void aFileChangedWhileTheApprovalWaitedIsRefusedRatherThanOverwritten() throws Exception {
-    // The gap this closes: `write` refused a file that *appeared* while the prompt was up, and wrote
-    // over one that *changed*. Two conversations can write the same path, and so can the user's
-    // editor — the diff in the prompt was computed against the file as it was, so writing over what
-    // is there now discards a change nobody was shown.
+    // 这里补上的缺口：`write` 会拒绝一个在提示弹出期间*冒出来*的文件，却会覆盖一个*被改过*的
+    // 文件。两个对话可以写同一条路径，用户的编辑器也可以——提示里的差异是按文件当时的样子算出来的，
+    // 所以覆盖现在的内容会丢掉一个谁都没看到过的改动。
     Path file = dir.resolve("shared.txt");
     Files.writeString(file, "mine\n");
 
@@ -37,8 +36,7 @@ class WriteToolTest {
                 new ToolContext(
                     dir,
                     request -> {
-                      // Somebody else — another conversation, the editor, a formatter — writes while
-                      // this one waits for its answer.
+                      // 别人——另一个对话、编辑器、格式化器——在这一次等待答复期间写了这个文件。
                       try {
                         Files.writeString(file, "somebody else's work\n");
                       } catch (IOException e) {
@@ -49,17 +47,17 @@ class WriteToolTest {
                     4096));
 
     assertTrue(result.error(), result.content());
-    assertTrue(result.content().startsWith("refused:"), result.content());
-    assertTrue(result.content().contains("changed while this write was waiting"), result.content());
+    assertTrue(result.content().startsWith("已拒绝："), result.content());
+    assertTrue(result.content().contains("在这次写入等待审批期间被改动了"), result.content());
     assertEquals(
         "somebody else's work\n",
         Files.readString(file),
-        "the other change is what survives, not this one");
+        "活下来的是别人的那处改动，不是这一处");
   }
 
   @Test
   void aFileThatChangedOnlyInLengthIsStillRefused() throws Exception {
-    // A size and a timestamp would miss this one; the hash is what makes the check trustworthy.
+    // 只看大小和时间戳会漏掉这一种；哈希才让这个检查可信。
     Path file = dir.resolve("same-length.txt");
     Files.writeString(file, "AAAA\n");
 
@@ -92,8 +90,8 @@ class WriteToolTest {
         new WriteTool().execute("{\"path\":\"nested/new.txt\",\"content\":\"hello\\n\"}", ctx);
 
     assertTrue(result.error(), result.content());
-    assertEquals("rejected by user", result.content());
-    assertFalse(Files.exists(dir.resolve("nested")), "denied write must not create directories");
+    assertEquals("被用户拒绝", result.content());
+    assertFalse(Files.exists(dir.resolve("nested")), "被拒绝的写入不能创建目录");
     assertFalse(Files.exists(dir.resolve("nested/new.txt")));
   }
 
@@ -114,10 +112,10 @@ class WriteToolTest {
 
     assertFalse(result.error(), result.content());
     assertEquals("one\ntwo\n", Files.readString(dir.resolve("a/b/new.txt")));
-    assertTrue(result.content().contains("created new file"), result.content());
+    assertTrue(result.content().contains("新建了文件"), result.content());
     assertEquals(1, approvals.size());
     assertTrue(approvals.get(0).startsWith("write|a/b/new.txt"), approvals.get(0));
-    assertTrue(approvals.get(0).contains("creates a new file"), approvals.get(0));
+    assertTrue(approvals.get(0).contains("新建文件"), approvals.get(0));
   }
 
   @Test
@@ -139,17 +137,16 @@ class WriteToolTest {
 
     assertFalse(result.error(), result.content());
     assertEquals("one\nTWO\nthree\n", Files.readString(dir.resolve("existing.txt")));
-    assertTrue(result.content().contains("replaced existing file"), result.content());
-    assertTrue(approvals.get(0).contains("replaces existing content"), approvals.get(0));
+    assertTrue(result.content().contains("替换了已有文件"), result.content());
+    assertTrue(approvals.get(0).contains("覆盖现有内容"), approvals.get(0));
     assertTrue(approvals.get(0).contains("- two"), approvals.get(0));
     assertTrue(approvals.get(0).contains("+ TWO"), approvals.get(0));
   }
 
   @Test
   void aFileThatAppearsWhileTheApprovalWaitsIsNotOverwritten() throws Exception {
-    // The prompt said "creates a new file" and the approver agreed to that. If a file appeared in the
-    // meantime, writing now discards work the person who approved never saw — a different act from
-    // the one they consented to.
+    // 提示里说的是「新建文件」，批准者也同意了那件事。如果这期间冒出一个文件，现在写下去就会丢掉
+    // 批准的人从未看到过的工作——那是与他们同意的那件事不同的另一个行为。
     Path file = dir.resolve("appeared.txt");
     Approver creatingBehindOurBack =
         request -> {
@@ -167,15 +164,15 @@ class WriteToolTest {
                 "{\"path\":\"appeared.txt\",\"content\":\"mine\"}",
                 new ToolContext(dir, creatingBehindOurBack, 4096));
 
-    assertTrue(result.error(), "must be refused: " + result.content());
-    assertTrue(result.content().contains("did not exist"), result.content());
-    assertEquals("somebody else's work", Files.readString(file), "their file is intact");
+    assertTrue(result.error(), "必须被拒绝: " + result.content());
+    assertTrue(result.content().contains("还不存在"), result.content());
+    assertEquals("somebody else's work", Files.readString(file), "他们的文件完好无损");
   }
 
   @Test
   void overwritingAFileThatWasAlreadyThereIsStillAllowed() throws Exception {
-    // A write is deliberately an overwrite, so the check above must not widen into "refuse any change
-    // while waiting" — that would break the ordinary case of rewriting a file the agent just read.
+    // 写入本来就是一次刻意的覆盖，所以上面那个检查不能扩张成「等待期间拒绝任何变化」——那会破坏
+    // 「重写代理刚读过的文件」这种再普通不过的情况。
     Path file = dir.resolve("existing.txt");
     Files.writeString(file, "old");
 
@@ -200,7 +197,7 @@ class WriteToolTest {
       assertEquals(
           List.of("solo.txt"),
           entries.map(p -> p.getFileName().toString()).sorted().toList(),
-          "only the written file is left");
+          "只剩被写入的那个文件");
     }
   }
 }

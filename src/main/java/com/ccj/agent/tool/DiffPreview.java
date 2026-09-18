@@ -4,16 +4,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Compact line previews of a pending file mutation, shown to the human who approves {@code write}
- * and {@code edit}.
+ * 待定文件改动的紧凑行预览，展示给批准 {@code write} 与 {@code edit} 的人。
  *
- * <p>The preview is deliberately bounded: a few lines of context around each changed region, `...`
- * for elided stretches, and a hard line cap. Unchanged text is trimmed from both ends before
- * diffing, so a one-line edit in a huge file costs only the lines that matter.
+ * <p>预览刻意是有界的：每处改动区域周围几行上下文，用 `...` 表示被略去的片段，再加一个硬性的行数
+ * 上限。做差异之前会先从两端裁掉未变的文本，因此在一个巨大文件里改一行，只花掉真正要紧的那几行。
  */
 public final class DiffPreview {
 
-  /** Ceiling on the LCS matrix, above which the preview degrades to an edge-only sketch. */
+  /** LCS 矩阵的天花板，超过它预览就退化成只画两端的草图。 */
   private static final int MAX_DP_CELLS = 250_000;
 
   private static final int COARSE_EDGE_LINES = 3;
@@ -26,8 +24,8 @@ public final class DiffPreview {
   private DiffPreview() {}
 
   /**
-   * Preview of replacing each {@code [start, end)} offset of {@code oldText} with {@code newString}.
-   * Ranges must be ascending and non-overlapping, which is how {@link EditTool} collects them.
+   * 把 {@code oldText} 的每个 {@code [start, end)} 区间都替换成 {@code newString} 之后的预览。
+   * 区间必须递增且互不重叠，{@link EditTool} 就是这样收集它们的。
    */
   public static String replacements(
       String oldText, List<int[]> ranges, String newString, int contextLines, int maxLines) {
@@ -39,20 +37,19 @@ public final class DiffPreview {
     return unified(oldText, updated.toString(), contextLines, maxLines);
   }
 
-  /** Preview of the line-level change from {@code oldText} to {@code newText}. */
+  /** 从 {@code oldText} 到 {@code newText} 的行级改动预览。 */
   public static String unified(String oldText, String newText, int contextLines, int maxLines) {
     if (oldText.equals(newText)) {
-      return "(no change)";
+      return "（无变化）";
     }
     List<String> before = lines(oldText);
     List<String> after = lines(newText);
     if (before.equals(after)) {
-      // Identical lines, different bytes: the edit adds or removes a trailing newline. The line
-      // diff cannot see it, and answering "(no change)" for a write that does rewrite the file is
-      // the one thing an approval preview must never say.
+      // 行相同、字节不同：这次编辑增加或删除了末尾的换行。行级差异看不到它，而对一次确实重写了文件
+      // 的写入回答「（无变化）」，是审批预览绝不能说的唯一一件事。
       return newText.length() > oldText.length()
-          ? "(a newline is added at the end of the file)"
-          : "(the newline at the end of the file is removed)";
+          ? "（文件末尾新增了一个换行）"
+          : "（文件末尾的换行被删除了）";
     }
     return render(diff(before, after), Math.max(0, contextLines), Math.max(1, maxLines));
   }
@@ -92,7 +89,7 @@ public final class DiffPreview {
     return ops;
   }
 
-  /** LCS diff of the trimmed middle; only used while the middle is small enough to afford it. */
+  /** 对裁过两端的中间部分做 LCS 差异；只在中间小到负担得起时使用。 */
   private static void precise(
       List<Op> ops, List<String> a, List<String> b, int offset, int n, int m) {
     int[][] lcs = new int[n + 1][m + 1];
@@ -125,7 +122,7 @@ public final class DiffPreview {
     }
   }
 
-  /** Whole-block replacement of both sides: first and last lines only, with an explicit count. */
+  /** 两侧都整块替换：只给首尾几行，外加一个明确的计数。 */
   private static void coarse(
       List<Op> ops, List<String> a, List<String> b, int offset, int n, int m) {
     int headOld = Math.min(COARSE_EDGE_LINES, n);
@@ -134,7 +131,7 @@ public final class DiffPreview {
       ops.add(new Op(REMOVED, a.get(offset + i)));
     }
     if (n - headOld - tailOld > 0) {
-      ops.add(new Op(MARKER, "(" + (n - headOld - tailOld) + " more removed lines)"));
+      ops.add(new Op(MARKER, "（另有 " + (n - headOld - tailOld) + " 行被删除）"));
     }
     for (int i = n - tailOld; i < n; i++) {
       ops.add(new Op(REMOVED, a.get(offset + i)));
@@ -145,7 +142,7 @@ public final class DiffPreview {
       ops.add(new Op(ADDED, b.get(offset + i)));
     }
     if (m - headNew - tailNew > 0) {
-      ops.add(new Op(MARKER, "(" + (m - headNew - tailNew) + " more added lines)"));
+      ops.add(new Op(MARKER, "（另有 " + (m - headNew - tailNew) + " 行被新增）"));
     }
     for (int i = m - tailNew; i < m; i++) {
       ops.add(new Op(ADDED, b.get(offset + i)));
@@ -167,7 +164,7 @@ public final class DiffPreview {
       }
     }
     if (!changed) {
-      return "(no change)";
+      return "（无变化）";
     }
 
     StringBuilder out = new StringBuilder();
@@ -200,12 +197,12 @@ public final class DiffPreview {
       emitted++;
     }
     if (capped) {
-      out.append("  ... ").append(suppressed).append(" more diff lines omitted ...\n");
+      out.append("  ... 另有 ").append(suppressed).append(" 行差异被省略 ...\n");
     }
     return out.toString();
   }
 
-  /** Text as lines without terminators; a trailing newline ends the last line, it does not add one. */
+  /** 文本按行切开且不带行终止符；末尾的换行结束最后一行，不额外增加一行。 */
   private static List<String> lines(String text) {
     List<String> out = new ArrayList<>();
     int start = 0;

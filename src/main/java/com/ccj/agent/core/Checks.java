@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * The commands that run by themselves after an edit, as declared by the user in the config file.
+ * 用户在自己的配置文件中声明的、编辑之后自动运行的命令。
  *
  * <pre>
  * "checks": [
@@ -21,33 +21,26 @@ import java.util.Optional;
  * ]
  * </pre>
  *
- * <p>Why this exists: the largest difference between this agent and one backed by an editor is when
- * the compiler gets to speak. Without a check, a broken edit is discovered when the model decides to
- * go looking — a turn later, if at all — so a weak model needs three or four passes where one would
- * do. With one, the error arrives in the same step as the edit that caused it, and the fix is the
- * next thing the model does.
+ * <p>为什么要有它：这个代理与「背靠编辑器的代理」最大的差别，在于编译器什么时候能开口。没有检查时，一次
+ * 改坏的编辑要等模型自己想到去看——晚一个回合，甚至永远发现不了——所以弱模型需要三四轮才能做完一轮就够的
+ * 事。有了检查，错误与造成它的那次编辑在同一步到达，修它就成了模型接下来要做的事。
  *
- * <p>The command is the user's, not the model's: it is written into the config file, which is the
- * same act as typing it into a terminal, and it runs without a prompt for that reason. That is a
- * deliberate widening of the approval model and it is written down as one in {@code SECURITY.md}.
- * What the model may not do is add one — although it can write the config file, and a config file it
- * can write is a check it can add, one approval away. The same exposure as {@code CCJ.md}.
+ * <p>命令是用户的，不是模型的：它写在配置文件里，这与把它敲进终端是同一个行为，因此运行时也不弹提示。这是
+ * 对审批模型的一次刻意放宽，并在 {@code SECURITY.md} 里写明。模型不能做的是自己添加一条检查——尽管它能写
+ * 配置文件，而一个它能写的配置文件就是一条它只差一次审批就能加的检查。与 {@code CCJ.md} 是同一种暴露面。
  *
- * <p>Read from the file on every use rather than held at startup: a check is something a user adds
- * while the session is running, and a copy taken at startup would make the config file look like it
- * did nothing until the next restart.
+ * <p>每次使用都从文件读取，而不是在启动时持有：检查是用户在会话运行期间随时添加的东西，启动时取一份快照会
+ * 让配置文件看起来毫无作用，直到下次重启。
  *
- * <p><strong>The glob decides when the check runs, not what the command looks at.</strong> Those are
- * two different scopes and only the first is written here. Measured: with
- * {@code {"glob": "**&#47;*.java", "command": "mvn -q -o -DskipTests compile"}}, an edit to a broken
- * file at the repository root comes back {@code exit 0} — Maven compiles {@code src/main/java} and
- * never saw the file. That is not a bug in this class, it is the shape of a hook, but it is the shape
- * a user has to know: pair the glob with a command that covers what the glob selects, or the check
- * reports success about a file it did not read.
+ * <p><strong>glob 决定检查何时运行，不决定命令去看什么。</strong>这是两个不同的作用域，这里写的只是前者。
+ * 实测：用 {@code {"glob": "**&#47;*.java", "command": "mvn -q -o -DskipTests compile"}} 时，编辑仓库
+ * 根部一个坏掉的文件，返回的是 {@code exit 0}——Maven 编译的是 {@code src/main/java}，根本没看到那个
+ * 文件。这不是这个类的 bug，而是钩子这种形态本身如此，但这是用户必须知道的形态：给 glob 配上一条覆盖它所选
+ * 范围的命令，否则检查会就一个它没读过的文件报告成功。
  */
 public final class Checks {
 
-  /** What one check is: when it applies, what it runs, and how long it may take. */
+  /** 一条检查是什么：何时适用、运行什么、可以跑多久。 */
   public record Check(String glob, String command, int timeoutSeconds) {}
 
   private static final int DEFAULT_TIMEOUT_SECONDS = 120;
@@ -59,24 +52,22 @@ public final class Checks {
     this.configFile = configFile;
   }
 
-  /** The checks declared in {@code configFile}; a null or missing file declares none. */
+  /** {@code configFile} 中声明的检查；文件为 null 或不存在时没有任何检查。 */
   public static Checks from(Path configFile) {
     return new Checks(configFile);
   }
 
-  /** Nothing configured, which is what every caller that has no config file gets. */
+  /** 什么都没配置；没有配置文件的调用方拿到的就是它。 */
   public static Checks none() {
     return new Checks(null);
   }
 
   /**
-   * The first check whose glob matches {@code edited}, or empty when none does.
+   * glob 与 {@code edited} 匹配的第一条检查；都不匹配时为空。
    *
-   * <p>Matched against the path relative to {@code cwd}, with forward slashes, so a check reads the
-   * same on every platform and the same way the {@code glob} tool's patterns do. A file outside the
-   * session's working directory never matches: a check is a statement about this project, and
-   * running the project's build because the agent edited something in `~/.config` would be a
-   * surprise, not a service.
+   * <p>与相对于 {@code cwd} 的路径做匹配，用正斜杠，这样检查在每个平台上读起来都一样，也和 {@code glob}
+   * 工具的模式用法一致。会话工作目录之外的文件从不匹配：检查是关于本项目的陈述，而因为代理改了
+   * `~/.config` 里的东西就去跑本项目的构建，那是惊吓，不是服务。
    */
   public Optional<Check> forPath(Path edited, Path cwd) {
     Path file = edited.toAbsolutePath().normalize();
@@ -94,16 +85,14 @@ public final class Checks {
   }
 
   /**
-   * True when {@code glob} matches the project-relative path.
+   * {@code glob} 与项目相对路径匹配时为 true。
    *
-   * <p>A pattern beginning {@code **&#47;} is tried twice: as written, and with that prefix removed.
-   * The second try is not a convenience — it is the difference between a check that works and one
-   * that silently never runs. {@code PathMatcher} reads {@code **&#47;*.java} as "a java file inside
-   * some directory", so it does not match {@code Foo.java} at the top of the project, while every
-   * other tool a user has met (gitignore, `.editorconfig`, ripgrep's {@code --glob}) treats
-   * {@code **&#47;foo} as "foo, at any depth, including none". A user who writes the pattern they
-   * know and finds that the check never fires has no way to tell that from a check with nothing to
-   * report, which is the failure mode this class exists to avoid.
+   * <p>以 {@code **&#47;} 开头的模式会被尝试两次：按原样，以及去掉该前缀。第二次不是图方便——它是「能用的
+   * 检查」与「静默地永不运行的检查」之间的差别。{@code PathMatcher} 把 {@code **&#47;*.java} 读作「某个
+   * 目录里的 java 文件」，所以匹配不到项目根部的 {@code Foo.java}；而用户见过的其他工具（gitignore、
+   * `.editorconfig`、ripgrep 的 {@code --glob}）都把 {@code **&#47;foo} 读作「任意深度（包括零层）的
+   * foo」。用户写下自己熟悉的模式却发现检查从不触发时，无从分辨它与「一条没什么可报告的检查」的差别，而这
+   * 正是这个类要避免的失败形态。
    */
   private static boolean matches(String glob, String relative) {
     if (matcher(glob).matches(Path.of(relative))) {
@@ -117,14 +106,13 @@ public final class Checks {
   }
 
   /**
-   * The checks as the file declares them right now, or none when there is no file or no block.
+   * 文件此刻声明的检查；没有文件或没有相应的块时为空。
    *
-   * <p>A malformed block throws rather than being ignored. The alternative — quietly running no
-   * checks because one of them has a typo — is the failure this class exists to prevent, arriving
-   * silently.
+   * <p>格式错乱的块会抛异常，而不是被忽略。另一种做法——因为其中一条有笔误就悄悄一条检查都不跑——正是这个
+   * 类要防的失败，只不过它是静默到来的。
    *
-   * @throws IllegalArgumentException when the block is not an array of objects carrying a command
-   * @throws UncheckedIOException when the file exists but cannot be read
+   * @throws IllegalArgumentException 当该块不是一串带 command 的对象时
+   * @throws UncheckedIOException 当文件存在但读不出来时
    */
   public List<Check> declared() {
     if (configFile == null || !Files.isRegularFile(configFile)) {
@@ -134,7 +122,7 @@ public final class Checks {
     try {
       root = Json.parse(Files.readString(configFile, StandardCharsets.UTF_8));
     } catch (IOException e) {
-      throw new UncheckedIOException("cannot read " + configFile, e);
+      throw new UncheckedIOException("无法读取 " + configFile, e);
     }
     if (!root.isObject()) {
       return List.of();
@@ -145,18 +133,18 @@ public final class Checks {
     }
     if (!block.isArray()) {
       throw new IllegalArgumentException(
-          "config field 'checks' must be an array of {glob, command} objects in " + configFile);
+          "配置字段 'checks' 必须是一组 {glob, command} 对象，位置：" + configFile);
     }
     List<Check> checks = new ArrayList<>();
     for (JsonNode entry : block) {
       if (!entry.isObject()) {
         throw new IllegalArgumentException(
-            "each entry of config field 'checks' must be an object in " + configFile + ": " + entry);
+            "配置字段 'checks' 的每一项都必须是对象，位置：" + configFile + "：" + entry);
       }
       String command = text(entry, "command", configFile);
       if (command == null) {
         throw new IllegalArgumentException(
-            "a check in " + configFile + " has no 'command', so there is nothing to run");
+            configFile + " 中的一条检查没有 'command'，因此没有可运行的东西");
       }
       String glob = text(entry, "glob", configFile);
       JsonNode timeout = entry.get("timeoutSeconds");
@@ -164,7 +152,7 @@ public final class Checks {
       if (timeout != null && !timeout.isNull()) {
         if (!timeout.isInt()) {
           throw new IllegalArgumentException(
-              "check 'timeoutSeconds' must be an integer in " + configFile + ": " + timeout);
+              "检查的 'timeoutSeconds' 必须是整数，位置：" + configFile + "：" + timeout);
         }
         seconds = Math.max(1, Math.min(MAX_TIMEOUT_SECONDS, timeout.asInt()));
       }
@@ -180,7 +168,7 @@ public final class Checks {
     }
     if (!node.isTextual()) {
       throw new IllegalArgumentException(
-          "check '" + field + "' must be a string in " + file + ": " + node);
+          "检查的 '" + field + "' 必须是字符串，位置：" + file + "：" + node);
     }
     String value = node.asText().strip();
     return value.isEmpty() ? null : value;

@@ -4,19 +4,18 @@ import java.util.Iterator;
 import java.util.stream.Stream;
 
 /**
- * Incremental server-sent-events decoder over a stream of text lines.
+ * 在文本行流之上的增量式 server-sent-events 解码器。
  *
- * <p>Both supported APIs stream one record per blank-line-terminated frame, so the decoder is
- * pull-based: {@link #next()} blocks only for as long as the sender makes it wait, which is exactly
- * what keeps a long turn responsive. A record is dispatched when its blank line arrives, so a
- * payload split over several {@code data:} lines is joined before the caller ever sees it.
+ * <p>两个受支持的 API 都以「一个空行结束一帧」的方式流式发送记录，所以解码器采用拉取式：{@link #next()}
+ * 只阻塞到发送方让它等的那一刻，而这正是让长回合保持响应性的原因。一条记录在它的空行到达时被派发，因此跨
+ * 多行 {@code data:} 拆开的载荷，在调用者看到它之前就已经拼好了。
  */
 public final class Sse implements AutoCloseable {
 
-  /** Payload that ends an OpenAI-style stream; it carries no JSON of its own. */
+  /** 结束 OpenAI 式流的载荷；它自身不含 JSON。 */
   public static final String DONE = "[DONE]";
 
-  /** Event name assumed when a frame carries no {@code event:} field. */
+  /** 一帧没有 {@code event:} 字段时假定的那个事件名。 */
   public static final String DEFAULT_EVENT = "message";
 
   private final Stream<String> lines;
@@ -32,7 +31,7 @@ public final class Sse implements AutoCloseable {
     return new Sse(lines);
   }
 
-  /** One dispatched frame: its event type plus every {@code data:} line joined with newlines. */
+  /** 一个已派发的帧：事件类型，加上用换行拼起来的所有 {@code data:} 行。 */
   public record Event(String event, String data) {
     public boolean isDone() {
       return DONE.equals(data);
@@ -40,9 +39,8 @@ public final class Sse implements AutoCloseable {
   }
 
   /**
-   * Returns the next frame, or {@code null} once the stream is exhausted or {@code [DONE]} has been
-   * seen. A dangling payload at end of stream is still returned rather than dropped, so a server
-   * that forgets the final blank line does not silently lose the last tool call.
+   * 返回下一帧；流已耗尽或已见到 {@code [DONE]} 时返回 {@code null}。流尾悬着的一段载荷仍会返回，而不是
+   * 丢掉，这样一个忘了最后那个空行的服务器不会悄悄丢掉最后一次工具调用。
    */
   public Event next() {
     if (finished) {
@@ -57,10 +55,10 @@ public final class Sse implements AutoCloseable {
         if (sawData) {
           return dispatch(event, data.toString());
         }
-        continue; // bare newline: keep-alive, not a frame
+        continue; // 单独一个换行：保活，不是一帧
       }
       if (line.charAt(0) == ':') {
-        continue; // comment
+        continue; // 注释
       }
       int colon = line.indexOf(':');
       String field = colon < 0 ? line : line.substring(0, colon);
@@ -75,7 +73,7 @@ public final class Sse implements AutoCloseable {
           sawData = true;
         }
         default -> {
-          // id/retry/unknown fields carry nothing either provider needs.
+          // id/retry 和未知字段都不带两个提供方中任何一方需要的东西。
         }
       }
     }
@@ -93,7 +91,7 @@ public final class Sse implements AutoCloseable {
     return line.endsWith("\r") ? line.substring(0, line.length() - 1) : line;
   }
 
-  /** The wire format allows exactly one optional space after the colon. */
+  /** 线路格式允许冒号之后最多一个可选空格。 */
   private static String stripLeadingSpace(String value) {
     return value.startsWith(" ") ? value.substring(1) : value;
   }

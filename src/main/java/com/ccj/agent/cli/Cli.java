@@ -60,18 +60,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Wires the pieces together and runs either one turn or a REPL.
+ * 把各个部件接起来，然后运行单个回合或一个 REPL。
  *
- * <p>Every entry point returns an exit code and takes its streams as arguments: nothing here calls
- * {@link System#exit} and nothing reads {@link System#in} directly, so the whole CLI can be driven
- * from a test with captured output and fed stdin.
+ * <p>每个入口点都返回退出码，并把它的流作为参数接收：这里没有任何地方调用 {@link System#exit}，
+ * 也没有任何地方直接读 {@link System#in}，因此整个 CLI 可以在测试里用捕获的输出驱动、用标准输入
+ * 喂数据。
  *
- * <p>Failure policy: configuration and provider problems are reported on stderr and end the process
- * with 1; a bad flag is a usage error with 2; a failed turn inside the REPL is printed and the
- * session continues, because the conversation is exactly where the user wants to stay. One more
- * status exists and it is not a failure: after {@code restart} installs a newly built jar, the run
- * ends normally and reports {@link RestartTool#RESTART_EXIT}, which is how the launcher knows to
- * start the new jar.
+ * <p>失败策略：配置与提供方的问题报告到 stderr 并以 1 结束进程；flag 写错是用法错误，以 2 结束；
+ * REPL 里失败的回合会被打印出来，会话继续，因为用户想待的地方恰恰是这个对话。还有一种状态存在，
+ * 它不是失败：{@code restart} 安装好新构建的 jar 之后，这次运行正常结束并报告
+ * {@link RestartTool#RESTART_EXIT}，启动器就是靠它知道应该启动新的 jar。
  */
 public final class Cli {
 
@@ -79,7 +77,7 @@ public final class Cli {
   public static final String PROMPT = "ccj> ";
   public static final int DEFAULT_WEB_PORT = 6767;
 
-  /** The environment variable that carries the web token when {@code --web-token} is not passed. */
+  /** {@code --web-token} 未传入时承载 web token 的环境变量。 */
   public static final String ENV_WEB_TOKEN = "CCJ_WEB_TOKEN";
 
   private static final DateTimeFormatter TIMESTAMP =
@@ -87,12 +85,12 @@ public final class Cli {
 
   public Cli() {}
 
-  /** Runs with the process streams. */
+  /** 使用进程自身的流运行。 */
   public int run(String[] args) {
     return run(args, System.in, System.out, System.err);
   }
 
-  /** Runs with injected streams and returns the exit code. */
+  /** 使用注入的流运行，并返回退出码。 */
   public int run(String[] args, InputStream in, PrintStream out, PrintStream err) {
     CliOptions options;
     try {
@@ -125,17 +123,16 @@ public final class Cli {
       return 0;
     }
 
-    // A restart request belongs to the run that made it. This process may run several — the test
-    // suite and any embedder call `Cli` more than once — and inheriting the last one's answer would
-    // make the next run report a restart it never asked for.
+    // 重启请求属于发出它的那次运行。这个进程可能运行多次——测试套件和任何嵌入方都会不止一次调用
+    // `Cli`——而继承上一次的答案，会让下一次运行报告一个它从未请求过的重启。
     RestartTool.clearRequest();
 
     AppPaths paths =
         options.home() == null ? AppPaths.fromEnv(env) : new AppPaths(Path.of(options.home()));
     Path startDir = startingDir(options);
 
-    // The workspace decides where sessions live; --workspace picks one, otherwise the directory we
-    // were started in is matched against the registry, otherwise the default stays active.
+    // 工作区决定会话存放的位置；--workspace 选定一个，否则用启动时所在的目录去匹配注册表，再
+    // 否则保持默认工作区为活动状态。
     WorkspaceStore workspaces;
     try {
       workspaces = WorkspaceStore.open(paths.home(), startDir);
@@ -151,11 +148,9 @@ public final class Cli {
       return fail(err, e);
     }
     Path sessionsDir = workspaces.active().sessionsDir();
-    // The active workspace owns the working directory. It is what the sidebar, --workspace and the
-    // session history all point at, so the tools run there too: a run started from a different
-    // directory must not quietly work somewhere else, which is what made "the workspace is
-    // oh-my-ccj" and "the tools are running in your home" true at the same time. -C is the only
-    // override, and the status line says when it is in force.
+    // 活动工作区拥有工作目录。侧边栏、--workspace 和会话历史都指向它，因此工具也在那里运行：
+    // 从另一个目录启动的运行，绝不能悄悄地在别处干活——那正是「工作区是 oh-my-ccj」和「工具
+    // 在你的主目录里跑」能同时成立的原因。-C 是唯一的覆盖方式，而状态行会在它生效时说明。
     Path cwd = options.cwd() == null ? workspaces.active().path() : startDir;
     Path cwdOverride = cwd.equals(workspaces.active().path()) ? null : cwd;
 
@@ -164,8 +159,7 @@ public final class Cli {
       return 0;
     }
 
-    // One store for the run; which session and project it is recording is decided per turn, on the
-    // thread that runs it.
+    // 每次运行一个 store；它记录的是哪个会话和哪个项目，则按回合、在运行该回合的线程上决定。
     CheckpointStore checkpoints = CheckpointStore.recording();
     Config config;
     Path configFile;
@@ -173,8 +167,8 @@ public final class Cli {
       configFile = options.config() == null ? paths.configFile() : Path.of(options.config());
       config = Config.layered(configFile, env, options.overrides());
       if (options.demo()) {
-        // The UI reports the *configured* provider, so a demo run has to say it is the demo one —
-        // showing a provider that is not the one answering would be a lie the status line tells.
+        // UI 报告的是*配置的*提供方，所以演示运行必须说明自己用的是 demo 提供方——显示一个并非
+        // 正在作答的提供方，就是状态行在说谎。
         config = config.merge(demoConfig());
       }
     } catch (RuntimeException e) {
@@ -183,14 +177,12 @@ public final class Cli {
 
     ToolRegistry tools;
     try {
-      // The config file is read before the tools are built, because the editing tools carry the
-      // post-edit checks this file declares. Checks.from() holds the path, not the parsed list: a
-      // check added while the session runs takes effect on the next edit rather than on the next
-      // restart.
+      // 配置文件在构建工具之前读取，因为编辑类工具会带上这个文件声明的编辑后检查。Checks.from()
+      // 持有的是路径而不是解析后的列表：会话运行期间新增的检查，在下一次编辑时就会生效，而不必等
+      // 到重启。
       tools = Tools.standard(Checks.from(configFile), checkpoints);
-      // The user's own servers, if any. A server that will not start is a warning rather than a
-      // refusal: one broken entry must not stop the agent, and it must not be silent either — a
-      // capability that is missing and one nobody mentioned look the same from in here.
+      // 用户自己的服务器，如果有的话。起不来的服务器是警告而不是拒绝：一个坏掉的条目不能拦住
+      // 代理，但也不能一声不吭——缺失的能力和没人提过的能力，从这里看是一模一样的。
       McpTools mcp = McpTools.discover(paths.home().resolve("mcp.json"));
       mcp.registerInto(tools);
       for (String complaint : mcp.complaints()) {
@@ -205,7 +197,7 @@ public final class Cli {
       return 0;
     }
 
-    // No flag, no prompt: the web UI is the default front end, and --repl is the terminal one.
+    // 没有 flag 也没有提示词时：web UI 是默认前端，--repl 则是终端前端。
     boolean webMode = !options.repl() && options.print() == null;
 
     ProviderStore providerStore = ProviderStore.open(paths.home());
@@ -220,15 +212,15 @@ public final class Cli {
         if (!webMode) {
           return fail(err, e);
         }
-        // The settings form exists to fix exactly this: serve anyway and let it be configured there.
+        // 设置表单存在的意义正是修好这个：照常提供服务，让用户在那里配置。
         provider = null;
-        err.println("no model configured — add one in the web UI (Settings), or pass --model");
+        err.println("尚未配置模型——请在 web UI（设置）里添加一个，或传入 --model");
         err.flush();
       }
     }
 
     if (!Files.isDirectory(cwd)) {
-      err.println("error: not a directory: " + cwd);
+      err.println("error: 不是目录：" + cwd);
       err.flush();
       return 1;
     }
@@ -246,10 +238,9 @@ public final class Cli {
       AgentOptions agentOptions =
           new AgentOptions(
               options.demo() ? "demo" : config.model(),
-              // The language is part of the prompt rather than a field of its own: it is one
-              // paragraph asking for one thing, and the model reads it where it reads every
-              // other rule. The working directory is passed too, so a project's own CCJ.md is read
-              // from it — the rules belong next to the code they are about.
+              // 语言是提示词的一部分，而不是一个独立字段：它就是一段只要一件事的话，而模型会
+              // 在它读每一条其他规则的地方读到它。工作目录也一并传入，这样项目自己的 CCJ.md
+              // 就能从那里读到——规则应该待在它们所描述的代码旁边。
               Prompts.system(config.systemPrompt(), config.language(), cwd),
               config.temperature(),
               config.maxTokens(),
@@ -258,7 +249,7 @@ public final class Cli {
 
       if (options.demo() && options.print() == null) {
         out.println(
-            "demo model — no key needed. Try: read README.md | run git status --short"
+            "demo 模型——不需要密钥。可以试试：read README.md | run git status --short"
                 + " | list src/**/*.java | search TODO");
         out.flush();
       }
@@ -318,21 +309,20 @@ public final class Cli {
               err);
       try {
         repl.run();
-        // A restart that ends the REPL is a finished run: the session is on disk, and the launcher
-        // is what starts the jar the restart installed.
+        // 以重启收尾的 REPL 是一次已完成的运行：会话已在磁盘上，而启动器会去启动那次重启安装
+        // 的 jar。
         if (RestartTool.restartRequested()) {
-          // The process is about to be replaced, and the new one starts on a fresh session unless
-          // it is told otherwise — so the conversation this REPL is on is written down for it. The
-          // REPL's own id is read here rather than the one it started with: /new and /resume move it.
+          // 这个进程即将被替换，而新进程除非被告知，否则会从全新会话开始——所以把本 REPL 所在
+          // 的对话为它记下来。这里读的是 REPL 当前的 id 而不是它启动时的那个：/new 和 /resume
+          // 会把它换掉。
           ResumePoint.write(paths.home(), repl.sessionId());
-          err.println(
-              "restarting on the jar the agent installed — resuming session " + repl.sessionId());
+          err.println("代理已安装新的 jar，正在重新启动 — 恢复会话 " + repl.sessionId());
           err.flush();
           return RestartTool.RESTART_EXIT;
         }
         return 0;
       } finally {
-        // The REPL may have moved to another session (/new, /resume), and that one is the live one.
+        // REPL 可能已经换到另一个会话（/new、/resume），那个才是当前活着的会话。
         repl.closeSession();
       }
     } finally {
@@ -393,8 +383,8 @@ public final class Cli {
   }
 
   /**
-   * The terminal's gate with the user's rules in front of it, announcing every automatic answer on
-   * stdout so a decision nobody was asked about is still a decision somebody can see.
+   * 终端上的关口，前面还挡着用户自己的规则；每个自动给出的回答都会播报到 stdout，这样没人被问到
+   * 的那个决定，仍然是有人能看见的决定。
    */
   private Approver gatedApprover(
       boolean autoApprove,
@@ -406,7 +396,7 @@ public final class Cli {
       Path home) {
     Approver interactive = approver(autoApprove, in, out, err, renderer);
     if (autoApprove) {
-      // --yolo is "ask me nothing": rules would only be a slower way to the same answer.
+      // --yolo 就是「什么都别问我」：规则只会是通往同一答案的更慢路径。
       return interactive;
     }
     return new RuleApprover(
@@ -414,8 +404,8 @@ public final class Cli {
   }
 
   /**
-   * Interactive gate when a terminal is watching, deny-with-explanation otherwise. Silence here
-   * would look like a hang, so the non-interactive path names the tool and how to opt in.
+   * 有终端在看时是交互式关口，否则就是带解释的拒绝。这里沉默会看起来像卡死，所以非交互路径会点名
+   * 那个工具，并说明怎样才能放行。
    */
   private Approver approver(
       boolean autoApprove,
@@ -428,21 +418,21 @@ public final class Cli {
     }
     return request -> {
       if (in == null || System.console() == null) {
-        err.println("denied " + request.title() + ": " + request.detail());
+        err.println("已拒绝 " + request.title() + "：" + request.detail());
         err.println(
-            "stdin is not a terminal, so ccj cannot ask for confirmation;"
-                + " re-run with --yolo to approve tool calls automatically");
+            "stdin 不是终端，因此 ccj 无法请求确认；"
+                + "请带 --yolo 重新运行，以自动批准工具调用");
         err.flush();
         return ApprovalAnswer.DENY;
       }
       renderer.pauseSpinner();
       try {
         out.print(
-            "approve "
+            "批准 "
                 + request.title()
                 + " — "
                 + request.detail()
-                + "? [y/N/s=this session/a=always] ");
+                + "？[y/N/s=本会话/a=始终] ");
         out.flush();
         String answer = in.readLine();
         if (answer == null) {
@@ -464,12 +454,11 @@ public final class Cli {
   }
 
   private FileSession openSession(CliOptions options, Path sessionsDir, Path home) {
-    // What a restart left behind: the conversation the previous process was on. It is read — and
-    // spent — before anything else, whatever this run ends up opening.
+    // 重启留下的东西：上一个进程所在的对话。无论这次运行最终打开什么，它都会最先被读取——并被
+    // 花掉。
     //
-    // It answers "where were we" once, for the process that follows the restart. Leaving it in place
-    // would drag some later start, long after and for no reason, back to a conversation the user has
-    // since moved on from.
+    // 它为紧跟重启的那个进程回答一次「我们刚才到哪了」。把它留在原地，会让很久之后某次毫不相干
+    // 的启动，被拖回一个用户早已离开的对话。
     Optional<String> previous = ResumePoint.read(home);
     ResumePoint.clear(home);
 
@@ -482,14 +471,14 @@ public final class Cli {
         return SessionStore.open(sessionsDir, all.get(0).id());
       }
     }
-    // Checked last, because an explicit --resume or --continue is the user telling this run where to
-    // go, and the note only remembers where the last one was.
+    // 放在最后检查，因为显式的 --resume 或 --continue 是用户在告诉这次运行该去哪，而那条记录
+    // 只记得上一次在哪里。
     if (previous.isPresent()) {
       try {
         return SessionStore.open(sessionsDir, previous.get());
       } catch (RuntimeException e) {
-        // Deleted since, or it belongs to another workspace. "Open the last conversation" is not
-        // worth refusing to start over: this run begins on a fresh session instead.
+        // 已被删除，或者属于另一个工作区。「打开上一个对话」不值得为此拒绝启动：这次运行改为
+        // 从全新会话开始。
         return SessionStore.create(sessionsDir);
       }
     }
@@ -497,8 +486,8 @@ public final class Cli {
   }
 
   /**
-   * The first port at or after {@code start} that nothing is listening on, or -1 when the search
-   * finds nothing useful — a suggestion is only worth printing if it is actually free.
+   * 从 {@code start} 起（含）第一个没有任何东西在监听的端口；搜索找不到有用的结果时返回 -1
+   * ——只有真空闲的建议才值得打印。
    */
   static int freePortFrom(int start) {
     for (int candidate = Math.max(1, start); candidate < start + 50 && candidate < 65536; candidate++) {
@@ -507,7 +496,7 @@ public final class Cli {
         probe.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), candidate), 1);
         return candidate;
       } catch (IOException taken) {
-        // Occupied; try the next one.
+        // 已被占用；试下一个。
       }
     }
     return -1;
@@ -519,7 +508,7 @@ public final class Cli {
         null, null);
   }
 
-  /** The directory this run starts in: {@code -C} wins, otherwise the process directory. */
+  /** 本次运行启动时所在的目录：{@code -C} 优先，否则用进程目录。 */
   private static Path startingDir(CliOptions options) {
     Path dir =
         options.cwd() == null
@@ -529,13 +518,13 @@ public final class Cli {
   }
 
   /**
-   * Serves the browser UI and blocks until the process is interrupted.
+   * 提供浏览器 UI，并阻塞直到进程被中断。
    *
-   * <p>A non-loopback bind without a token is refused rather than warned about: the UI can run shell
-   * commands, so exposing it on a network is a remote code execution surface.
+   * <p>不带 token 的非 loopback 绑定是被拒绝而不是被警告：这个 UI 能运行 shell 命令，因此把它
+   * 暴露到网络上就是一块远程代码执行的面。
    *
-   * <p>{@code provider} may be null — the UI is where a model gets configured, so an unusable
-   * configuration is a state to be shown, not an error to die on.
+   * <p>{@code provider} 可以为 null——UI 正是配置模型的地方，所以一份不可用的配置是要被展示出来
+   * 的状态，而不是一个该为之死掉的错误。
    */
   private int serveWeb(
       CliOptions options,
@@ -555,7 +544,7 @@ public final class Cli {
       PrintStream err) {
     int port = options.port() == null ? DEFAULT_WEB_PORT : options.port();
     if (port < 1 || port > 65535) {
-      err.println("error: --port must be between 1 and 65535");
+      err.println("error: --port 必须介于 1 和 65535 之间");
       err.flush();
       return 2;
     }
@@ -564,19 +553,17 @@ public final class Cli {
     List<InetSocketAddress> binds = new ArrayList<>();
     try {
       if (requested.isEmpty()) {
-        // The default is both ways in: loopback for the machine the user is sitting at, and this
-        // machine's tailnet address for their phone — if it has one. Not a wildcard, because a
-        // wildcard also opens the café wifi, and the point of naming the addresses is that the set
-        // of devices that can reach this port is a set the user chose.
+        // 默认两条路都开：loopback 给用户正坐着的这台机器，本机的 tailnet 地址给他们的手机——
+        // 如果本机有的话。不用通配地址，因为通配地址也等于打开了咖啡馆的 wifi；点明地址的意义
+        // 就在于，能连到这个端口的设备集合是用户自己挑出来的集合。
         binds.add(new InetSocketAddress(InetAddress.getLoopbackAddress(), port));
         Tailnet.address().ifPresent(address -> binds.add(new InetSocketAddress(address, port)));
       } else if (requested.equalsIgnoreCase(Tailnet.FLAG_VALUE)) {
         Optional<InetAddress> tailnet = Tailnet.address();
         if (tailnet.isEmpty()) {
-          err.println(
-              "error: --host tailscale was asked for, but this machine has no tailnet address");
-          err.println("  is Tailscale installed and up? `tailscale ip -4` should print one");
-          err.println("  otherwise pass --host <addr>, or leave the flag out");
+          err.println("error: 要求了 --host tailscale，但本机没有 tailnet 地址");
+          err.println("  Tailscale 装好了、起来了吗？`tailscale ip -4` 应该能打印出一个");
+          err.println("  否则请传入 --host <addr>，或者干脆不要这个 flag");
           err.flush();
           return 2;
         }
@@ -585,22 +572,21 @@ public final class Cli {
         binds.add(new InetSocketAddress(requested, port));
       }
     } catch (IllegalArgumentException e) {
-      err.println("error: cannot bind " + requested + " — " + message(e));
+      err.println("error: 无法绑定 " + requested + " — " + message(e));
       err.flush();
       return 2;
     }
     boolean reachesTheNetwork = binds.stream().anyMatch(bind -> !isLoopbackAddress(bind));
     if (reachesTheNetwork && token == null) {
-      // A token generated here and kept in the home directory, because the whole point is one word:
-      // `ccj`, and the phone works. A secret that has to be passed every time ends up in shell
-      // history, in `ps`, or in an alias that is one more file to leak from — and one that changes
-      // every run would log the phone out every restart.
+      // 在这里生成一个 token 并存进主目录，因为重点就是敲一个词：`ccj`，手机就能用。每次都得
+      // 传一遍的秘密，最终会落进 shell 历史、落进 `ps`，或者落进一个 alias——那又多了一个可能
+      // 泄露的文件；而每次运行都变化的秘密，会让手机每次重启都被登出。
       try {
         token = WebToken.from(home);
       } catch (IOException e) {
-        err.println("error: refusing to serve the web UI on " + binds + " without a token");
-        err.println("  the UI can run shell commands, and one could not be stored: " + message(e));
-        err.println("  pass --web-token <secret>, or set a home directory that can be written");
+        err.println("error: 拒绝在没有 token 的情况下把 web UI 提供到 " + binds);
+        err.println("  这个 UI 能运行 shell 命令，而 token 也存不下来：" + message(e));
+        err.println("  请传入 --web-token <secret>，或者指定一个可写的主目录");
         err.flush();
         return 2;
       }
@@ -620,70 +606,69 @@ public final class Cli {
             Boolean.TRUE.equals(config.autoApprove()) || options.yolo(),
             options.subAgents());
     AgentHub hub = new AgentHub(provider, config, tools, settings, session);
-    // The rules file lives in the application home, keyed by project: a repository cannot ship a
-    // decision about what runs without asking, because a repository cannot write here.
+    // 规则文件位于应用主目录，按项目区分：仓库无法自带一个「什么可以不经询问就运行」的决定，
+    // 因为仓库写不到这里。
     hub.setApprovalRules(ApprovalRules.open(home.resolve("approvals.json"), cwd));
     Wallpapers wallpapers = Wallpapers.from(env, options.wallpapers());
     try (HttpApi api = HttpApi.start(hub, binds, token, wallpapers)) {
       List<String> urls = api.urls();
-      out.println("oh-my-ccj " + VERSION + " — web UI: " + urls.get(0));
+      out.println("oh-my-ccj " + VERSION + " — web UI：" + urls.get(0));
       for (int i = 1; i < urls.size(); i++) {
-        out.println("                          also on " + urls.get(i));
+        out.println("                          也可通过 " + urls.get(i) + " 访问");
       }
       if (reachesTheNetwork) {
         out.println(
-            "  the first address is this machine (no token needed there); the others are the"
-                + " tailnet, and ask for the token in the URL");
+            "  第一个地址是本机（在那里不需要 token）；其余是 tailnet 地址，"
+                + "需要在 URL 里带上 token");
       }
       out.println(
           (provider == null
-                  ? "no model configured — Settings in the UI"
-                  // The configured name, not the implementation's: "openai" for a provider the user
-                  // called "CommandCode" hides which one is answering, which is how a session can
-                  // report one provider and bill another.
-                  : "model "
+                  ? "尚未配置模型——请在 UI 的「设置」里配置"
+                  // 用的是配置里的名字，而不是实现的名字：用户把某个提供方叫作 "CommandCode"，
+                  // 却显示 "openai"，就掩盖了到底是谁在作答，一个会话于是可以报告一个提供方，
+                  // 却按另一个计费。
+                  : "模型 "
                       + agentOptions.model()
-                      + " ("
+                      + "（"
                       + (config.provider() == null ? provider.name() : config.provider())
-                      + ")")
-              + " — session "
+                      + "）")
+              + " — 会话 "
               + session.id()
               + " — "
               + (cwdOverride == null
-                  ? "workspace " + workspaces.activeName() + " (" + cwd + ")"
-                  : "workspace "
+                  ? "工作区 " + workspaces.activeName() + "（" + cwd + "）"
+                  : "工作区 "
                       + workspaces.activeName()
-                      + " (" + workspaces.active().path() + ") but -C puts the tools in " + cwd));
-      out.println("Ctrl+C to stop");
+                      + "（"
+                      + workspaces.active().path()
+                      + "），但 -C 把工具放在 " + cwd));
+      out.println("按 Ctrl+C 停止");
       out.flush();
       if (!options.noOpen()) {
-        // The loopback URL, which is the one this machine can always reach and the one that needs no
-        // token: opening the browser on the tailnet address would work too, and would put a secret in
-        // the address bar of every window.
+        // 用 loopback 那个 URL：本机永远能访问它，而且它不需要 token。用 tailnet 地址打开浏览器
+        // 也行，但那会把一个秘密放进每个窗口的地址栏。
         openBrowser(urls.get(0), err);
       }
-      // Serving runs until something stops it. Ctrl+C is one thing; `restart` is the other, and it
-      // cannot be a latch the hub completes, because the hub is wired after this point and the tool
-      // that decides is in the registry. Polling one boolean every 200 ms costs nothing and keeps
-      // the decision where it is made.
+      // 提供服务会一直运行到有东西把它停下。Ctrl+C 是一种；`restart` 是另一种，而它不能是 hub
+      // 完成的闩锁，因为 hub 是在此处之后才接好的，做决定的是注册表里的那个工具。每 200 毫秒
+      // 轮询一个布尔值不要钱，还能让决定留在它产生的地方。
       while (!RestartTool.restartRequested()) {
         Thread.sleep(200);
       }
-      // The new process has no idea which conversation was on screen; write it down so the front
-      // end comes back where the user left it instead of on an empty one.
+      // 新进程完全不知道屏幕上原本是哪个对话；把它记下来，前端就会回到用户离开的地方，而不是
+      // 一个空对话。
       ResumePoint.write(home, session.id());
       err.println();
-      err.println(
-          "restarting on the jar the agent installed — resuming session " + session.id());
+      err.println("代理已安装新的 jar，正在重新启动 — 恢复会话 " + session.id());
       err.flush();
       return RestartTool.RESTART_EXIT;
     } catch (IOException e) {
-      err.println("error: cannot serve " + binds + " — " + message(e));
+      err.println("error: 无法在 " + binds + " 上提供服务 — " + message(e));
       int free = freePortFrom(port + 1);
       err.println(
-          "  something else is already on that port;"
-              + (free > 0 ? " try --port " + free : " pass --port <n>")
-              + " to serve this UI somewhere else");
+          "  那个端口上已经有别的东西了；"
+              + (free > 0 ? "试试 --port " + free : "传入 --port <n>")
+              + "把这个 UI 换到别处提供");
       err.flush();
       return 1;
     } catch (InterruptedException e) {
@@ -695,18 +680,16 @@ public final class Cli {
   }
 
   /**
-   * The token every web request must carry: {@code --web-token}, or {@code CCJ_WEB_TOKEN}, or none.
+   * 每个 web 请求都必须携带的 token：{@code --web-token}、{@code CCJ_WEB_TOKEN}、或者都没有。
    *
-   * <p>The environment variable exists so a phone-to-laptop setup does not have to paste a secret
-   * into a command line — which is a file that gets read back by `ps`, shell history and any terminal
-   * that was being recorded — or into a shell alias, which is one more place to leak from. Exporting
-   * it once per session keeps the token out of both. The flag still wins, so a one-off run can use
-   * something else without unsetting anything, and blank means none from either source: an empty
-   * variable is "not set", not an empty password.
+   * <p>这个环境变量存在的意义，是让「手机连笔记本」的配置不必把秘密粘到命令行上——那会是
+   * 一个被 `ps`、shell 历史和任何正在被录制的终端读回去的文件——也不必粘到 shell alias 里，
+   * 那又多了一个可能泄露的地方。每个会话导出一次，就把 token 挡在这两处之外。flag 依然优先，
+   * 因此一次性运行可以用别的 token 而无需先取消什么；而空值表示两个来源都没有：空变量是
+   * 「未设置」，不是空密码。
    *
-   * <p>It is read here rather than in {@code Config} because it is not a model setting: it is about
-   * how this run is served, and it is deliberately not stored in the config file — a file that holds
-   * it is a file every backup of the home directory holds.
+   * <p>它在这里读取而不是在 {@code Config} 里，因为它不是模型设置：它关乎这次运行如何提供
+   * 服务，并且刻意不存进配置文件——存了它的文件，就是主目录的每一份备份都会存下的文件。
    */
   static String webToken(CliOptions options, Map<String, String> env) {
     String flag = options == null ? null : options.webToken();
@@ -717,7 +700,7 @@ public final class Cli {
     return fromEnv == null || fromEnv.isBlank() ? null : fromEnv.strip();
   }
 
-  /** True when this address is where other devices would reach this machine. */
+  /** 当这个地址是其他设备能到达本机的位置时为 true。 */
   private static boolean isLoopbackAddress(InetSocketAddress bind) {
     InetAddress address = bind.getAddress();
     return address != null && address.isLoopbackAddress();
@@ -749,7 +732,7 @@ public final class Cli {
           .redirectOutput(ProcessBuilder.Redirect.DISCARD)
           .start();
     } catch (IOException e) {
-      err.println("could not open a browser (" + message(e) + "); open " + url);
+      err.println("无法打开浏览器（" + message(e) + "）；请打开 " + url);
       err.flush();
     }
   }
@@ -768,11 +751,11 @@ public final class Cli {
   private static void printSessions(Path sessionsDir, PrintStream out) {
     List<SessionStore.Summary> sessions = SessionStore.list(sessionsDir);
     if (sessions.isEmpty()) {
-      out.println("no sessions in " + sessionsDir);
+      out.println("没有会话：" + sessionsDir);
       out.flush();
       return;
     }
-    out.println("ID                              MESSAGES  UPDATED              PREVIEW");
+    out.println("ID                              消息数    更新时间              预览");
     for (SessionStore.Summary session : sessions) {
       out.printf(
           "%-30s  %8d  %-19s  %s%n",
@@ -798,10 +781,10 @@ public final class Cli {
   }
 
   private static String modelLabel(String model) {
-    return model == null || model.isBlank() ? "(provider default)" : model;
+    return model == null || model.isBlank() ? "（提供方默认）" : model;
   }
 
-  /** REPL state; rebuilt whenever the session, model or approval mode changes. */
+  /** REPL 的状态；每当会话、模型或审批模式变化时就重建。 */
   private final class Repl {
 
     private final Provider provider;
@@ -874,8 +857,7 @@ public final class Cli {
               () -> {
                 if (!exiting.get()) {
                   err.println();
-                  err.println(
-                      "interrupted — resume this session with: ccj --resume " + sessionId.get());
+                  err.println("已中断 — 用这条命令恢复本会话：ccj --resume " + sessionId.get());
                   err.flush();
                 }
               },
@@ -884,11 +866,11 @@ public final class Cli {
       out.println(
           "oh-my-ccj "
               + VERSION
-              + " — session "
+              + " — 会话 "
               + session.id()
-              + " — model "
+              + " — 模型 "
               + modelLabel(agentOptions.model())
-              + " — /help for commands");
+              + " — 输入 /help 查看命令");
       out.flush();
       try {
         while (true) {
@@ -919,10 +901,9 @@ public final class Cli {
           }
           turn(input);
           if (RestartTool.restartRequested()) {
-            // The jar this process is running from is already the new one, so there is nothing left
-            // for this process to do: carrying on would keep the user typing at code that no longer
-            // exists on disk, and the launcher is what starts the jar the tool installed. The session
-            // is on disk, and the caller prints how to resume it.
+            // 这个进程正在运行的 jar 已经是新的了，因此它没什么可做的了：继续下去只会让用户
+            // 对着磁盘上已不存在的代码打字，而启动器才是负责启动那个工具所装 jar 的人。会话
+            // 已在磁盘上，调用方会打印出如何恢复它。
             break;
           }
         }
@@ -931,32 +912,31 @@ public final class Cli {
         try {
           Runtime.getRuntime().removeShutdownHook(hook);
         } catch (IllegalStateException ignored) {
-          // Already shutting down; the hook is what is printing the resume hint.
+          // 已经在关闭了；正在打印恢复提示的正是那个钩子。
         }
         renderer.reset();
       }
     }
 
     /**
-     * Replaces the older part of the conversation with a summary the model writes.
+     * 用模型写的一段摘要替换对话中较早的部分。
      *
-     * <p>The summarising request goes through the provider directly rather than through the loop: a
-     * loop run appends a user message and counts a turn, and "summarise yourself" is neither something
-     * the user said nor a turn of the work. The conversation that comes back is written as the next
-     * generation of the session, so the file the summary replaced is still on disk and still readable.
+     * <p>这次总结请求直接走提供方，而不经过主循环：跑一次循环会追加一条用户消息、并计入一个
+     * 回合，而「总结你自己」既不是用户说过的话，也不是工作的一个回合。返回的对话会写成会话的
+     * 下一代，因此被摘要替换掉的那个文件仍在磁盘上，仍然可读。
      */
     private void compact() {
       try {
         List<Message> before = session.messages();
         if (!Compaction.possible(before)) {
           out.println(
-              "nothing to compact: this conversation is shorter than the "
+              "没什么可压缩的：这个对话比一次压缩所保留的 "
                   + Compaction.KEEP_EXCHANGES
-                  + " exchanges a compaction keeps");
+                  + " 轮往来还短");
           return;
         }
         int beforeTokens = TokenEstimate.of(before);
-        out.println("compacting…");
+        out.println("正在压缩…");
         out.flush();
         Message.Assistant reply =
             provider.complete(
@@ -973,7 +953,7 @@ public final class Cli {
                 event -> {});
         String summary = reply.text() == null ? "" : reply.text().strip();
         if (summary.isEmpty()) {
-          err.println("error: the model returned an empty summary; nothing was changed");
+          err.println("error: 模型返回了空摘要；没有任何内容被改动");
           return;
         }
         Path source = session.file();
@@ -981,29 +961,29 @@ public final class Cli {
         try {
           result = Compaction.apply(before, summary, source.toString(), cwd);
         } catch (Compaction.NotWorthIt notWorthIt) {
-          out.println("nothing to gain: " + notWorthIt.getMessage());
-          out.println("this conversation has not grown enough for a summary to save anything yet.");
+          out.println("没有收益：" + notWorthIt.getMessage());
+          out.println("这个对话还没长到值得用摘要省下什么。");
           return;
         }
         session.compactInto(result.messages(), session.totals().plusCompaction());
         int afterTokens = TokenEstimate.of(result.messages());
         out.println(
-            "compacted: "
+            "已压缩："
                 + result.summarised()
-                + " message(s) summarised, "
+                + " 条消息被总结，"
                 + result.kept()
-                + " kept verbatim — "
+                + " 条原样保留 — "
                 + beforeTokens
                 + " → "
                 + afterTokens
-                + " tokens (estimated), "
+                + " token（估算），被替换的部分省下了 "
                 + result.savedPercent()
-                + "% of the replaced part saved");
-        out.println("the full conversation before this is still in " + source);
+                + "%");
+        out.println("此前完整的对话仍然在 " + source + " 里");
       } catch (RuntimeException e) {
         err.println("error: " + message(e));
       } catch (Exception e) {
-        err.println("error: could not summarise the conversation: " + message(e));
+        err.println("error: 无法总结这个对话：" + message(e));
       }
     }
 
@@ -1021,32 +1001,30 @@ public final class Cli {
       }
     }
 
-    /** Puts back what the last turn changed, the way {@code POST /api/undo} does for the page. */
+    /** 把上一个回合改动过的东西放回原样，正如 {@code POST /api/undo} 为页面所做的那样。 */
     private void undo() {
       java.util.List<String> restored = checkpoints.undoLastTurn(session.file(), cwd);
       if (restored.isEmpty()) {
-        out.println("nothing to undo: no turn has changed a file yet");
+        out.println("没有可退回的：还没有任何回合改动过文件");
       } else {
         out.println(
-            "undone: "
+            "已退回："
                 + restored.size()
-                + (restored.size() == 1 ? " file" : " files")
-                + " put back as they were before the last turn — "
+                + " 个文件已恢复为上一个回合之前的样子 — "
                 + String.join(", ", restored)
-                + " ("
+                + "（还可以再退回 "
                 + checkpoints.undoableTurns(session.file())
-                + " more turn(s) can be undone)");
+                + " 个回合）");
       }
       out.flush();
     }
 
     /**
-     * Compacts here when the conversation has grown past the budget, the way the web UI does.
+     * 对话长过预算时在这里压缩，正如 web UI 所做的那样。
      *
-     * <p>Same rule and same reason: past `maxContextTokens` the projection starts eliding tool output
-     * and dropping whole exchanges, and a summary that says what was dropped is better than a silence
-     * about it. No budget configured means no automatic compaction — there is nothing to be over, and
-     * a model call nobody asked for is not something to spend on a guess.
+     * <p>同样的规则、同样的理由：超过 `maxContextTokens` 之后，投影会开始省略工具输出、丢弃
+     * 整组往来，而一段说明丢了什么的摘要，胜过对此保持沉默。没有配置预算就没有自动压缩——没有
+     * 什么可超过的，而一次没人要的模型调用，不是可以拿来赌的东西。
      */
     private void autoCompact() {
       Integer budget = config.maxContextTokens();
@@ -1058,12 +1036,11 @@ public final class Cli {
         return;
       }
       out.println(
-          "the conversation is over its "
+          "这个对话已经超出它 "
               + budget
-              + "-token budget (about "
+              + " token 的预算（约 "
               + estimate
-              + "); compacting it — /compact does this by hand, and the full conversation stays on"
-              + " disk");
+              + "）；正在压缩 — /compact 可以手动做这件事，而完整的对话仍留在磁盘上");
       out.flush();
       compact();
     }
@@ -1079,21 +1056,22 @@ public final class Cli {
         case "/help" -> printHelp();
         case "/clear" -> {
           session.clear();
-          out.println("history cleared for session " + session.id());
+          out.println("会话 " + session.id() + " 的历史已清空");
         }
         case "/new" -> {
           FileSession next = SessionStore.create(sessionsDir);
           useSession(next);
-          out.println("new session " + next.id());
+          out.println("新会话 " + next.id());
         }
         case "/resume" -> {
           if (argument.isEmpty()) {
-            out.println("usage: /resume <id>");
+            out.println("用法：/resume <id>");
           } else {
             try {
               FileSession next = SessionStore.open(sessionsDir, argument);
               useSession(next);
-              out.println("resumed session " + next.id() + " (" + next.messages().size() + " messages)");
+              out.println(
+                  "已恢复会话 " + next.id() + "（" + next.messages().size() + " 条消息）");
             } catch (RuntimeException e) {
               err.println("error: " + message(e));
             }
@@ -1102,7 +1080,7 @@ public final class Cli {
         case "/sessions" -> printSessions(sessionsDir, out);
         case "/model" -> {
           if (argument.isEmpty()) {
-            out.println("model: " + modelLabel(agentOptions.model()));
+            out.println("模型：" + modelLabel(agentOptions.model()));
           } else {
             agentOptions =
                 new AgentOptions(
@@ -1113,7 +1091,7 @@ public final class Cli {
                     agentOptions.reasoning(),
                     agentOptions.maxContextTokens());
             rebuild();
-            out.println("model set to " + argument);
+            out.println("模型已切换为 " + argument);
           }
         }
         case "/compact" -> compact();
@@ -1123,10 +1101,10 @@ public final class Cli {
         case "/yolo" -> {
           autoApprove = !autoApprove;
           rebuild();
-          out.println("auto-approve " + (autoApprove ? "on" : "off"));
+          out.println("自动批准：" + (autoApprove ? "开" : "关"));
         }
         default ->
-            out.println("unknown command: " + name + " (try /help)");
+            out.println("未知命令：" + name + "（试试 /help）");
       }
       out.flush();
       err.flush();
@@ -1141,15 +1119,14 @@ public final class Cli {
     }
 
     /**
-     * Closes the session the REPL finished on. {@link #useSession} already closed the one it
-     * replaced, so this is what keeps {@code /new} and {@code /resume} from leaving a second file
-     * handle open for the life of the process.
+     * 关闭 REPL 收尾时所在的会话。{@link #useSession} 已经关掉了它替换掉的那个，所以这里防的
+     * 是 {@code /new} 和 {@code /resume} 在进程余生里多留一个打开的文件句柄。
      */
     void closeSession() {
       session.close();
     }
 
-    /** The session the REPL is on now, which {@code /new} and {@code /resume} can move. */
+    /** REPL 当前所在的会话，{@code /new} 和 {@code /resume} 都可以把它换掉。 */
     String sessionId() {
       return sessionId.get();
     }
@@ -1157,21 +1134,21 @@ public final class Cli {
     private void printHelp() {
       out.println(
           """
-          Commands:
-            /help            show this help
-            /exit            leave the REPL
-            /clear           forget the current conversation (keeps the session id)
-            /new             start a fresh session
-            /resume <id>     reopen a session by id
-            /sessions        list sessions
-            /model <name>    switch model for this session
-            /compact         replace earlier turns with a summary, freeing context
-            /undo            put back the files the last turn changed
-            /tools           list available tools
-            /config          show the effective configuration
-            /yolo            toggle auto-approval of tool calls
+          命令:
+            /help            显示这份帮助
+            /exit            离开 REPL
+            /clear           忘掉当前对话（保留会话 id）
+            /new             开始一个全新会话
+            /resume <id>     按 id 重新打开一个会话
+            /sessions        列出会话
+            /model <name>    为本会话切换模型
+            /compact         用摘要替换更早的回合，释放上下文
+            /undo            把上一个回合改动过的文件放回原样
+            /tools           列出可用的工具
+            /config          显示生效中的配置
+            /yolo            切换工具调用的自动批准
 
-          Anything else is sent to the model.
+          其他任何输入都会发送给模型。
           """);
     }
   }

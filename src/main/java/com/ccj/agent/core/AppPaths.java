@@ -4,10 +4,9 @@ import java.nio.file.Path;
 import java.util.Map;
 
 /**
- * Filesystem layout, overridable through {@code CCJ_HOME}.
+ * 文件系统布局，可通过 {@code CCJ_HOME} 覆盖。
  *
- * <p>Kept in one place so a test can point the whole application at a temporary directory without
- * touching the user's real configuration.
+ * <p>集中放在一处，这样测试就能把整个应用指向一个临时目录，而不碰用户真实的配置。
  */
 public final class AppPaths {
 
@@ -19,7 +18,7 @@ public final class AppPaths {
     this.home = home.toAbsolutePath().normalize();
   }
 
-  /** Resolves the home directory from the environment, falling back to {@code ~/.oh-my-ccj}. */
+  /** 从环境变量解析主目录，回退到 {@code ~/.oh-my-ccj}。 */
   public static AppPaths fromEnv(Map<String, String> env) {
     String override = env.get(HOME_ENV);
     if (override != null && !override.isBlank()) {

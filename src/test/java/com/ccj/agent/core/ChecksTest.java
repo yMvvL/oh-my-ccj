@@ -37,13 +37,13 @@ class ChecksTest {
         checks.forPath(cwd.resolve("src/main/java/Foo.java"), cwd).orElseThrow().command());
     assertTrue(
         checks.forPath(cwd.resolve("README.md"), cwd).isEmpty(),
-        "a markdown file is not what that check is about");
+        "markdown 文件不是这个检查所针对的东西");
   }
 
   @Test
   void theFirstMatchingCheckWinsAndAFileOutsideTheProjectMatchesNothing() throws IOException {
-    // One check per edit: running every matching command would turn a one-line change into a build
-    // queue, and the second check's output is not what the model needs first.
+    // 每次编辑只跑一个检查：把所有匹配的命令都跑一遍会把一行改动变成一个构建队列，而第二个检查
+    // 的输出并不是模型最先需要的东西。
     Path file =
         config(
             """
@@ -61,32 +61,31 @@ class ChecksTest {
     assertEquals(5, checks.forPath(cwd.resolve("pom.xml"), cwd).orElseThrow().timeoutSeconds());
     assertTrue(
         checks.forPath(tmp.resolve("elsewhere/Notes.java"), cwd).isEmpty(),
-        "a check is a statement about this project, not about every file on the machine");
+        "检查是关于这个项目的陈述，而不是关于机器上每个文件的");
   }
 
   @Test
   void aPatternWrittenTheUsualWayAlsoMatchesAtTheTopOfTheProject() throws IOException {
-    // PathMatcher reads `**/*.java` as "a java file inside some directory", so it does not match
-    // `Foo.java` at the project root — while gitignore, .editorconfig and ripgrep all do. A check
-    // that silently never fires is indistinguishable from a check with nothing to report, so the
-    // leading `**/` is tried both ways.
+    // PathMatcher 把 `**/*.java` 读作「某个目录里的 java 文件」，所以它匹配不到项目根下的
+    // `Foo.java` —— 而 gitignore、.editorconfig 和 ripgrep 都匹配得到。一个静默地永不触发的检查
+    // 与一个没有任何东西可报告的检查无法区分，于是开头的 `**/` 会按两种方式各试一次。
     Path file = config("{\"checks\": [{\"glob\": \"**/*.java\", \"command\": \"compile\"}]}");
     Path cwd = Files.createDirectories(tmp.resolve("project"));
 
     assertEquals(
         "compile",
         Checks.from(file).forPath(cwd.resolve("Foo.java"), cwd).orElseThrow().command(),
-        "the pattern the user knows must match the file at the root");
+        "用户熟悉的那个模式必须匹配根目录下的文件");
     assertEquals(
         "compile",
         Checks.from(file).forPath(cwd.resolve("src/Foo.java"), cwd).orElseThrow().command(),
-        "and still match the one inside a directory");
+        "而且仍要匹配目录里的那个文件");
   }
 
   @Test
   void theChecksAreReadPerUseRatherThanHeld() throws IOException {
-    // A check the user adds while a session is running has to take effect on the next edit, or the
-    // file looks like it did nothing until the next restart.
+    // 用户在会话运行期间添加的检查，必须在下次编辑就生效，否则那个文件看起来就像什么也没做，
+    // 一直要等到下次重启。
     Path file = config("{\"checks\": []}");
     Path cwd = tmp.resolve("project");
     Files.createDirectories(cwd);
@@ -104,14 +103,14 @@ class ChecksTest {
     assertTrue(Checks.none().declared().isEmpty());
     assertTrue(Checks.from(config("{\"provider\": \"openai\"}")).declared().isEmpty());
     assertTrue(Checks.from(config("{\"checks\": []}")).declared().isEmpty());
-    // A block that names nothing is not a command: the default glob is every file.
+    // 一个什么都没写的块不是命令：默认 glob 是每个文件。
     assertEquals("**", Checks.from(config("{\"checks\": [{\"command\": \"x\"}]}")).declared().get(0).glob());
   }
 
   @Test
   void aMalformedBlockIsReportedRatherThanIgnored() throws IOException {
-    // Silently running no checks because one has a typo is the failure this table is prone to: the
-    // session looks healthy and the compiler never speaks.
+    // 因为一个检查里打错字就静默地什么检查都不跑，是这张表容易犯的错：会话看起来一切正常，
+    // 而编译器永远不吭声。
     IllegalArgumentException notAnArray =
         assertThrows(
             IllegalArgumentException.class, () -> Checks.from(config("{\"checks\": \"mvn compile\"}")).declared());
@@ -121,7 +120,7 @@ class ChecksTest {
         assertThrows(
             IllegalArgumentException.class,
             () -> Checks.from(config("{\"checks\": [{\"glob\": \"**/*.java\"}]}")).declared());
-    assertTrue(noCommand.getMessage().contains("no 'command'"), noCommand.getMessage());
+    assertTrue(noCommand.getMessage().contains("没有 'command'"), noCommand.getMessage());
 
     IllegalArgumentException badTimeout =
         assertThrows(

@@ -7,24 +7,20 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The prompt the agent runs with, and the one setting that is about the prompt rather than the
- * project: which language it thinks and answers in.
+ * 代理运行时所用的提示词，以及那个关于提示词本身、而非关于项目的设置：它用哪种语言思考和回答。
  *
- * <p>The reasoning stream is model output like any other, so the only lever over it is what the prompt
- * asks for — and the lever is a weak one. Reasoning models pick the language of their thinking from
- * the whole context and often keep the language they started in, so what this reliably buys is
- * <em>answers</em> in the chosen language, plus thinking in it on the models that honour it: a relayed
- * deepseek-v4.1, measured here, keeps thinking in English with an English prompt, with a Chinese one
- * ("你必须用中文思考"), and with a Chinese user message, while a newer model follows the same prompt.
- * The sentences below therefore ask twice — once in English where the other rules live, once in the
- * target language, which is the stronger cue of the two — and the settings hint says plainly that the
- * answer always follows while the reasoning may not.
+ * <p>推理流和平常的模型输出一样，所以对它唯一的杠杆就是提示词要求了什么——而这个杠杆很弱。推理模型从整个
+ * 上下文里挑思考所用的语言，并且常常沿用自己开始时的语言，所以这里可靠买到的是：用所选语言写出的<em>答案</em>，
+ * 以及在被尊重的模型上用它思考。此处实测的一个中继 deepseek-v4.1，在英文提示词下、在中文提示词下（「你必须
+ * 用中文思考」）、以及带一条中文用户消息时，都保持用英文思考，而更新的模型会遵从同一个提示词。所以下面这些
+ * 句子问了两遍——一遍英文，与其他规则放在一起；一遍用目标语言，而后者是更强的线索——并且设置里的提示明说：
+ * 答案总是跟着走，推理则未必。
  */
 public final class Prompts {
 
   /**
-   * Kept deliberately short. Everything the model needs about behaviour that cannot be expressed as
-   * a tool schema lives here; anything longer just burns context on every turn.
+   * 刻意保持简短。模型需要知道的、无法用工具 schema 表达的行为要求都在这里；再长的东西只会每个回合都白烧
+   * 上下文。
    */
   public static final String DEFAULT_SYSTEM =
       """
@@ -45,18 +41,16 @@ public final class Prompts {
       a JVM is executing kills that JVM in the middle of the build.
       """;
 
-  /** "auto" means the prompt says nothing and the model answers in whatever language it likes. */
+  /** "auto" 表示提示词什么都不说，模型用它喜欢的任何语言回答。 */
   public static final String AUTO = "auto";
 
   /**
-   * One language the prompt can ask for: the value the settings form stores, the name to show, the
-   * language's own name, and one sentence written *in* that language.
+   * 提示词可以要求的一种语言：设置表单存的值、要显示的名字、该语言自己的名字，以及一句<em>用该语言</em>写的
+   * 话。
    *
-   * <p>A name rather than a code, on purpose: models follow "Simplified Chinese" far more reliably
-   * than "zh-CN". The native sentence is there because a model decides which language to think in
-   * partly from the text in front of it — an English sentence asking for Chinese is a weak signal,
-   * Chinese text asking for Chinese is a strong one, and the thinking stream is exactly where that
-   * shows up first.
+   * <p>用名字而不是代码，是刻意的：模型对「Simplified Chinese」的遵从度远高于「zh-CN」。那句母语句子之所
+   * 以在，是因为模型选哪种语言思考，有一部分取决于摆在它面前的文本——一句英文在要求中文，那是弱信号；中文
+   * 文本在要求中文，那是强信号——而思考流正是这一点最先显现的地方。
    */
   private record Language(String label, String nativeName, String nativeInstruction) {}
 
@@ -73,8 +67,7 @@ public final class Prompts {
       new Language("português", "português", "Pense e responda sempre em português, seja qual for o idioma do usuário."));
 
   /**
-   * The value the settings form stores, which is the English name — a form is read by the person, and
-   * the record's order is the order it is shown in.
+   * 设置表单存的那个值，也就是英文名——表单是给人读的，而记录里的顺序就是它展示的顺序。
    */
   private static Map<String, Language> languages(Language... offered) {
     String[] values = {
@@ -98,12 +91,12 @@ public final class Prompts {
 
   private Prompts() {}
 
-  /** Every language a prompt can ask for, as {@code value} strings. */
+  /** 提示词可以要求的每一种语言，以 {@code value} 字符串形式给出。 */
   public static List<String> languageValues() {
     return List.copyOf(LANGUAGES.keySet());
   }
 
-  /** The offered languages as {@code {value, label}} pairs, for the settings form. */
+  /** 所提供的语言，以 {@code {value, label}} 对的形式给出，供设置表单使用。 */
   public static List<String[]> languageChoices() {
     List<String[]> choices = new ArrayList<>();
     LANGUAGES.forEach((value, language) -> choices.add(new String[] {value, language.label()}));
@@ -111,31 +104,26 @@ public final class Prompts {
   }
 
   /**
-   * The prompt for a configured base prompt and language.
+   * 为配置好的基础提示词和语言拼出提示词。
    *
-   * @param system the prompt in effect, or null/blank for {@link #DEFAULT_SYSTEM}
-   * @param language {@code auto} (or null/blank) to say nothing about language, otherwise one of
-   *     {@link #languageValues()}
+   * @param system 生效的提示词；null 或空白表示 {@link #DEFAULT_SYSTEM}
+   * @param language {@code auto}（或 null/空白）表示对语言不作要求，否则取 {@link #languageValues()}
+   *     之一
    */
   public static String system(String system, String language) {
     return system(system, language, null);
   }
 
   /**
-   * The prompt for a configured base prompt, language, and the project the agent is working in.
+   * 为配置好的基础提示词、语言，以及代理工作所在的项目拼出提示词。
    *
-   * <p>The parts sit in a deliberate order: the project's own rules first, then the built-in rules,
-   * then the language. The project's file comes <em>first</em> because it is the specific statement
-   * about this work — the build command, the module not to touch — and a reader meeting general
-   * instructions first has to hold them while being told the real ones. The built-in rules stay in
-   * every prompt rather than being replaced by the file: they are not project preferences but the way
-   * this agent works ("inspect before you change", "never claim something works unless a command
-   * proved it"), and a project that adds its own rules has not asked to stop being told those. The
-   * language goes last of all because it is about the shape of the reply rather than about the work,
-   * and it is the instruction that most needs to survive being read last.
+   * <p>各部分按刻意的顺序摆放：先是项目自己的规则，然后是内置规则，最后是语言。项目文件排在<em>最前</em>，
+   * 因为它是关于这项工作的具体陈述——构建命令、不许碰的模块——而先读到通用指令的读者，得一边记着它们一边被告
+   * 知真正该做的事。内置规则留在每一份提示词里，而不是被文件替换：它们不是项目偏好，而是这个代理的工作方式
+   * （「先看再改」、「没有命令证明过就不要说它能用」），而一个加了自己规则的项目并没有要求不再被告知这些。
+   * 语言放在最后，因为它关乎回复的形状而不是工作本身，而它是最需要在最后被读到之后仍然生效的那条指令。
    *
-   * @param workingDirectory where the agent will run, whose {@link ProjectPrompt} rules are prepended,
-   *     or null for none
+   * @param workingDirectory 代理将要运行的目录，其 {@link ProjectPrompt} 规则会被前置；null 表示没有
    */
   public static String system(String system, String language, Path workingDirectory) {
     String base = system == null || system.isBlank() ? DEFAULT_SYSTEM : system;
@@ -147,21 +135,19 @@ public final class Prompts {
     }
     Language known = LANGUAGES.get(asked);
     if (known == null) {
-      // A language this build does not list: ask for it in English, by the name that was given. The
-      // form is a convenience, not a gate on what somebody may think in.
+      // 这个构建没有列出的语言：用英文、按给出的名字要求它。表单只是方便，不是对一个人可以用什么语言思考的
+      // 限制。
       return withProject + "\n\n" + instruction(asked, null);
     }
     return withProject + "\n\n" + instruction(known.nativeName(), known.nativeInstruction());
   }
 
   /**
-   * The sentence itself, as its own method so a test can pin the wording of what the model is told
-   * without repeating it here.
+   * 那句话本身，单独成方法，好让测试能钉住模型被告知的内容措辞，而不必在这里重复一遍。
    *
-   * <p>Two parts on purpose. The first states the rule in English, which is where the agent's other
-   * rules live and what a model reads as an instruction. The second says the same thing in the target
-   * language, because that is what actually sets the language of the text the model writes next —
-   * including its thinking, which is the stream this exists for.
+   * <p>刻意分成两部分。第一部分用英文陈述规则，那里是这个代理其他规则所在之处，也是模型会当作指令来读的
+   * 东西。第二部分用目标语言说同一件事，因为那才是真正决定模型接下来写出的文本用什么语言的东西——包括它的
+   * 思考，也就是这个方法存在的理由。
    */
   static String instruction(String languageName, String nativeInstruction) {
     String base =

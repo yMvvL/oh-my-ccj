@@ -64,71 +64,61 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
- * Owns what a browser cannot: the session, the running turn, the approvals a turn is blocked on, and
- * the model the turns go to.
+ * 拥有浏览器无法拥有的东西：会话、正在跑的回合、回合被卡住时所等的审批，以及回合要去的模型。
  *
- * <p>Deliberately headless — it publishes {@link Event}s and knows nothing about HTTP, so the same
- * object could back a websocket or a test.
+ * <p>有意做成无头的——它发布 {@link Event}，对 HTTP 一无所知，所以同一个对象也可以支撑一个 websocket
+ * 或一个测试。
  *
- * <p>Every turn belongs to a conversation and runs in that conversation's own slot, so several can
- * be in flight at once: a long job in one session is not a reason the user cannot start work in
- * another. The unit that takes one turn at a time is the session — a second message in the
- * <em>same</em> conversation is refused rather than queued, because two writers on one transcript is
- * how it gets corrupted. Every event names the session it belongs to, since one stream carries them
- * all.
+ * <p>每个回合都属于一个对话，并在那个对话自己的槽位里运行，所以可以有好几个同时在飞：一个会话里的长任务
+ * 不是用户不能在另一个会话里开始工作的理由。一次只接一个回合的单位是会话——<em>同一个</em>对话里的第二条
+ * 消息会被拒绝而不是排队，因为两个写入者往同一份转录里写，正是它被毁掉的方式。每个事件都点名它所属的会话，
+ * 因为一条流承载的是全部。
  *
- * <p>The provider is swappable at runtime: this server starts happily with no model configured so
- * the UI can be used to configure one, and {@link #applyConfig} validates and installs a new one
- * before anything is written to disk.
+ * <p>提供方在运行时可换：这个服务器在没有配置任何模型时也能正常启动，这样 UI 就能用来配置一个，而
+ * {@link #applyConfig} 会在有任何东西写进磁盘之前校验并装好新的提供方。
  */
 public final class AgentHub implements AutoCloseable {
 
-  /** How many events a reconnecting browser can replay. */
+  /** 重连的浏览器可以重放多少条事件。 */
   private static final int REPLAY_LIMIT = 500;
 
   /**
-   * How long a tool call waits for a human before refusing. Timeout denies: the same fail-closed
-   * rule the CLI applies when stdin is not a terminal.
+   * 一次工具调用在拒绝之前等人类多久。超时就拒绝：与 CLI 在 stdin 不是终端时采用的同一条「失败即关闭」
+   * 的规则。
    */
   /**
-   * How long an approval waits before being answered for the user.
+   * 一个审批在替用户作答之前要等多久。
    *
-   * <p>{@code 0} means "wait until somebody answers" — the default, and the honest one: a request for
-   * permission is a question to a person, and a question that expires is a question that was never
-   * really asked. Measured with the old 120-second cap: a turn waiting on an approval that never
-   * reached the page was ended by the timer with the work abandoned, and the user's screen showed a
-   * prompt that had already been withdrawn — the worst of both, since it looked like a bug in the
-   * tool rather than an unanswered question.
+   * <p>{@code 0} 意味着「一直等到有人作答」——这是默认值，也是诚实的那个：请求许可就是向一个人提一个
+   * 问题，而会过期的问题是从未真正被问过的问题。用旧的 120 秒上限实测过：一个在等一条从未到达页面的审批的
+   * 回合，被计时器结束、工作被丢下，而用户屏幕上显示的是一个早已被撤回的提示——两头都糟，因为它看起来像
+   * 工具里的一个 bug，而不是一个没被回答的问题。
    *
-   * <p>Waiting for ever is safe rather than a deadlock because there are two ways out that do not
-   * depend on the timer: aborting the conversation answers pending approvals with "no" (see
-   * {@code Conversation.abort}), and a page that reloads rebuilds the prompt from the status it asks
-   * for on the way in. The alternative — a timer — fails the first of those by turning "nobody has
-   * answered yet" into "nobody answered".
+   * <p>无限等下去是安全的，而不是死锁，因为有两条不依赖计时器的出路：中止对话会用「否」回答待处理的审批
+   * （见 {@code Conversation.abort}），而重新加载的页面会从它进来时索要的状态里重建提示。另一种做法
+   * ——计时器——会把第一条出路弄坏，因为它把「还没有人作答」变成了「没有人作答」。
    *
-   * <p>A number is still honoured when one is set, for a caller that wants a turn to fail rather than
-   * hang: the tests set it, and so can an unattended run.
+   * <p>设了数字时仍然尊重它，给想要回合失败而不是挂起的调用方：测试会设它，无人值守的运行也可以。
    */
   private static final long APPROVAL_TIMEOUT_SECONDS = 0;
 
-  /** How many messages one conversation may hold while a turn is running. See Conversation.queued. */
+  /** 一个回合运行期间，一个对话最多可以积压多少条消息。见 Conversation.queued。 */
   private static final int MAX_QUEUED_MESSAGES = 16;
 
-  /** Builds a provider from settings; injected so this class stays free of transport details. */
+  /** 按设置构建一个提供方；做成注入的，好让本类不沾传输层的细节。 */
   @FunctionalInterface
   public interface ProviderFactory {
     Provider create(Config config, Map<String, String> env);
   }
 
   /**
-   * The parts of the environment that do not change while the server runs.
+   * 服务器运行期间不会变化的那部分环境。
    *
-   * @param workspaces the registry whose active entry decides the working directory and where
-   *     sessions live; switching a workspace is how a front end changes both at once
-   * @param cwdOverride a working directory for this run that is not the workspace's, which is what
-   *     {@code -C} means; null in the normal case
-   * @param configFile where settings are persisted, and read back from on save
-   * @param providerNames names offered to the settings form
+   * @param workspaces 注册表，它的活动条目决定工作目录以及会话存放的位置；切换工作区就是前端一次性改变
+   *     这两者的方式
+   * @param cwdOverride 本次运行使用的工作目录，不属于工作区，这正是 {@code -C} 的含义；正常情况下为 null
+   * @param configFile 设置持久化的位置，保存时也从这里读回
+   * @param providerNames 提供给设置表单的名字
    */
   public record Settings(
       String version,
@@ -143,7 +133,7 @@ public final class AgentHub implements AutoCloseable {
       boolean autoApprove,
       boolean subAgents) {
 
-    /** The settings as they were before sub-agents existed: none offered. */
+    /** 子代理存在之前的设置形状：一个都不提供。 */
     public Settings(
         String version,
         WorkspaceStore workspaces,
@@ -171,11 +161,10 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * One thing that happened, shaped for the wire.
+   * 发生过的一件事，按线上格式塑形。
    *
-   * <p>{@code sessionId} is part of the event rather than of the connection because one stream
-   * carries every conversation on the server: with turns running in parallel, an event that did not
-   * name its session would be prose rendered into whichever transcript happened to be open.
+   * <p>{@code sessionId} 属于事件而不是连接，是因为一条流承载服务器上的每一个对话：在回合并行运行的
+   * 时候，一个不点名自己会话的事件会被渲染进当时碰巧打开的那份转录里。
    */
   public record Event(long id, String type, String sessionId, ObjectNode payload) {}
 
@@ -184,18 +173,17 @@ public final class AgentHub implements AutoCloseable {
 
   private final ToolRegistry tools;
   /**
-   * Whether `task` is offered at all.
+   * 是否提供 `task`。
    *
-   * <p>Off unless asked for, and that default is the honest one: a sub-agent spends tokens on a
-   * second conversation that the user did not type the message for, and an agent handed the tool
-   * will reach for it on work it could have done itself. Turning it on is a statement that the extra
-   * spend is wanted.
+   * <p>除非被要求，否则关闭，而这个默认值是诚实的：子代理会把 token 花在一个用户没有亲手输入消息的第二
+   * 个对话上，而拿到这个工具的代理，会在它本可以自己完成的工作上伸手去用它。把它打开，就是在声明这笔额外
+   * 开销是想要的。
    */
   private final java.util.concurrent.atomic.AtomicBoolean subAgents =
       new java.util.concurrent.atomic.AtomicBoolean();
   private final Settings settings;
 
-  /** One per running turn: a session that is working gets its own thread, not the server's. */
+  /** 每个正在跑的回合一个：干着活的会话拿到自己的线程，而不是服务器的线程。 */
   private final ExecutorService turns = Executors.newVirtualThreadPerTaskExecutor();
 
   private final List<Consumer<Event>> subscribers = new CopyOnWriteArrayList<>();
@@ -203,35 +191,33 @@ public final class AgentHub implements AutoCloseable {
   private final AtomicLong nextEventId = new AtomicLong();
   private final AtomicInteger nextApprovalId = new AtomicInteger();
   /**
-   * Approvals waiting for a human, keyed by their id.
+   * 在等人类的审批，按它们的 id 键存放。
    *
-   * <p>Server-wide rather than per conversation: an approval is answered by id, from whichever page
-   * notices it, and a request that needs a human in a background turn is exactly the case this must
-   * not get wrong.
+   * <p>是整个服务器一份，而不是每个对话一份：审批按 id 作答，来自任何一个注意到它的页面，而一个在后台
+   * 回合里需要人类的请求，正是这件事绝不能弄错的情形。
    */
   private final Map<String, Pending> pendingApprovals = new ConcurrentHashMap<>();
   private final AtomicBoolean autoApprove = new AtomicBoolean();
   private final AtomicReference<Provider> provider = new AtomicReference<>();
 
   /**
-   * Running turns, one per session, and the conversation each one belongs to.
+   * 正在跑的回合，每个会话一个，以及每一个所属的对话。
    *
-   * <p>The map is the server's answer to "is this session busy": a turn is registered before it
-   * starts and removed when it ends, so a second message in the same conversation is refused while a
-   * message in any other conversation is not. Keyed by session id, so two conversations never share
-   * a slot and switching between them cannot confuse one turn with another.
+   * <p>这个 map 就是服务器对「这个会话忙不忙」的回答：回合在开始之前登记，在结束时移除，所以同一个对话
+   * 里的第二条消息会被拒绝，而任何其他对话里的消息不会。按 session id 键存放，所以两个对话从不共用槽位，
+   * 在它们之间切换也不会把一个回合和另一个搞混。
    */
   private final Map<String, Conversation> conversations = new ConcurrentHashMap<>();
 
-  /** The conversation the browsing front end is looking at. */
+  /** 浏览前端正在看的那个对话。 */
   private final Object sessionLock = new Object();
 
   /**
-   * The user's approval rules for the project on screen, or null until the caller supplies them: a
-   * hub with none asks about everything, which is what the tests and the embedded uses expect.
+   * 用户在屏幕上这个项目里的审批规则，在调用方提供之前为 null：没有任何规则的 hub 会对一切都发问，测试
+   * 和嵌入式用法期望的就是这个。
    */
   private volatile ApprovalRules approvalRules;
-  /** Where a turn's previous file contents go, so the turn can be taken back. */
+  /** 一个回合此前的文件内容存到哪，这样这个回合才可以被收回。 */
   private final com.ccj.agent.session.CheckpointStore checkpoints;
   private volatile Config config;
   private volatile FileSession session;
@@ -256,7 +242,7 @@ public final class AgentHub implements AutoCloseable {
         settings.folderChooser() == null ? new NativeFolderChooser() : settings.folderChooser();
   }
 
-  /** Where tools resolve relative paths, and where this run's sessions are kept. */
+  /** 工具解析相对路径的基准，也是本次运行的会话存放的地方。 */
   private Path cwd() {
     Workspace active = settings.workspaces().active();
     Path override = settings.cwdOverride();
@@ -287,18 +273,16 @@ public final class AgentHub implements AutoCloseable {
     node.put("version", settings.version());
     node.put("configured", currentProvider != null);
 
-    // The configured name, not the implementation's: the user picked "custom" + a relay URL, and
-    // "openai" would be a confusing thing to show them.
+    // 用配置里的名字，而不是实现的名字：用户选的是 "custom" + 一个中转 URL，给他看 "openai" 会让人困惑。
     node.put("provider", currentProvider == null || active.provider() == null ? "" : active.provider());
     node.put("model", active.model() == null ? "" : active.model());
-    // The endpoint the provider will actually be called at, not the one the file happens to store:
-    // a custom provider is served by its definition unless the stored URL was entered for it.
+    // 提供方实际会被调用的端点，而不是文件恰好存着的那个：自定义提供方由它的定义来服务，除非存着的 URL
+    // 就是为它输入的。
     String endpoint = Providers.effectiveBaseUrl(active, settings.providerStore(), active.provider());
     node.put("baseUrl", endpoint == null ? "" : endpoint);
     node.put("cwd", cwd().toString());
-    // Empty in the normal case. Non-empty means -C pinned a working directory that is not the active
-    // workspace's: two facts that disagree, which the page has to be able to show rather than let
-    // the tree claim the tools run where they do not.
+    // 正常情况下为空。非空意味着 -C 钉住了一个不属于当前活动工作区的工作目录：两个互相冲突的事实，页面
+    // 必须能把它显示出来，而不是让树声称工具跑在它们并不在的地方。
     Path override = settings.cwdOverride();
     node.put("cwdOverride", override == null ? "" : override.toString());
     ObjectNode workspaceNode = node.putObject("workspace");
@@ -311,28 +295,25 @@ public final class AgentHub implements AutoCloseable {
     node.put("messageCount", current == null ? 0 : current.messages().size());
     node.put("autoApprove", autoApprove.get());
     node.put("subAgents", subAgents.get());
-    // "busy" answers for the conversation on screen: a page's composer is about the transcript it
-    // shows, and a turn running somewhere else must not disable it.
+    // "busy" 回答的是屏幕上那个对话：页面的输入框针对的是它显示的转录，别处正在跑的回合不能把它禁用掉。
     Conversation shown = conversation(current == null ? "" : current.id());
     node.put("busy", shown != null && shown.running());
-    // What is waiting behind the turn on screen. The page draws a count, so a message typed while
-    // the agent is thinking is visibly held rather than silently swallowed.
+    // 屏幕上的回合背后有什么在排队。页面会画出计数，所以代理思考时敲进去的消息是可见地被扣住，而不是被
+    // 悄悄吞掉。
     ArrayNode queued = node.putArray("queued");
     if (shown != null) {
       shown.queued().forEach(queued::add);
     }
-    // Which other conversations are working, so the tree can mark their rows. Named rather than
-    // counted: "something is running" cannot tell you which session to go back to watch.
+    // 还有哪些别的对话在干活，好让树标出它们的行。给名字而不是给数量：「有东西在跑」没法告诉你该回到哪个
+    // 会话去看。
     ArrayNode runningNow = node.putArray("running");
     for (Conversation entry : conversations.values()) {
       if (entry.running() && !entry.id().equals(current == null ? "" : current.id())) {
         runningNow.add(entry.id());
       }
     }
-    // Approvals this conversation is waiting on. They are requests blocked in memory rather than
-    // messages, so they are not in the history a page replays when it opens a session — without them
-    // here, looking at another conversation and coming back lost the prompt and left abort as the
-    // only way out.
+    // 这个对话正在等的审批。它们是阻塞在内存里的请求而不是消息，所以不在页面打开会话时重放的历史里——这里
+    // 不列出来的话，看一眼别的对话再回来就会丢掉提示，只剩中止这一条出路。
     ArrayNode waiting = node.putArray("approvals");
     String shownId = current == null ? "" : current.id();
     for (Map.Entry<String, Pending> entry : pendingApprovals.entrySet()) {
@@ -350,7 +331,7 @@ public final class AgentHub implements AutoCloseable {
     } else {
       node.put("reasoning", active.reasoning());
     }
-    // The picker sits above the composer, so the levels travel with the live status too.
+    // 选择器坐在输入框上方，所以这些档位也跟着实时状态一起走。
     ArrayNode levels = node.putArray("reasoningLevels");
     Config.REASONING_LEVELS.forEach(levels::add);
     node.set("usage", usageFields());
@@ -367,10 +348,10 @@ public final class AgentHub implements AutoCloseable {
     return sessionsJson(null);
   }
   /**
-   * Sessions of one workspace, or of the active one when {@code workspace} is null.
+   * 一个工作区的会话；{@code workspace} 为 null 时则是活动工作区的会话。
    *
-   * <p>A tree view has to be able to show a folded folder's contents before switching to it, which is
-   * exactly this call: reading another workspace's list must not move the active one.
+   * <p>树视图必须能在切换之前先展示一个折叠文件夹的内容，这正是这次调用：读另一个工作区的列表绝不能
+   * 移动当前活动的那个。
    */
   public ArrayNode sessionsJson(String workspace) {
     Path directory = sessionsDir();
@@ -382,7 +363,7 @@ public final class AgentHub implements AutoCloseable {
               .orElseThrow(
                   () ->
                       new IllegalArgumentException(
-                          "no workspace named '" + workspace.strip() + "'"));
+                          "没有名为 '" + workspace.strip() + "' 的工作区"));
       directory = target.sessionsDir();
     }
     ArrayNode array = Json.mapper().createArrayNode();
@@ -393,8 +374,7 @@ public final class AgentHub implements AutoCloseable {
       node.put("preview", summary.preview());
       node.put("messageCount", summary.messageCount());
       node.put("lastModified", TIMESTAMP.format(summary.lastModified()));
-      // Which rows are working, so a turn left running in another conversation is visible from
-      // anywhere rather than only from the transcript it is writing.
+      // 哪些行在干活，这样留在另一个对话里跑着的回合从哪儿都看得见，而不只是从它正在写的那份转录里。
       Conversation conversation = conversations.get(summary.id());
       node.put("running", conversation != null && conversation.running());
     }
@@ -402,10 +382,10 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Running totals for the current session.
+   * 当前会话的累计统计。
    *
-   * <p>{@code cacheHitRate} is null until a provider reports cache figures: "no information" and
-   * "nothing was cached" are different facts, and only one of them is a 0%.
+   * <p>{@code cacheHitRate} 在提供方报出缓存数字之前为 null：「没有信息」和「什么都没被缓存」是两件
+   * 不同的事实，而其中只有一件是 0%。
    */
   public ObjectNode usageFields() {
     return usageFields(session());
@@ -428,12 +408,12 @@ public final class AgentHub implements AutoCloseable {
     }
     node.put("toolCalls", totals.toolCalls());
     node.put("toolErrors", totals.toolErrors());
-    // Its own line, never folded into steps: a compaction is a request the user paid for, and it is
-    // not a turn of the conversation. The panel shows it so the tokens are accounted for.
+    // 单独一行，绝不并进 steps：压缩是用户付过费的一次请求，而且它不是对话的一个回合。面板把它显示出来，
+    // 这些 token 才算有交代。
     node.put("compactions", totals.compactions());
     node.put("elapsedMs", totals.elapsedMillis());
-    // How much of the model's window this conversation would take. It is an estimate and the panel
-    // says so: the count is a heuristic, and the number that matters is the one the user paid for.
+    // 这个对话会占掉模型窗口的多少。它是估算值，面板也这么说：这个计数是启发式的，真正重要的数字是用户
+    // 付过费的那个。
     node.put(
         "contextTokens",
         TokenEstimate.of(target == null ? List.<Message>of() : target.messages()));
@@ -446,24 +426,22 @@ public final class AgentHub implements AutoCloseable {
     return totalsOf(session());
   }
 
-  /** A session's books: what the file recorded before, or an empty ledger when there is no file. */
+  /** 一个会话的账本：文件此前记录的内容；没有文件时则是一本空账。 */
   private static UsageTotals totalsOf(FileSession session) {
     return session == null ? UsageTotals.empty() : session.totals();
   }
 
   /**
-   * The current session replayed as the events the stream would have emitted, so a page renders
-   * history and live turns with one code path.
+   * 把当前会话重放成这条流当初会发出的事件，这样页面用一条代码路径就能渲染历史和实时回合。
    *
-   * <p>Replayed tool results carry no timing: the conversation stores what the model saw, not how
-   * long the tool took, and inventing a zero would read as a measurement.
+   * <p>重放的工具结果不带耗时：对话存的是模型看到的东西，而不是工具花了多久，凭空造一个 0 会被读成一次
+   * 实测。
    */
   public ObjectNode historyJson() {
     FileSession current = session();
     ArrayNode events = Json.mapper().createArrayNode();
-    // Repaired first, so a conversation an interruption left invalid replays the same way the model
-    // will read it: a call whose result went missing shows as "not run" rather than as a card that
-    // spins forever.
+    // 先做修复，这样一个被中断弄成非法的对话，重放出来的样子与模型将读到的样子一致：结果丢失的那次调用
+    // 显示为「未运行」，而不是一张永远转圈的卡片。
     List<Message> messages =
         current == null || current.messages().isEmpty()
             ? List.of()
@@ -472,15 +450,12 @@ public final class AgentHub implements AutoCloseable {
       switch (message) {
         case Message.User user -> events.add(replay("user").put("text", user.text()));
         case Message.Assistant assistant -> {
-          // Reasoning first: it is what the model said to itself before answering, which is also the
-          // order the live stream produced it in. Without this a conversation replayed after a
-          // session switch lost its thinking — the reasoning is in the file, so a replay that drops
-          // it is a replay of a different conversation.
+          // 先放推理：那是模型在回答之前对自己说的话，也是实时流产生它们的顺序。没有这一段，切换会话后
+          // 重放的对话会丢掉它的思考——推理就在文件里，所以丢掉它的重放就是对另一个对话的重放。
           for (Message.Thinking block : assistant.thinking()) {
             if (block.redacted() || block.text().isEmpty()) {
-              // A redacted block's payload is opaque and belongs to the model, unchanged: rendering
-              // it as prose would put a wall of base64 in the transcript. A signature-only block has
-              // nothing to show either.
+              // 被隐去的内容块，其载荷是不透明的、属于模型且原样保留：把它当散文渲染，会在转录里放一堵
+              // base64 的墙。只有签名的块同样没有东西可展示。
               continue;
             }
             events.add(replay("reasoning").put("delta", block.text()));
@@ -506,10 +481,9 @@ public final class AgentHub implements AutoCloseable {
                     .put("ok", !result.error())
                     .putNull("elapsedMs")
                     .put("output", result.content()));
-        // The summary is part of the conversation now — it is what the compacted turns came to — so
-        // a replay has to draw it. Without this branch it fell into the default below and a page
-        // reloaded after a compaction showed the kept exchanges with no sign of what had happened,
-        // which is exactly the thing the user needs to see to know the compaction worked.
+        // 摘要现在也是对话的一部分——被压缩的那些回合归结成了它——所以重放必须把它画出来。没有这个分支
+        // 时它会掉进下面的 default，压缩后重新加载的页面会显示保留下来的往复，却没有任何迹象说明发生过
+        // 什么，而那正是用户需要看到、用来确认压缩起了作用的东西。
         case Message.Summary summary ->
             events.add(
                 replay("summary")
@@ -517,7 +491,7 @@ public final class AgentHub implements AutoCloseable {
                     .put("covers", summary.covers())
                     .put("source", summary.source()));
         default -> {
-          // System messages are not part of a rendered conversation.
+          // 系统消息不属于被渲染的对话。
         }
       }
     }
@@ -533,10 +507,10 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * What the settings form can offer: providers (built-in and user-defined) and their models.
+   * 设置表单可以提供的选择：提供方（内置的和用户定义的）以及它们的模型。
    *
-   * <p>Served from a {@link ModelCatalog}, so a router-backed catalogue can replace it later without
-   * the page changing: the shape it renders is the catalogue's, not the configuration's.
+   * <p>由一个 {@link ModelCatalog} 提供，所以以后换成路由器支撑的目录时页面不必改：它渲染的形状是
+   * 目录的形状，不是配置的形状。
    */
   public ObjectNode modelsJson() {
     ObjectNode root = Json.object();
@@ -552,8 +526,8 @@ public final class AgentHub implements AutoCloseable {
       entry.put("kind", provider.kind());
       entry.put("baseUrl", provider.baseUrl());
       entry.put("builtIn", provider.builtIn());
-      // The variable a key would come from, so the settings form can name it instead of guessing
-      // the protocol's default — which is how a relay got told to read somebody else's key variable.
+      // 密钥将来自哪个变量，好让设置表单能点名它，而不是去猜协议的默认值——一个中转提供方就是这样被
+      // 告知去读别人家密钥变量的。
       if (provider.apiKeyEnv() == null) {
         entry.putNull("apiKeyEnv");
       } else {
@@ -568,8 +542,8 @@ public final class AgentHub implements AutoCloseable {
       entry.put("model", model.model());
       entry.put("source", model.source());
     }
-    // Built-ins that are not in the list right now: what an "add a built-in" control can offer.
-    // Framed as available, not as hidden — there is nothing to bring back from the dead.
+    // 此刻不在列表里的内置项：「添加一个内置提供方」控件可以给出的东西。措辞是「可选」，不是「被隐藏」
+    // ——没有什么需要从死里复活。
     ArrayNode available = root.putArray("builtIns");
     Set<String> offered = new LinkedHashSet<>();
     providers.forEach(entry -> offered.add(entry.path("name").asText().toLowerCase()));
@@ -584,8 +558,7 @@ public final class AgentHub implements AutoCloseable {
   // ------------------------------------------------------------------ providers
 
   /**
-   * Defines a provider the user owns. Validated before it is stored, so a definition that could not
-   * work never becomes selectable.
+   * 定义一个用户自己拥有的提供方。存起来之前先校验，所以一个不可能工作的定义永远不会变成可选项。
    */
   public ObjectNode addProvider(JsonNode body) {
     ProviderStore store = requireProviderStore();
@@ -594,7 +567,7 @@ public final class AgentHub implements AutoCloseable {
     if (list.isArray()) {
       list.forEach(model -> models.add(model.asText()));
     } else if (list.isTextual()) {
-      // A comma-separated string is what a form field naturally sends.
+      // 逗号分隔的字符串正是表单字段自然会发来的东西。
       for (String model : list.asText().split(",")) {
         if (!model.isBlank()) {
           models.add(model.strip());
@@ -610,23 +583,22 @@ public final class AgentHub implements AutoCloseable {
                 models)
             .requireValid();
     store.save(definition);
-    // Saving a definition is also saying "I want this provider": if the list is explicit, the new
-    // name has to join it, otherwise the catalogue never shows what was just saved.
+    // 保存一个定义同时也等于说「我要这个提供方」：如果列表是显式的，新名字就必须加入它，否则目录永远
+    // 不会显示刚刚保存的东西。
     ensureListed(definition.name());
     publish(
         "notice",
-        Json.object().put("text", "provider '" + definition.name() + "' defined"));
+        Json.object().put("text", "已定义提供方 '" + definition.name() + "'"));
     publishStatus();
     return modelsJson();
   }
 
   /**
-   * Removes a provider from the list.
+   * 从列表中移除一个提供方。
    *
-   * <p>A definition the user made is deleted. A built-in one is compiled into the agent, so there is
-   * nothing to delete: it leaves the list and the list becomes explicit, which is all "deleted"
-   * needs to mean. Nothing is remembered as hidden and nothing is offered as a restore — adding it
-   * back is an ordinary add.
+   * <p>用户自己做的定义会被删除。内置的编译进了 agent 里，所以没有什么可删：它离开列表，而列表变成
+   * 显式的，这就是「已删除」需要表达的全部意思。没有任何东西被记成「已隐藏」，也没有任何东西被当作「可
+   * 恢复项」提供——加回来就是一次普通的添加。
    */
   public ObjectNode removeProvider(String name) {
     ProviderStore store = requireProviderStore();
@@ -634,8 +606,7 @@ public final class AgentHub implements AutoCloseable {
     boolean inUse = config.provider() != null && config.provider().equalsIgnoreCase(clean);
     String tail =
         inUse
-            ? " — it was the one in use; this session keeps running, but choose another provider"
-                + " before the next restart"
+            ? " —— 它正是正在使用的那个；本会话继续运行，但请在下次重启之前选另一个提供方"
             : "";
 
     if (store.find(clean).isEmpty()) {
@@ -649,12 +620,12 @@ public final class AgentHub implements AutoCloseable {
         store.setShown(stillShown);
       }
     }
-    publish("notice", Json.object().put("text", "provider '" + clean + "' deleted" + tail));
+    publish("notice", Json.object().put("text", "已删除提供方 '" + clean + "'" + tail));
     publishStatus();
     return modelsJson();
   }
 
-  /** Adds a built-in back to the list — an ordinary add, not a resurrection. */
+  /** 把一个内置提供方加回列表——一次普通的添加，不是复活。 */
   public ObjectNode addBuiltInProvider(String name) {
     ProviderStore store = requireProviderStore();
     String clean = name == null ? "" : name.strip();
@@ -662,20 +633,20 @@ public final class AgentHub implements AutoCloseable {
         Providers.supported().stream().anyMatch(known -> known.equalsIgnoreCase(clean));
     if (!builtIn) {
       throw new IllegalArgumentException(
-          "'" + clean + "' is not a built-in provider; define it instead");
+          "'" + clean + "' 不是内置提供方；请改为自定义一个");
     }
     if (currentProviderNames().stream().anyMatch(known -> known.equalsIgnoreCase(clean))) {
-      throw new IllegalArgumentException("'" + clean + "' is already in the list");
+      throw new IllegalArgumentException("'" + clean + "' 已经在列表里");
     }
     List<String> next = new ArrayList<>(currentProviderNames());
     next.add(clean);
     store.setShown(next);
-    publish("notice", Json.object().put("text", "provider '" + clean + "' added"));
+    publish("notice", Json.object().put("text", "已添加提供方 '" + clean + "'"));
     publishStatus();
     return modelsJson();
   }
 
-  /** Every provider name the catalogue currently offers. */
+  /** 目录当前提供的每一个提供方名字。 */
   private List<String> currentProviderNames() {
     List<String> names = new java.util.ArrayList<>();
     ModelCatalog catalog = settings.modelCatalog();
@@ -686,33 +657,31 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Remembers a model for a provider so a hand-typed name survives the next render — the list a
-   * picker offers is not the same thing as the model currently in use.
+   * 为一个提供方记住某个模型，好让手输的名字活过下一次渲染——选择器给出的列表，和当前正在用的模型不是
+   * 一回事。
    */
   public ObjectNode addModel(String provider, String model) {
     ProviderStore store = requireProviderStore();
     String name = knownProvider(provider);
     String value = model == null ? "" : model.strip();
     if (value.isEmpty()) {
-      throw new IllegalArgumentException("a model name is required");
+      throw new IllegalArgumentException("需要一个模型名");
     }
     List<String> models = new java.util.ArrayList<>(offeredModels(name));
     if (!models.contains(value)) {
       models.add(value);
       store.setModels(name, models);
-      publish("notice", Json.object().put("text", "model '" + value + "' added to " + name));
+      publish("notice", Json.object().put("text", "已把模型 '" + value + "' 添加到 " + name));
       publishStatus();
     }
     return modelsJson();
   }
 
   /**
-   * Forgets a model for a provider.
+   * 忘掉一个提供方的某个模型。
    *
-   * <p>The offer list and the current choice are separate things: removing a model from the list
-   * must not edit the configuration, and refusing to remove the model in use deadlocks the user
-   * when it is the only one offered. The active model stays active and stays visible — it is simply
-   * no longer suggested.
+   * <p>可选项列表和当前的选择是两回事：从列表里移除一个模型绝不能改动配置，而拒绝移除正在使用的模型，
+   * 在它是唯一可选项时会把用户卡死。活动的模型保持活动、保持可见——它只是不再被推荐了。
    */
   public ObjectNode removeModel(String provider, String model) {
     ProviderStore store = requireProviderStore();
@@ -720,15 +689,15 @@ public final class AgentHub implements AutoCloseable {
     String value = model == null ? "" : model.strip();
     List<String> models = new java.util.ArrayList<>(offeredModels(name));
     if (!models.remove(value)) {
-      throw new IllegalArgumentException("'" + value + "' is not a model of " + name);
+      throw new IllegalArgumentException("'" + value + "' 不是 " + name + " 的模型");
     }
     store.setModels(name, models);
-    publish("notice", Json.object().put("text", "model '" + value + "' removed from " + name));
+    publish("notice", Json.object().put("text", "已从 " + name + " 移除模型 '" + value + "'"));
     publishStatus();
     return modelsJson();
   }
 
-  /** What the catalogue currently offers for a provider, which is what an edit starts from. */
+  /** 目录当前为一个提供方提供的东西，也就是编辑的起点。 */
   private List<String> offeredModels(String provider) {
     ModelCatalog catalog = settings.modelCatalog();
     if (catalog == null) {
@@ -744,7 +713,7 @@ public final class AgentHub implements AutoCloseable {
   private String knownProvider(String provider) {
     String name = provider == null ? "" : provider.strip();
     if (name.isEmpty()) {
-      throw new IllegalArgumentException("a provider name is required");
+      throw new IllegalArgumentException("需要一个提供方名");
     }
     ModelCatalog catalog = settings.modelCatalog();
     boolean known =
@@ -752,9 +721,9 @@ public final class AgentHub implements AutoCloseable {
             && catalog.providers().stream().anyMatch(entry -> entry.name().equalsIgnoreCase(name));
     if (!known) {
       throw new IllegalArgumentException(
-          "no provider named '"
+          "没有名为 '"
               + name
-              + "'; add one first, or use one of: "
+              + "' 的提供方；请先添加一个，或使用其中之一："
               + (catalog == null
                   ? ""
                   : String.join(
@@ -764,7 +733,7 @@ public final class AgentHub implements AutoCloseable {
     return name;
   }
 
-  /** Adds a name to the explicit list, doing nothing while the list is still implicit. */
+  /** 把一个名字加入显式列表；列表还是隐式的时候什么都不做。 */
   private void ensureListed(String name) {
     ProviderStore store = requireProviderStore();
     List<String> shown = new ArrayList<>(store.shown());
@@ -777,14 +746,14 @@ public final class AgentHub implements AutoCloseable {
 
   private ProviderStore requireProviderStore() {
     if (settings.providerStore() == null) {
-      throw new IllegalStateException("this server was started without a provider registry");
+      throw new IllegalStateException("这个服务器启动时没有提供方注册表");
     }
     return settings.providerStore();
   }
 
   // ------------------------------------------------------------------ workspaces
 
-  /** The registry as the switcher needs it: name, path, how much history is there, which is active. */
+  /** 切换器需要的注册表形态：名字、路径、那里积了多少历史、哪一个是活动的。 */
   public ObjectNode workspacesJson() {
     ObjectNode root = Json.object();
     Workspace active = settings.workspaces().active();
@@ -801,64 +770,61 @@ public final class AgentHub implements AutoCloseable {
   }
 
   public ObjectNode addWorkspace(String name, String path) {
-    // A registry entry, and nothing more: no running turn reads the list, so adding one cannot
-    // disturb work already under way. Requiring idle here is what made a second workspace
-    // unreachable while the first one was busy.
+    // 只是一条注册表记录，仅此而已：没有正在跑的回合会读这个列表，所以添加一条不会打扰已经在进行的工作。
+    // 过去要求这里必须空闲，正是第一个工作区忙着时第二个工作区无法被添加的原因。
     if (path == null || path.isBlank()) {
-      throw new IllegalArgumentException("a workspace needs a directory");
+      throw new IllegalArgumentException("工作区需要一个目录");
     }
     settings.workspaces().add(name, Path.of(path.strip()));
-    publish("notice", Json.object().put("text", "workspace '" + name.strip() + "' added"));
+    publish("notice", Json.object().put("text", "已添加工作区 '" + name.strip() + "'"));
     return workspacesJson();
   }
 
   /**
-   * Adds a directory chosen from the desktop's own chooser. The chooser is the whole gesture, so the
-   * name is the directory's — see {@link WorkspaceStore#add(Path)} for how a taken name is resolved.
+   * 添加一个从桌面自己的选择器里挑出来的目录。选择器就是整个手势，所以名字取目录的名字——名字被占用时
+   * 如何解决，见 {@link WorkspaceStore#add(Path)}。
    */
   public ObjectNode addWorkspace(Path path) {
     if (path == null) {
-      throw new IllegalArgumentException("a workspace needs a directory");
+      throw new IllegalArgumentException("工作区需要一个目录");
     }
     requireDistinctPath(path);
     Workspace added = settings.workspaces().add(path);
     publish(
         "notice",
-        Json.object().put("text", "workspace '" + added.name() + "' → " + added.path()));
+        Json.object().put("text", "工作区 '" + added.name() + "' → " + added.path()));
     return workspacesJson();
   }
 
-  /* The registry is keyed by name, so two names may point at one directory — which is fine until it
-   * is the same directory twice: two session histories would then compete for one working
-   * directory, and nothing on screen would say which list belongs to which. */
+  /* 注册表按名字键存放，所以两个名字可以指向同一个目录——这本来没问题，但同一个目录出现两次就不行：两份
+   * 会话历史会争抢同一个工作目录，而屏幕上没有任何东西说明哪份列表属于哪一个。 */
   private void requireDistinctPath(Path path) {
     Path wanted = path.toAbsolutePath().normalize();
     for (Workspace known : settings.workspaces().list()) {
       if (known.path().equals(wanted)) {
         throw new IllegalArgumentException(
-            "that directory is already the workspace '"
+            "那个目录已经是工作区 '"
                 + known.name()
-                + "'; use the entry in the tree instead of adding it again");
+                + "'；请直接用树里已有的条目，不要再添加一次");
       }
     }
   }
 
   public ObjectNode removeWorkspace(String name) {
-    // Forgetting an entry deletes no file and stops no turn; a running turn keeps the session file it
-    // already holds. Only the active workspace is protected, and that is the registry's own rule.
+    // 忘掉一条记录不删任何文件，也不停任何回合；正在跑的回合继续持有它已经拿到的会话文件。只有活动工作区
+    // 受保护，而那是注册表自己的规则。
     settings.workspaces().remove(name);
-    publish("notice", Json.object().put("text", "workspace '" + name.strip() + "' forgotten"));
+    publish("notice", Json.object().put("text", "已忘记工作区 '" + name.strip() + "'"));
     return workspacesJson();
   }
 
   /**
-   * Switches the working directory and the session store together, and starts a fresh session in
-   * the target workspace — resuming someone else's conversation across a directory change would be
-   * worse than an empty transcript.
+   * 同时切换工作目录和会话存储，并在目标工作区里开一个全新的会话——跨一次目录变更去续上别人的对话，比
+   * 一份空转录更糟。
    */
   public ObjectNode switchWorkspace(String name) {
-    // Allowed while turns are running: each one holds the working directory it started in, so
-    // switching the namespace here cannot redirect a job that is already under way.
+    // 回合并行时也允许：每一个都持有自己启动时的工作目录，所以在这里切换命名空间没法把已经在进行的工作
+    // 改道。
     Workspace workspace = settings.workspaces().activate(name);
     useSession(SessionStore.create(workspace.sessionsDir()));
     publish(
@@ -869,13 +835,12 @@ public final class AgentHub implements AutoCloseable {
 
   // ------------------------------------------------------------------ settings
 
-  /** What the settings form needs. The API key itself never leaves the server. */
+  /** 设置表单需要的东西。API 密钥本身从不离开服务器。 */
   public ObjectNode configJson() {
     Config active = config;
     Config fileConfig = Config.fromFile(settings.configFile());
-    // A pair that belongs to this provider: either the file's flat fields, or one it remembers for
-    // this provider from a previous visit. Either way it is this provider's key, and the key itself
-    // never leaves the server.
+    // 属于这个提供方的一对：要么是文件里的扁平字段，要么是它从上次访问起为这个提供方记住的那一对。无论
+    // 哪种，都是这个提供方的密钥，而密钥本身从不离开服务器。
     boolean storedForThisProvider =
         fileConfig.apiKey() != null
             && !fileConfig.apiKey().isBlank()
@@ -891,14 +856,13 @@ public final class AgentHub implements AutoCloseable {
     node.put("model", active.model());
     node.put("baseUrl", Providers.effectiveBaseUrl(active, settings.providerStore(), active.provider()));
     node.put("apiKeyEnv", active.apiKeyEnv());
-    // Whether the two above are what this provider will actually use. False means they were entered
-    // for a different provider (a custom provider does not use them), and the form must offer this
-    // provider's own endpoint instead of the stale one.
+    // 上面两个是不是这个提供方实际会用的。false 表示它们是为别的提供方输入的（自定义提供方不用它们），
+    // 那么表单必须给出这个提供方自己的端点，而不是那个过期的。
     node.put(
         "usesStoredSettings",
         Providers.usesStoredSettings(active, settings.providerStore(), active.provider()));
-    // Which providers have one saved, by name: the form says "saved" or "not saved" per provider
-    // before anything is pasted, and switching between them is the whole reason the map exists.
+    // 哪些提供方已存有密钥，按名字：表单在任何东西被粘贴之前就逐个提供方说「已保存」或「未保存」，而在
+    // 它们之间切换正是这个 map 存在的全部理由。
     ArrayNode remembered = node.putArray("rememberedProviders");
     Set<String> withKey = new LinkedHashSet<>();
     fileConfig.rememberedNames().forEach(withKey::add);
@@ -925,8 +889,7 @@ public final class AgentHub implements AutoCloseable {
       node.put("maxTokens", active.maxTokens());
     }
     node.put("configFile", settings.configFile().toString());
-    // The language the prompt asks for, and the list the form offers. `auto` is the absence of a
-    // choice, so it is what a cleared field reports.
+    // 提示要求使用的语言，以及表单给出的列表。`auto` 是「没有选择」，所以清空的字段报出来的就是它。
     node.put("language", active.language() == null ? Prompts.AUTO : active.language());
     ArrayNode languages = node.putArray("languages");
     Prompts.languageChoices().forEach(choice -> {
@@ -945,15 +908,13 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * What the settings form needs about the model that describes pictures.
+   * 设置表单需要知道的、关于那个描述图片的模型的东西。
    *
-   * <p>The key follows the rule every other key here follows: whether one exists and where it comes
-   * from, never what it is. {@code apiKeySource} is the same vocabulary the provider field uses, so
-   * the form can say "saved in the config file" or "from the environment" without a second rule.
+   * <p>密钥遵循这里其他每一个密钥都遵循的规则：说明有没有、从哪来，绝不说它是什么。{@code apiKeySource}
+   * 用的是提供方字段用的同一套词汇，所以表单不必再定一条规则就能说「已存在配置文件里」或「来自环境变量」。
    *
-   * <p>{@code on} is what the feature will actually do, which is not the same as "the block exists":
-   * a block naming an endpoint but no model describes nothing, and a form that called that on would
-   * promise something the picture button then refuses.
+   * <p>{@code on} 是这个功能实际会做的事，这和「那个块存在」不是一回事：一个点了端点却没点模型的块什么
+   * 也描述不了，而把这种情况称作 on 的表单，等于承诺了图片按钮随后会拒绝的东西。
    */
   private ObjectNode visionJson(Config active) {
     VisionConfig vision = active.vision();
@@ -978,28 +939,25 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Validates the posted settings, persists them, and switches the running session to them.
+   * 校验提交上来的设置，把它们持久化，并把正在跑的会话切到它们上面。
    *
-   * <p>The provider is built first: a wrong key or an unreachable base URL must fail before the file
-   * is touched, otherwise a typo would leave a configuration that cannot start.
+   * <p>先构建提供方：错误的密钥或不可达的 base URL 必须在文件被动到之前就失败，否则一个笔误就会留下
+   * 一份起不来的配置。
    *
-   * <p>Switching provider starts from a configuration with no endpoint and no credential: they
-   * belonged to the provider that was active, and inheriting them is how a session that says
-   * "CommandCode" sends its traffic to the previous provider's address with the previous provider's
-   * key. Whatever this request carried still applies, and the result is marked as the new
-   * provider's, so the stored pair stays honest the next time it is read.
+   * <p>切换提供方是从一份没有端点、没有凭据的配置开始的：它们属于此前活动的那个提供方，继承它们，正是
+   * 一个自称 "CommandCode" 的会话把流量发到上一个提供方的地址、并带上上一个提供方密钥的方式。这次请求
+   * 携带的东西仍然生效，而结果会标记为新提供方的，这样存下来的那一对在下一次被读取时仍然诚实。
    */
   public ObjectNode applyConfig(JsonNode posted) {
-    requireEverythingIdle("change the model");
+    requireEverythingIdle("修改模型");
     Config changes = changesFrom(posted);
-    // Both sides go through the same transition: the endpoint and key being left are remembered under
-    // the provider they belong to, the one being switched to is recalled, and a change that names a
-    // setting writes it as the active provider's.
+    // 两边走同一套过渡：被离开的端点和密钥会记在它们所属的提供方名下，要切过去的那个会被回忆起来，而
+    // 点名了某项设置的改动会把它写成活动提供方的。
     Config candidate = withVisionEdits(config.changedBy(changes), posted);
     Provider built = settings.providerFactory().create(candidate, settings.env());
     try {
-      // The file is the side that is written, so it carries the provider actually in use: a form can
-      // post a key on its own, and a save must not leave the file without the provider it is about.
+      // 文件是被写入的那一侧，所以它带着实际在用的提供方：表单可以只提交一个密钥，而一次保存绝不能把
+      // 文件留成没有它所属提供方的样子。
       Config stored = Config.fromFile(settings.configFile()).namedBy(config).changedBy(changes);
       Config.writeInto(settings.configFile(), withVisionEdits(stored, posted));
     } catch (RuntimeException e) {
@@ -1011,8 +969,8 @@ public final class AgentHub implements AutoCloseable {
       previous.close();
     }
     config = candidate;
-    // The configured name, not the implementation's: "using openai" for a provider the user called
-    // "myrelay" would read like the setting was ignored.
+    // 用配置里的名字，而不是实现的名字：对一个用户称作 "myrelay" 的提供方说「正在使用 openai」，
+    // 会让人觉得设置被忽略了。
     publish(
         "notice",
         Json.object()
@@ -1022,14 +980,13 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Sends one minimal request with the posted settings without saving anything. The only place this
-   * server spends the user's tokens, and only when they press the button.
+   * 用提交上来的设置发一个最小的请求，什么都不保存。这是本服务器唯一花用户 token 的地方，而且只在他们
+   * 按下按钮时花。
    */
   public ObjectNode testConfiguration(JsonNode posted) {
-    requireShownIdle("test these settings");
-    // Testing settings that are not saved yet must test exactly what was posted: the same transition
-    // the form's Save uses, minus the write, so a value this provider does not own is replaced rather
-    // than left behind.
+    requireShownIdle("测试这些设置");
+    // 测试还没保存的设置，就必须测提交上来的那套东西：与表单的「保存」相同的过渡，只是不写盘，这样一个
+    // 不属于本提供方的值会被替换掉，而不是留在那儿。
     Config candidate = config.changedBy(changesFrom(posted));
     try (Provider probe = settings.providerFactory().create(candidate, settings.env())) {
       long started = System.nanoTime();
@@ -1044,17 +1001,17 @@ public final class AgentHub implements AutoCloseable {
                   16, null),
               event -> {});
       long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
-      String text = reply.text().isBlank() ? "(empty reply)" : reply.text().strip();
+      String text = reply.text().isBlank() ? "（空回复）" : reply.text().strip();
       return Json.object().put("ok", true).put("reply", text).put("elapsedMs", elapsedMillis);
     } catch (Exception e) {
       throw new IllegalArgumentException(message(e));
     }
   }
 
-  /** Only the fields the form actually sent; blank text means "leave as it is". */
+  /** 只包含表单实际发来的字段；空文本意味着「保持原样」。 */
   private Config changesFrom(JsonNode posted) {
     if (posted == null || !posted.isObject()) {
-      throw new IllegalArgumentException("a JSON object is required");
+      throw new IllegalArgumentException("需要一个 JSON 对象");
     }
     String apiKey = text(posted, "apiKey");
     if (posted.path("clearApiKey").asBoolean(false)) {
@@ -1062,21 +1019,20 @@ public final class AgentHub implements AutoCloseable {
     }
     String reasoning = text(posted, "reasoning");
     if (reasoning != null) {
-      // "default" is the picker's way of saying "let the provider decide", i.e. clear the tier.
+      // "default" 是选择器表达「让提供方自己决定」的方式，也就是清掉这个档位。
       reasoning = "default".equalsIgnoreCase(reasoning) ? "" : Config.normaliseReasoning(reasoning);
     }
     Double temperature = number(posted, "temperature");
     if (temperature != null && (temperature < 0 || temperature > 2)) {
-      throw new IllegalArgumentException("temperature must be between 0 and 2");
+      throw new IllegalArgumentException("temperature 必须在 0 与 2 之间");
     }
     String language = text(posted, "language");
-    // The vision block, field by field: the form posts what it holds, and a field it left empty
-    // means "leave it as it is" — the same rule the key field above follows. Clearing the key and
-    // turning the feature off cannot be said with an empty string (an empty field is "unchanged"),
-    // so they are explicit flags, and `applyConfig` applies them after the merge.
+    // vision 块逐字段处理：表单提交它所持有的东西，而它留空的字段意味着「保持原样」——和上面那个密钥
+    // 字段遵循同一条规则。清掉密钥和关掉这个功能没法用空字符串表达（空字段是「不变」），所以它们是显式的
+    // 旗标，由 `applyConfig` 在合并之后应用。
     Integer visionMaxTokens = integer(posted, "visionMaxTokens");
     if (visionMaxTokens != null && visionMaxTokens < 1) {
-      throw new IllegalArgumentException("the vision completion budget must be at least 1 token");
+      throw new IllegalArgumentException("视觉补全预算至少要有 1 个 token");
     }
     String visionApiKey = text(posted, "visionApiKey");
     VisionConfig vision =
@@ -1087,20 +1043,17 @@ public final class AgentHub implements AutoCloseable {
             text(posted, "visionModel"),
             visionMaxTokens);
     String provider = text(posted, "provider");
-    // The form always posts its key-variable field, pre-filled with the provider's default, and that
-    // is not the user naming a credential. Reported as a bug from a hand-written config file: posting
-    // the default counted as "this change writes its own endpoint and key", `changedBy` then dropped
-    // the unmarked pair in the file, and building the provider failed with "no API key" — so a
-    // configuration file somebody typed by hand could not be saved from the form at all. A value that
-    // is only the default is not a value here, which is the same rule `writeInto` already follows
-    // when it decides what to write down.
+    // 表单总是会提交它的密钥变量字段，并预填该提供方的默认值，而那不算用户在指认一份凭据。这是从一个手写
+    // 配置文件报上来的 bug：提交默认值被算成「这次改动写了自己的端点和密钥」，`changedBy` 随后丢掉了文件里
+    // 那对未标记的值，而构建提供方就因「没有 API key」失败——结果一份有人手敲出来的配置文件完全无法从表单
+    // 保存。只等于默认值的值在这里不算一个值，这与 `writeInto` 在决定写什么时已经遵循的规则是同一条。
     String apiKeyEnv = text(posted, "apiKeyEnv");
     if (apiKeyEnv != null
         && apiKeyEnv.equals(Config.defaultKeyEnv(provider == null ? config.provider() : provider))) {
       apiKeyEnv = null;
     }
-    // The full shape, named by position: every field this form does not manage is an explicit null,
-    // because the shorter constructors put a String in the wrong slot without saying so.
+    // 完整的形状，按位置点名：这个表单不管理的每一个字段都显式给 null，因为更短的构造函数会把一个 String
+    // 放进错误的槽位里而不吭声。
     return new Config(
         provider,
         text(posted, "model"),
@@ -1121,11 +1074,10 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * The posted vision instructions applied to a configuration.
+   * 把提交上来的视觉指令应用到一份配置上。
    *
-   * <p>After the merge rather than inside it: "forget the key" and "turn pictures off" are not
-   * values, they are the removal of one — and a merge that is told nothing about a field keeps what
-   * is there, which is the opposite of what either of them means.
+   * <p>在合并之后、而不是合并之中：「忘掉密钥」和「关掉图片」不是值，而是移除某个值——而一个对某个字段
+   * 一无所知的合并会保留那里的东西，那与这两者中任何一个的意思都相反。
    */
   private static Config withVisionEdits(Config config, JsonNode posted) {
     if (posted == null || !posted.isObject()) {
@@ -1142,7 +1094,7 @@ public final class AgentHub implements AutoCloseable {
       return null;
     }
     if (!value.isTextual()) {
-      throw new IllegalArgumentException("field '" + field + "' must be a string");
+      throw new IllegalArgumentException("字段 '" + field + "' 必须是字符串");
     }
     String text = value.asText().strip();
     return text.isEmpty() ? null : text;
@@ -1154,7 +1106,7 @@ public final class AgentHub implements AutoCloseable {
       return null;
     }
     if (!value.isIntegralNumber()) {
-      throw new IllegalArgumentException("field '" + field + "' must be an integer");
+      throw new IllegalArgumentException("字段 '" + field + "' 必须是整数");
     }
     return value.asInt();
   }
@@ -1165,7 +1117,7 @@ public final class AgentHub implements AutoCloseable {
       return null;
     }
     if (!value.isNumber()) {
-      throw new IllegalArgumentException("field '" + field + "' must be a number");
+      throw new IllegalArgumentException("字段 '" + field + "' 必须是数字");
     }
     return value.asDouble();
   }
@@ -1173,27 +1125,24 @@ public final class AgentHub implements AutoCloseable {
   // ------------------------------------------------------------------ turns
 
   /**
-   * Starts a turn in the session the front end is looking at. Returns false when that session already
-   * has one running.
+   * 在前端正看着的会话里启动一个回合。那个会话已经有一个在跑时返回 false。
    *
-   * <p>Refusing per session rather than per server is the whole point: a long job in one conversation
-   * must not stop the user from starting work in another. What is still refused is a second turn in
-   * the <em>same</em> conversation — two writers appending to one transcript is the thing that
-   * corrupts it.
+   * <p>按会话拒绝而不是按服务器拒绝，正是重点：一个对话里的长任务绝不能挡住用户在另一个对话里开始工作。
+   * 仍然拒绝的，是<em>同一个</em>对话里的第二个回合——两个写入者往同一份转录里追加，正是毁掉它的东西。
    */
   public Submit submit(String text) {
     if (closed) {
-      throw new IllegalStateException("the web session is shutting down");
+      throw new IllegalStateException("web 会话正在关闭");
     }
     if (text == null || text.isBlank()) {
-      throw new IllegalArgumentException("a message is required");
+      throw new IllegalArgumentException("需要一条消息");
     }
     if (provider.get() == null) {
-      throw new IllegalStateException("no model configured — open Settings and add one");
+      throw new IllegalStateException("没有配置模型——打开「设置」添加一个");
     }
     FileSession current = session();
     if (current == null) {
-      throw new IllegalStateException("no session is open");
+      throw new IllegalStateException("没有打开的会话");
     }
     Conversation conversation =
         conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current));
@@ -1201,36 +1150,34 @@ public final class AgentHub implements AutoCloseable {
       startTurn(conversation, text);
       return Submit.STARTED;
     }
-    // Busy, and that is no longer an error: the message waits its turn. Refusing it with 409 was the
-    // old behaviour, and a refusal turns a thinking pause into a dead stop — the thought you had
-    // while watching the turn is gone by the time it ends.
+    // 忙，而这不再是个错误：消息等着轮到自己。用 409 拒绝它是旧行为，而一次拒绝会把一段思考中的停顿变成
+    // 彻底停摆——你看着这个回合时冒出的想法，等它结束时已经没了。
     if (!conversation.enqueue(text)) {
       throw new IllegalStateException(
-          "this conversation already has "
+          "这个对话已经有 "
               + MAX_QUEUED_MESSAGES
-              + " messages waiting; wait for the turn to finish, or abort it");
+              + " 条消息在等了；请等回合结束，或者中止它");
     }
     publishStatus();
     return Submit.QUEUED;
   }
 
-  /** What became of a posted message: it started, or it is waiting behind the turn that is running. */
+  /** 一条提交上来的消息后来怎么了：它开始了，或者它正在跑着的那个回合后面排队。 */
   public enum Submit {
     STARTED,
     QUEUED
   }
 
   /**
-   * Publishes the user's message and hands the turn to the pool.
+   * 发布用户的消息，并把回合交给线程池。
    *
-   * <p>Split out of {@link #submit} for the one caller that has to claim the conversation earlier
-   * than it starts the turn: a picture is described by another model <em>between</em> the claim and
-   * the turn, and a claim taken after that call would either spend a description on a conversation
-   * that already has a turn running, or take the claim away from the turn already holding it.
+   * <p>从 {@link #submit} 里拆出来，是为了那一个必须在启动回合之前更早占住对话的调用方：一张图片是在
+   * 占位与回合<em>之间</em>由另一个模型描述的，而在这个调用之后才去占位，要么会把一次描述花在一个已经有
+   * 回合在跑的对话上，要么会把占位从已经持有它的那个回合手里夺走。
    */
   private void startTurn(Conversation conversation, String text) {
-    // Where this turn's tools will run, decided now: the user pressed send while looking at this
-    // workspace, and switching to another one later must not move the work they already started.
+    // 这个回合的工具将在哪里运行，现在就定下来：用户是在看着这个工作区时按下发送的，之后切换到另一个
+    // 工作区绝不能挪动他们已经开始的活。
     conversation.useCurrentCwd();
     FileSession current = conversation.session();
     current.totals(current.totals().plus(0, 0, null, 1, 0, 0, 0, 0));
@@ -1240,48 +1187,45 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Saves one picture beside the session, has the vision model describe it, and starts a turn on
-   * that description.
+   * 把一张图片存到会话旁边，让视觉模型描述它，并基于那段描述启动一个回合。
    *
-   * <p>The main model never receives an image. What it receives is text — the description, and where
-   * the file is, so a detail the description dropped can be read back with the {@code read} tool —
-   * and the session on disk stays readable text with a picture beside it. That is the whole reason
-   * the vision model is a separate call: neither wire protocol grows an image branch, and
-   * {@code Message}, both providers, compaction and every renderer stay exactly as they were.
+   * <p>主模型从不收到图片。它收到的是文本——描述，以及文件在哪里，这样一个被描述漏掉的细节可以用
+   * {@code read} 工具读回来——而磁盘上的会话仍是可读的文本，旁边多了一张图片。视觉模型之所以是一次
+   * 单独的调用，全部理由就在这里：两种线上协议都不必长出图片分支，而 {@code Message}、两个提供方、压缩
+   * 以及每一个渲染器都保持原样。
    *
-   * <p>A failure here refuses the picture and starts no turn. Nothing has reached the main model, so
-   * a "the picture could not be described" turn would be a turn the user did not ask for, about a
-   * picture nobody looked at.
+   * <p>这里失败就拒绝这张图片，不启动任何回合。什么都还没到达主模型，所以一个「图片无法被描述」的回合
+   * 会是用户没有要求过的回合，而且关于一张没人看过的图片。
    */
   public ObjectNode describePicture(String name, byte[] bytes) {
     if (closed) {
-      throw new IllegalStateException("the web session is shutting down");
+      throw new IllegalStateException("web 会话正在关闭");
     }
     if (provider.get() == null) {
-      throw new IllegalStateException("no model configured — open Settings and add one");
+      throw new IllegalStateException("没有配置模型——打开「设置」添加一个");
     }
     FileSession current = session();
     if (current == null) {
-      throw new IllegalStateException("no session is open");
+      throw new IllegalStateException("没有打开的会话");
     }
-    // The bytes decide, and they decide first: an upload that is not a picture is refused before a
-    // claim is taken, before anything is written, and before the vision endpoint is called.
+    // 字节说了算，而且先由它说了算：不是图片的上传，在占位被拿走之前、在任何东西被写入之前、在视觉端点被
+    // 调用之前就被拒绝。
     String mediaType = AttachmentStore.mediaTypeOf(bytes);
     Config active = config;
     if (active.vision() == null || !active.vision().isConfigured()) {
       throw new IllegalStateException(
-          "no vision model is configured, so a picture cannot be described — set the \"vision\""
-              + " block in "
+          "没有配置视觉模型，所以图片没法被描述——请设置 "
               + settings.configFile()
-              + " (baseUrl, model and a key), or pass --vision-base-url and --vision-model");
+              + " 里的 \"vision\" 块（baseUrl、model 和一个密钥），"
+              + "或者传入 --vision-base-url 和 --vision-model");
     }
     Conversation conversation =
         conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current));
     if (!conversation.begin()) {
-      // Refused before the description, not after: describing first would spend a multi-megabyte
-      // upload and a vision call on a turn that can never start.
+      // 在描述之前拒绝，而不是之后：先描述会把一次好几兆的上传和一次视觉调用，花在一个永远启动不了的
+      // 回合上。
       throw new IllegalStateException(
-          "a turn is still running in this conversation; abort it first");
+          "这个对话里还有回合在跑；请先中止它");
     }
     AttachmentStore.Saved saved;
     String description;
@@ -1289,8 +1233,7 @@ public final class AgentHub implements AutoCloseable {
       description = client.describe(bytes, mediaType);
       saved = AttachmentStore.forSession(current.file()).save(name, bytes);
     } catch (RuntimeException e) {
-      // The claim is given back, so a refused picture does not leave the conversation busy for a
-      // turn that does not exist.
+      // 占位被交还，这样一个被拒的图片不会让对话为某个并不存在的回合而一直忙下去。
       conversation.end();
       throw e;
     }
@@ -1303,12 +1246,13 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * What a picture becomes in the conversation: what it shows, and where the file is.
+   * 一张图片在对话里变成什么：它展示了什么，以及文件在哪里。
    *
-   * <p>Marked rather than passed off as typing. A reader — and the model — should know this message
-   * was a picture, and the path is what makes the description checkable: the picture is still on
-   * disk, {@code read} needs no approval, and asking about a detail the description dropped is one
-   * tool call rather than another upload.
+   * <p>做了标记，而不是冒充打字打出来的。读者——以及模型——应当知道这条消息是一张图片，而路径正是让
+   * 描述可核对的东西：图片仍在磁盘上，{@code read} 不需要审批，问一个被描述漏掉的细节是一次工具调用，
+   * 而不是再上传一次。
+   *
+   * <p>它进到对话里的那段文本保持英文，因为模型会读到它：翻译会改变模型的行为。
    */
   private static String pictureMessage(AttachmentStore.Saved saved, String description) {
     return "[picture "
@@ -1321,38 +1265,33 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Compacts the session on screen: the older part of the conversation is replaced by a summary the
-   * model writes, and the session carries on as the next generation of the same id.
+   * 压缩屏幕上的这个会话：对话里较早的那部分被模型写的一段摘要替换，会话以同一个 id 的下一代继续存在。
    *
-   * <p>Refused while that session has a turn running. A compaction rewrites what the conversation is,
-   * and doing that under a running turn is two writers on one transcript — the thing the per
-   * conversation turn flag exists to prevent. Other conversations are unaffected, exactly as they are
-   * for a normal turn.
+   * <p>那个会话有回合在跑时拒绝。压缩重写的是「这个对话是什么」，而在一个正在跑的回合底下做这件事，就是
+   * 两个写入者往同一份转录里写——也就是按对话设置的回合标记存在的意义所在。其他对话不受影响，和普通回合
+   * 一样。
    *
-   * <p>The summarising request is <em>not</em> a turn: it does not go through the loop, does not
-   * append a user message, and does not advance the turn counters. It is a question this server asks
-   * the model about work that already happened, and the transcript would be lying if it showed up as
-   * a thing the user said.
+   * <p>这次摘要请求<em>不是</em>一个回合：它不走那个循环，不追加用户消息，也不推进回合计数。它是这个
+   * 服务器就一段已经发生过的工作向模型提的问题，如果它显示成用户说过的东西，那转录就是在撒谎。
    */
   public ObjectNode compact() {
     if (closed) {
-      throw new IllegalStateException("the web session is shutting down");
+      throw new IllegalStateException("web 会话正在关闭");
     }
     Provider current = provider.get();
     if (current == null) {
-      throw new IllegalStateException("no model configured — open Settings and add one");
+      throw new IllegalStateException("没有配置模型——打开「设置」添加一个");
     }
     FileSession shown = session();
     if (shown == null) {
-      throw new IllegalStateException("no session is open");
+      throw new IllegalStateException("没有打开的会话");
     }
     String id = shown.id();
     Conversation conversation =
         conversations.computeIfAbsent(id, key -> new Conversation(key, shown));
-    // Claimed for the duration, so a turn cannot start in the middle of a compaction and so the
-    // composer shows this conversation as busy while it runs.
+    // 全程占位，这样一个回合没法在压缩进行到一半时启动，输入框也会在这次压缩期间把该对话显示为忙。
     if (!conversation.begin()) {
-      throw new IllegalStateException("a turn is still running; abort it first");
+      throw new IllegalStateException("还有回合在跑；请先中止它");
     }
     try {
       return runCompaction(conversation, current);
@@ -1365,9 +1304,9 @@ public final class AgentHub implements AutoCloseable {
     List<Message> before = conversation.session().messages();
     if (!Compaction.possible(before)) {
       throw new IllegalArgumentException(
-          "this conversation has nothing to compact yet — it is shorter than the "
+          "这个对话还没有可压缩的东西——它比压缩会保留的 "
               + Compaction.KEEP_EXCHANGES
-              + " exchanges a compaction keeps");
+              + " 组往复还短");
     }
     Config active = config;
     int beforeTokens = TokenEstimate.of(before);
@@ -1378,9 +1317,8 @@ public final class AgentHub implements AutoCloseable {
           current.complete(
               new Provider.Request(
                   active.model(),
-                  // No tools and no history: this is one question about a transcript that is in the
-                  // message itself, and offering the tool set would invite the model to go and do
-                  // work instead of describing the work that was done.
+                  // 不给工具、不给历史：这是就一份就在消息里的转录提一个问题，而给出工具集等于请模型去
+                  // 干活，而不是描述已经干过的活。
                   null,
                   List.of(new Message.User(Compaction.INSTRUCTIONS + "\n\n" + transcript)),
                   List.of(),
@@ -1389,21 +1327,20 @@ public final class AgentHub implements AutoCloseable {
                   active.reasoning()),
               event -> {});
     } catch (Exception e) {
-      throw new IllegalStateException("could not summarise the conversation: " + message(e));
+      throw new IllegalStateException("无法摘要这个对话：" + message(e));
     }
     String summary = reply.text() == null ? "" : reply.text().strip();
     if (summary.isEmpty()) {
-      throw new IllegalStateException("the model returned an empty summary; nothing was changed");
+      throw new IllegalStateException("模型返回了空摘要；什么都没有改动");
     }
     return install(conversation, before, summary, beforeTokens);
   }
 
   /**
-   * Writes the next generation and reports what happened.
+   * 写下下一代，并报告发生了什么。
    *
-   * <p>The file the summarised messages are still in is named to the model as well as recorded, so a
-   * detail the summary dropped can be read back: {@code read} is read-only and needs no approval,
-   * which is what turns a lossy compaction into one that can be undone on demand.
+   * <p>那些被摘要掉的消息所在的那个文件，既被记录也被点名给模型，这样一个被摘要漏掉的细节可以读回来：
+   * {@code read} 是只读的、不需要审批，正是这一点把一次有损的压缩变成一次可以按需读回去的压缩。
    */
   private ObjectNode install(
       Conversation conversation, List<Message> before, String summary, int beforeTokens) {
@@ -1413,13 +1350,12 @@ public final class AgentHub implements AutoCloseable {
     try {
       result = Compaction.apply(before, summary, source.toString(), conversation.cwd());
     } catch (Compaction.NotWorthIt notWorthIt) {
-      // The summary came out no smaller than what it would replace. Reported as a refusal rather than
-      // written down: a compaction that frees nothing is a cost with no benefit, and the honest thing
-      // to tell the user is that this conversation has not grown enough to be worth compacting yet.
+      // 摘要出来并不比它要替换的东西小。报成一次拒绝而不是写下去：一次什么都没腾出来的压缩是有成本无收益
+      // 的，而诚实告诉用户的是：这个对话还没长到值得压缩的程度。
       throw new IllegalStateException(
-          "nothing to gain: "
+          "没有收益："
               + notWorthIt.getMessage()
-              + " — the conversation is not long enough for a summary to save anything yet");
+              + " —— 这个对话还不够长，摘要还省不下任何东西");
     }
     session.compactInto(result.messages(), session.totals().plusCompaction());
     int afterTokens = TokenEstimate.of(result.messages());
@@ -1449,7 +1385,7 @@ public final class AgentHub implements AutoCloseable {
     return node;
   }
 
-  /** Requests that the turn of the session on screen stops at the next safe point. */
+  /** 请求屏幕上这个会话的回合在下一个安全点停下。 */
   public boolean abort() {
     FileSession current = session();
     Conversation conversation = current == null ? null : conversations.get(current.id());
@@ -1457,11 +1393,10 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Stops the turn on screen and drops what was queued behind it.
+   * 停掉屏幕上的回合，并丢掉排在它后面的东西。
    *
-   * <p>Both, because abort is the button pressed when something is going wrong: leaving four messages
-   * waiting to start as soon as the aborted turn lets go is the opposite of stopping. The count is
-   * published, so a dropped message is a visible event rather than a silence.
+   * <p>两件事都做，因为中止是事情出错时按下的按钮：留下四条消息等着被中止的回合一松手就开始，与停下来
+   * 正好相反。数量会被发布，所以一条被丢掉的消息是一个可见事件，而不是一片寂静。
    */
   public boolean abortAll() {
     FileSession current = session();
@@ -1476,28 +1411,26 @@ public final class AgentHub implements AutoCloseable {
           conversation.id(),
           "notice",
           Json.object()
-              .put("text", "aborted; " + dropped + " queued message" + (dropped == 1 ? "" : "s")
-                  + " dropped"));
+              .put("text", "已中止；丢掉了 " + dropped + " 条排队的消息"));
     }
     return stopped || dropped > 0;
   }
 
-  /** Requests that one named session's turn stops, whether or not it is the one on screen. */
+  /** 请求某个具名会话的回合停下，无论它是不是屏幕上的那个。 */
   public boolean abort(String sessionId) {
     Conversation conversation = sessionId == null ? null : conversations.get(sessionId);
     return conversation != null && conversation.abort();
   }
 
   /**
-   * One user turn, from the request that started it to the events that end it.
+   * 一个用户回合，从启动它的那次请求，到结束它的事件。
    *
-   * <p>Everything published here carries {@code conversation.id()}, because several of these run at
-   * once and the page files events by session. The books are the session's own: totals live in the
-   * conversation's file, so two turns running side by side cannot add their tokens to each other.
+   * <p>这里发布的一切都带着 {@code conversation.id()}，因为其中好几个会同时运行，而页面按会话归档
+   * 事件。账本是会话自己的：总计存在对话的文件里，所以并排运行的两个回合不会把 token 加到对方账上。
    */
   private void runTurn(Conversation conversation, String text) {
-    // The checkpoint belongs to this thread, and this is the thread the turn's tools run on: a store
-    // that took "the turn in progress" from a field would mix up conversations running side by side.
+    // 检查点属于这条线程，而这条线程正是回合的工具运行的那条：一个从字段里取「正在进行的回合」的存储，
+    // 会把并排运行的对话搞混。
     checkpoints.beginTurn(conversation.session().file(), conversation.cwd());
     AgentLoop loop = newLoop(conversation);
     conversation.attach(loop);
@@ -1507,21 +1440,19 @@ public final class AgentHub implements AutoCloseable {
     try {
       result = loop.run(text);
     } catch (RuntimeException | Error e) {
-      // An Error is not this turn's business to report as a value, but it is still the end of the
-      // turn: leaving the cleanup below to the happy path would strand this session as permanently
-      // busy — every later message refused with 409 — over a StackOverflowError raised by one tool.
+      // Error 不是这个回合该当作值上报的东西，但它仍然是回合的结束：把下面的清理只留给顺利路径，会因为
+      // 一个工具抛出的 StackOverflowError 而让这个会话永远卡在忙的状态——之后每条消息都被 409 拒绝。
       failure = e;
     }
-    // The turn is over *before* it says so. A client that reacts to `done` by sending the next
-    // message must not find the session still claiming to be busy — that race is a message answered
-    // with 409 and a composer that stays disabled until something else publishes a status.
+    // 回合在它宣布之前就已经结束。一个收到 `done` 就发下一条消息的客户端，绝不能发现这个会话还声称自己
+    // 忙——那个竞态的结果是被 409 回答的一条消息，以及一个在别的东西发布状态之前一直禁用着的输入框。
     conversation.end();
-    // Closed before anything else in the tail: what the turn changed is written down while the turn
-    // is still the one this thread ran, and everything below publishes events about it.
+    // 在收尾的其他事之前关闭：这个回合改动的东西要趁着它仍是本线程跑的那个时写下，而下面的一切都在发布
+    // 关于它的事件。
     checkpoints.endTurn();
     conversation.addElapsed((System.nanoTime() - started) / 1_000_000);
-    // Persisting at turn boundaries keeps the file from growing per token and still survives a
-    // kill: after the worst case the last turn is missing, never the whole session.
+    // 在回合边界做持久化，既让文件不至于每来一个 token 就长一点，也仍然扛得住被杀：最坏情况下丢的是最后
+    // 一个回合，而绝不是整个会话。
     conversation.persist();
     publishUsage(conversation.id());
     publishStatus();
@@ -1533,31 +1464,26 @@ public final class AgentHub implements AutoCloseable {
           "done",
           Json.object().put("finalText", result.finalText()).put("aborted", result.aborted()));
     }
-    // A conversation that has outgrown its budget is compacted here, between turns: the next turn is
-    // the one that pays for a long history, and summarising what has happened is kinder to it than
-    // the projection's silent elision. Before the queue moves, so a message that was waiting starts
-    // on the compacted conversation rather than on the one nobody wants to send again.
+    // 长过预算的对话在这里、在回合之间被压缩：下一个回合才是为冗长历史付账的那个，而把已经发生的事摘要
+    // 一遍，比让投影悄悄省略它更友好。这一步排在队列移动之前，所以一条一直在等的消息是在压缩过的对话上
+    // 开始的，而不是在那个没人想再发一遍的对话上。
     autoCompact(conversation);
-    // The queue moves last, after `done` has been published: a client that reacts to the end of a turn
-    // sends its next message into a session that is already free, and a message that was waiting
-    // starts as a turn of its own.
+    // 队列最后才移动，在 `done` 发布之后：一个对回合结束作出反应的客户端，把它的下一条消息发进一个已经
+    // 空闲的会话，而一条一直在等的消息会作为它自己的回合开始。
     drain(conversation);
   }
 
   /**
-   * Compacts a conversation that has grown past the budget, if it is worth doing.
+   * 压缩一个长过预算的对话，如果值得这么做的话。
    *
-   * <p>The budget is `maxContextTokens` — the same number the projection trims to — and the condition
-   * is that the *conversation* has passed it. Reaching it is what
-   * {@link com.ccj.agent.core.ContextBudget} answers by eliding old tool output and then dropping
-   * whole exchanges, which is lossy in the dumbest possible way: a compaction replaces the same
-   * history with a summary that says what it was. Both are lossy; only one of them tells the model
-   * what it lost.
+   * <p>预算是 `maxContextTokens`——投影裁剪到的同一个数字——而条件是*对话*越过了它。越过它时，
+   * {@link com.ccj.agent.core.ContextBudget} 的应对是省略旧的工具输出，然后成段丢弃往复，那是用最笨
+   * 的方式造成损失：压缩则是用一段说明它原样的摘要，替换掉同一段历史。两者都有损失；只有其中一个会告诉
+   * 模型它丢了什么。
    *
-   * <p>No budget configured means no automatic compaction: there is nothing to be over, and a
-   * compaction nobody asked for that costs a model call is not a thing to do on a guess. A refusal
-   * (a summary no smaller than its input) is remembered so the same call is not paid for again at
-   * the end of every turn.
+   * <p>没有配置预算就没有自动压缩：没有什么可以越过，而一次没人要求、还要花掉一次模型调用的压缩，不是
+   * 可以凭猜去做的事。一次拒绝（摘要并不比它的输入小）会被记住，这样同一个调用不会在每个回合结束时再付
+   * 一次钱。
    */
   private void autoCompact(Conversation conversation) {
     Config active = config;
@@ -1584,38 +1510,37 @@ public final class AgentHub implements AutoCloseable {
           Json.object()
               .put(
                   "text",
-                  "compacted automatically: "
+                  "已自动压缩："
                       + result.path("summarised").asInt()
-                      + " older messages became a summary ("
+                      + " 条较旧的消息变成了一段摘要（估计 token "
                       + result.path("beforeTokens").asInt()
                       + " → "
                       + result.path("afterTokens").asInt()
-                      + " estimated tokens). The full conversation is still on disk."));
+                      + "）。完整对话仍然在磁盘上。"));
     } catch (RuntimeException e) {
-      // Refused, or the summarising call failed. Either way it is not worth another one at this
-      // size, and saying so is better than a silence that looks like nothing happened.
+      // 被拒绝，或者摘要调用失败了。无论哪种，在这个尺寸下都不值得再来一次，而说出来比一片看起来什么都没
+      // 发生的寂静要好。
       //
-      // The next attempt waits for twice the growth, not ten per cent more. Measured live against a
-      // reasoning model: the summary it writes can be several times the size of the exchanges it
-      // replaces — 866 tokens against 255 — so a refusal is not a near miss, it is a shape that stays
-      // the shape while the conversation grows a little. Retrying every tenth of a conversation is a
-      // model call per few turns that always fails; doubling makes each refusal buy real distance.
+      // 下一次尝试要等增长到两倍，而不是再多一成。对着一个推理模型在线实测过：它写出的摘要可能是它所替换
+      // 的那些往复的好几倍——866 个 token 对 255 个——所以一次拒绝并不是差一点命中，而是一种形状，在对话
+      // 稍稍变大时仍然保持这种形状。每增长十分之一个对话就重试，等于每几个回合就有一次注定失败的模型调用；
+      // 翻倍让每次拒绝都换来真正的距离。
       conversation.autoCompactRefusedAt((long) (estimate * 2));
       publish(
           conversation.id(),
           "notice",
           Json.object()
-              .put("text", "not compacted automatically: " + message(e)));
+              .put("text", "没有自动压缩：" + message(e)));
     } finally {
       conversation.end();
     }
   }
 
   /**
-   * Starts the next message that was typed while this conversation was busy.
+   * 启动这个对话忙的时候敲进来的下一条消息。
    *
-   * <p>One step, not a loop: the turn this starts calls back here when it ends, so five queued
-   * messages run as five turns with their own books, their own status and their own `done`.
+   * <p>一步，而不是一个循环：它启动的回合在结束时回调这里，所以五条排队的消息作为五个回合运行，各有
+   * 自己的账本、自己的状态和自己的 `done`。
    */
   private void drain(Conversation conversation) {
     if (closed) {
@@ -1626,8 +1551,8 @@ public final class AgentHub implements AutoCloseable {
       return;
     }
     if (!conversation.begin()) {
-      // Something claimed the slot in between, which means a turn is running: the message goes back
-      // to the front rather than being dropped, and that turn's end will come through here again.
+      // 中间有东西占走了槽位，说明有回合在跑：这条消息回到队首而不是被丢掉，而那个回合结束时还会再走到
+      // 这里。
       conversation.enqueueFirst(next);
       return;
     }
@@ -1637,15 +1562,14 @@ public final class AgentHub implements AutoCloseable {
   private AgentLoop newLoop(Conversation conversation) {
     Provider current = provider.get();
     if (current == null) {
-      throw new IllegalStateException("no model configured — open Settings and add one");
+      throw new IllegalStateException("没有配置模型——打开「设置」添加一个");
     }
     Config active = config;
     AgentOptions options =
         new AgentOptions(
             active.model(),
-            // The project's own CCJ.md is read from this conversation's working directory, which is
-            // the one fixed when its turn started: a rules file belongs to the directory the tools
-            // will actually run in, not to whatever is on screen when the request is built.
+            // 项目自己的 CCJ.md 是从这个对话的工作目录读取的，也就是它回合启动时定下的那个：规则文件
+            // 属于工具实际将运行的那个目录，而不是构建请求时屏幕上碰巧是什么。
             Prompts.system(active.systemPrompt(), active.language(), conversation.cwd()),
             active.temperature(),
             active.maxTokens(),
@@ -1663,44 +1587,39 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * The tool set for one conversation: the standard tools plus {@code task}.
+   * 一个对话的工具集：标准工具加上 {@code task}。
    *
-   * <p>Per conversation rather than shared, because {@code task} needs the model and settings of the
-   * conversation that is delegating — a sub-agent runs on the same model at the same effort as the
-   * agent that sent it, not on whatever the server happens to be configured with next.
+   * <p>按对话一份而不是共享，因为 {@code task} 需要委派它的那个对话的模型和设置——子代理用与派发它的
+   * 代理相同的模型、相同的投入运行，而不是服务器接下来碰巧配置成什么就用什么。
    *
-   * <p>A sub-agent is handed a registry built from this one minus {@code task}, which is what makes
-   * recursion impossible rather than merely discouraged: there is no depth limit to get wrong.
+   * <p>交给子代理的注册表是从这一份里减去 {@code task} 构建的，这让递归变得不可能，而不只是不被鼓励：
+   * 没有任何深度上限需要弄错。
    */
   private ToolRegistry registryFor(
       Conversation conversation, Provider current, AgentOptions options, Config active) {
     SubAgentRunner runner =
         new SubAgentRunner(
-            // The same provider instance: a sub-agent is not a second model, and closing one would
-            // close the other.
+            // 同一个提供方实例：子代理不是第二个模型，关掉一个会关掉另一个。
             current,
             tools,
             options,
             conversation.cwd(),
             conversation::aborting,
             active.outputLimitBytes(),
-            // The conversation's own approver, so a sub-agent's request for permission arrives in the
-            // transcript the user is already watching. It runs on this turn's thread, so
-            // `currentTurnSession` attributes it here, and aborting the turn answers it.
+            // 这个对话自己的审批人，这样子代理的许可请求会出现在用户已经在看的转录里。它在本回合的线程
+            // 上运行，所以 `currentTurnSession` 会把它归到这里，而中止这个回合就会回答它。
             gate());
     ToolRegistry registry = new ToolRegistry();
     for (String name : tools.names()) {
       tools.find(name).ifPresent(registry::register);
     }
-    // `task` is registered last so it reads as the escalation it is rather than as one of the
-    // ordinary file tools. No staging directory is allocated: a sub-agent works in the session's own
-    // directory and asks before it changes anything there, like the agent that sent it.
+    // `task` 最后注册，这样它读起来是它本来的那种升级手段，而不是某个普通的文件工具。不分配暂存目录：
+    // 子代理在会话自己的目录里工作，改动那里的任何东西之前都要先问，就像派发它的那个代理一样。
     registry.register(
         new TaskTool(
             (role, task) -> runner.run(role, task, options.system()),
-            // The sub-agent's tokens are this conversation's tokens: same model, same account, same
-            // bill. Added to the session's own books so the usage panel reports what was spent
-            // rather than what the main loop happened to spend by itself.
+            // 子代理的 token 就是这个对话的 token：同一个模型、同一个账户、同一份账单。加进会话自己的
+            // 账本，这样用量面板报的是花掉的东西，而不是主循环碰巧自己花掉的那部分。
             spent ->
                 conversation.add(
                     (int) Math.min(Integer.MAX_VALUE, spent.inputTokens()),
@@ -1715,7 +1634,7 @@ public final class AgentHub implements AutoCloseable {
     return registry;
   }
 
-  /** Whether this server will run sub-agents at all. */
+  /** 这个服务器到底跑不跑子代理。 */
   private boolean subAgentsAllowed() {
     return subAgents.get();
   }
@@ -1723,15 +1642,15 @@ public final class AgentHub implements AutoCloseable {
   // ------------------------------------------------------------------ sessions
 
   /**
-   * Starts a fresh session — unless the current one is already empty, in which case minting another
-   * id would only produce a second empty session and confuse whoever pressed the button.
+   * 开一个全新的会话——除非当前这个已经是空的，那种情况下再造一个 id 只会产出第二个空会话，把按按钮的
+   * 人搞糊涂。
    */
   public void newSession() {
     FileSession current = session();
     if (current != null && current.messages().isEmpty()) {
       publish(
           "notice",
-          Json.object().put("text", "this session is already empty — say something first"));
+          Json.object().put("text", "这个会话已经是空的——先随便说点什么"));
       return;
     }
     useSession(SessionStore.create(sessionsDir()));
@@ -1739,18 +1658,17 @@ public final class AgentHub implements AutoCloseable {
 
   public void resumeSession(String id) {
     if (id == null || id.isBlank()) {
-      throw new IllegalArgumentException("a session id is required");
+      throw new IllegalArgumentException("需要一个 session id");
     }
     useSession(openForDisplay(id));
   }
 
   /**
-   * The session object to put on screen for {@code id}.
+   * 为 {@code id} 放到屏幕上的会话对象。
    *
-   * <p>A conversation that is running already has a {@link FileSession} — the one its turn is
-   * appending to — and that is the object the page gets. Opening a second one on the same file would
-   * be two writers on one transcript, which is the thing the whole per-conversation rule protects;
-   * refusing to *show* the conversation instead is what made a running turn impossible to look at.
+   * <p>正在跑的对话已经有一个 {@link FileSession}——它的回合正往里面追加的那个——页面拿到的就是这
+   * 个对象。在同一个文件上再开一个，就会是两个写入者往同一份转录里写，而那正是整套按对话规则保护的东西；
+   * 反过来拒绝*展示*这个对话，才是让一个正在跑的回合变得没法看的原因。
    */
   private FileSession openForDisplay(String id) {
     Conversation running = conversations.get(id);
@@ -1761,17 +1679,16 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Deletes one session. Deleting the active one starts a fresh session in its place, so the page
-   * always has somewhere to be after the list it is looking at loses a row.
+   * 删除一个会话。删除当前活动的那个会在它原来的位置开一个新的，这样页面在它正看着的列表少了一行之后
+   * 总还有地方可待。
    */
   public ObjectNode deleteSession(String id) {
     return deleteSession(null, id);
   }
 
   /**
-   * Deletes one session. {@code workspace} names another workspace whose sessions should be removed;
-   * reading a folded folder and deleting inside it are the same kind of operation, so neither
-   * switches the active workspace. Deleting the session you are in starts a fresh one.
+   * 删除一个会话。{@code workspace} 点名另一个工作区，要删的是那里的会话；读一个折叠文件夹和在它里面
+   * 做删除属于同一类操作，所以两者都不切换活动工作区。删除你正待着的会话会开一个新的。
    */
   public ObjectNode deleteSession(String workspace, String id) {
     String target = normaliseWorkspace(workspace);
@@ -1779,38 +1696,38 @@ public final class AgentHub implements AutoCloseable {
     FileSession current = session();
     boolean active =
         target == null && current != null && current.id().equals(id);
-    requireNotRunning(id, "delete it");
+    requireNotRunning(id, "删除它");
     if (!SessionStore.delete(directory, id)) {
       throw new IllegalArgumentException(
-          "no session '" + id + "' in " + (target == null ? "this workspace" : "'" + target + "'"));
+          "在 " + (target == null ? "本工作区" : "'" + target + "'") + " 里没有会话 '" + id + "'");
     }
-    publish("notice", Json.object().put("text", "session deleted"));
+    publish("notice", Json.object().put("text", "会话已删除"));
     if (active) {
       useSession(SessionStore.create(sessionsDir()));
     }
     return Json.object().set("sessions", sessionsJson(target));
   }
 
-  /** Clears every session in the active workspace — the "my testing left a mess" button. */
+  /** 清空活动工作区的每一个会话——那个「我测试留下了一堆烂摊子」按钮。 */
   public ObjectNode deleteAllSessions() {
     return deleteAllSessions(null);
   }
 
   public ObjectNode deleteAllSessions(String workspace) {
     String target = normaliseWorkspace(workspace);
-    requireEverythingIdle("delete every session");
+    requireEverythingIdle("删除全部会话");
     int deleted = SessionStore.deleteAll(sessionsDirOf(target));
     publish(
         "notice",
         Json.object()
-            .put("text", deleted == 0 ? "no sessions to delete" : "deleted " + deleted + " sessions"));
+            .put("text", deleted == 0 ? "没有可删除的会话" : "已删除 " + deleted + " 个会话"));
     if (target == null) {
       useSession(SessionStore.create(sessionsDir()));
     }
     return Json.object().set("sessions", sessionsJson(target));
   }
 
-  /** Null means the active workspace; a name must exist. */
+  /** null 表示活动工作区；给了名字则它必须存在。 */
   private String normaliseWorkspace(String workspace) {
     if (workspace == null || workspace.isBlank()) {
       return null;
@@ -1822,7 +1739,7 @@ public final class AgentHub implements AutoCloseable {
     settings
         .workspaces()
         .find(clean)
-        .orElseThrow(() -> new IllegalArgumentException("no workspace named '" + clean + "'"));
+        .orElseThrow(() -> new IllegalArgumentException("没有名为 '" + clean + "' 的工作区"));
     return clean;
   }
 
@@ -1832,10 +1749,10 @@ public final class AgentHub implements AutoCloseable {
         : settings.workspaces().find(workspace).orElseThrow().sessionsDir();
   }
 
-  /** Asks the desktop for a directory. Blocks until the user answers, cancels or times out. */
+  /** 向桌面要一个目录。阻塞直到用户作答、取消或超时。 */
   public java.util.Optional<java.nio.file.Path> chooseFolder(java.io.IOException[] failure) {
     try {
-      return folderChooser.choose("Choose a workspace folder");
+      return folderChooser.choose("选择工作区文件夹");
     } catch (java.io.IOException e) {
       failure[0] = e;
       return java.util.Optional.empty();
@@ -1848,9 +1765,8 @@ public final class AgentHub implements AutoCloseable {
       previous = session;
       session = next;
     }
-    // The session leaving the screen is closed only when nothing is using it. A conversation that is
-    // running owns its file — it is what the turn appends to, and it may be the same object being put
-    // back on screen — so closing it here would fail a turn that is still working.
+    // 离开屏幕的会话，只有在没人在用它时才关闭。正在跑的对话拥有它的文件——那是回合追加的目标，而且它
+    // 可能就是正被放回屏幕上的同一个对象——所以在这里关掉它会让一个仍在工作的回合失败。
     if (previous != null && previous != next && !conversations.containsKey(previous.id())) {
       previous.close();
     }
@@ -1859,35 +1775,35 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Refuses an operation whose subject is running.
+   * 拒绝一个其对象正在运行的操作。
    *
-   * <p>This is the rule that replaces "nothing may run while anything runs". One conversation being
-   * busy must not stop the user from working in another, but it must still stop them from pulling the
-   * ground out from under the one that is working: you cannot resume a session over the turn writing
-   * it, or delete the file it is appending to.
+   * <p>这就是取代「只要有东西在跑就什么都不许跑」的那条规则。一个对话忙，不能挡住用户在另一个对话里
+   * 工作，但它仍然必须挡住用户把正在干活的那个对话脚下的地抽走：你不能在正往会话里写的回合头上恢复那个
+   * 会话，也不能删掉它正在追加的那个文件。
    */
   private void requireNotRunning(String sessionId, String what) {
     Conversation running = sessionId == null ? null : conversations.get(sessionId);
     if (running != null && running.running()) {
       throw new IllegalStateException(
-          "that session is running a turn; abort it before you " + what);
+          "那个会话正在跑一个回合；" + what + "之前请先中止它");
     }
   }
 
-  /** Refuses while any conversation is working: what every conversation is built on is changing. */
+  /** 任何对话在干活时拒绝：每个对话所立足的东西正在变。 */
   private void requireEverythingIdle(String what) {
     for (Conversation conversation : conversations.values()) {
       if (conversation.running()) {
         throw new IllegalStateException(
-            "a turn is still running in session "
+            "会话 "
                 + conversation.id()
-                + "; abort it before you "
-                + what);
+                + " 里还有回合在跑；"
+                + what
+                + "之前请先中止它");
       }
     }
   }
 
-  /** Refuses while the session on screen is working. */
+  /** 屏幕上的会话在干活时拒绝。 */
   private void requireShownIdle(String what) {
     requireNotRunning(sessionIdOf(session()), what);
   }
@@ -1895,12 +1811,11 @@ public final class AgentHub implements AutoCloseable {
   // ------------------------------------------------------------------ approvals
 
   /**
-   * Answers a pending approval. Returns false when the id is unknown or already answered.
+   * 回答一个待处理的审批。id 未知或已经回答过时返回 false。
    *
-   * <p>{@code remember} used to mean "switch the whole session to auto-approve", which is the only
-   * thing it could mean with a boolean gate: the answer to "stop asking me about this" was "stop
-   * asking me about anything". It now means what the person read on the button — this request, for
-   * the rest of this session — and the rules file is where "never again" goes.
+   * <p>{@code remember} 过去的意思是「把整个会话切成自动审批」，在一个布尔关口下它也只能是这个意思：
+   * 对「别再问我这个了」的回答变成了「别再问我任何事了」。它现在的意思就是那个人在按钮上读到的——这个
+   * 请求，在本会话余下的时间里——而「永远别再问」该去的地方是规则文件。
    */
   public boolean resolveApproval(String id, ApprovalAnswer answer) {
     Pending pending = id == null ? null : pendingApprovals.get(id);
@@ -1910,7 +1825,7 @@ public final class AgentHub implements AutoCloseable {
     return pending.answer().complete(answer);
   }
 
-  /** The answer a page posted, with the older two boolean fields still understood. */
+  /** 页面提交上来的回答，仍然理解更老的那两个布尔字段。 */
   static ApprovalAnswer answerOf(boolean allow, boolean remember, String posted) {
     if (posted != null && !posted.isBlank()) {
       return switch (posted.strip().toLowerCase(java.util.Locale.ROOT)) {
@@ -1919,7 +1834,7 @@ public final class AgentHub implements AutoCloseable {
         case "allow", "once", "yes" -> ApprovalAnswer.ALLOW_ONCE;
         case "deny", "no" -> ApprovalAnswer.DENY;
         default -> throw new IllegalArgumentException(
-            "unknown approval answer '" + posted + "'; use deny, once, session or always");
+            "未知的审批回答 '" + posted + "'；请使用 deny、once、session 或 always");
       };
     }
     if (!allow) {
@@ -1929,20 +1844,17 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * One approval a turn is blocked on, and the session that asked.
+   * 一个回合被卡住时所等的一个审批，以及发问的会话。
    *
-   * <p>The session is kept because abort has to be able to deny a conversation's own requests:
-   * without it a turn waiting for a human could never be stopped, and a background turn the user is
-   * not looking at would sit there for the full timeout with no way out.
+   * <p>会话被保留下来，是因为中止必须能够拒绝一个对话自己的请求：没有它，一个在等人类的回合永远没法被
+   * 停下，而一个用户没在看的后台回合会一直坐到超时，毫无出路。
    */
   /**
-   * One approval a turn is blocked on: who asked, what about, and the answer it is waiting for.
+   * 一个回合被卡住时所等的一个审批：谁在问、问什么，以及它在等哪个回答。
    *
-   * <p>The title and detail are kept, not just the future, because the prompt has to be drawable
-   * again. An approval is a request blocked in memory rather than a message, so a page that switches
-   * away and back has no way to reconstruct it from the conversation — it reports what is outstanding
-   * and the page draws it. Without that, looking at another conversation silently threw the question
-   * away and left abort as the only way out.
+   * <p>标题和详情都被保留，不只是那个 future，因为提示必须能被重新画出来。审批是阻塞在内存里的请求
+   * 而不是消息，所以一个切走又切回来的页面没法从对话里重建它——它上报还悬着什么，由页面把它画出来。
+   * 没有这一条，看一眼别的对话就会把问题悄悄扔掉，只剩中止这一条出路。
    */
   private record Pending(
       String sessionId,
@@ -1972,8 +1884,8 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * Blocks the loop thread until a browser answers. Publishing inside the call is what makes the
-   * agent's request visible; returning false on timeout is what keeps it from waiting forever.
+   * 阻塞循环线程，直到浏览器作答。在调用内部发布，是让代理的请求可见的原因；超时返回 false，是让它不
+   * 至于永远等下去的原因。
    */
   private ApprovalAnswer askApproval(ApprovalRequest request) {
     if (autoApprove.get()) {
@@ -1983,9 +1895,8 @@ public final class AgentHub implements AutoCloseable {
     String id = "ap-" + nextApprovalId.incrementAndGet();
     CompletableFuture<ApprovalAnswer> answer = new CompletableFuture<>();
     pendingApprovals.put(id, new Pending(sessionId, request.title(), request.detail(), request, answer));
-    // A status too, so a page that is not looking at this conversation still learns that something
-    // is waiting — and so a page that *is* looking at it can rebuild the prompt from the status it
-    // asks for on the way in.
+    // 还要发一个状态，这样一个没在看这个对话的页面也能知道有东西在等——而一个*正在*看它的页面，能从它
+    // 进来时索要的状态里重建提示。
     publishStatus();
     publish(
         sessionId,
@@ -2001,8 +1912,7 @@ public final class AgentHub implements AutoCloseable {
     try {
       ApprovalAnswer answered =
           APPROVAL_TIMEOUT_SECONDS <= 0
-              // No deadline: the question stands until a person answers it, or until the turn is
-              // aborted, which answers it from the other side.
+              // 没有截止时间：问题一直立着，直到有人作答，或者直到回合被中止——那会从另一边回答它。
               ? answer.get()
               : answer.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
       publish(
@@ -2011,8 +1921,7 @@ public final class AgentHub implements AutoCloseable {
           Json.object()
               .put("id", id)
               .put("allow", answered.allowed())
-              // Which of the four answers it was: a page that re-renders the transcript says
-              // "allowed for this session" rather than guessing from a boolean.
+              // 它是四个回答里的哪一个：重新渲染转录的页面会说「本会话内允许」，而不是从一个布尔值去猜。
               .put("answer", answered.name().toLowerCase(java.util.Locale.ROOT)));
       return answered;
     } catch (TimeoutException e) {
@@ -2031,18 +1940,17 @@ public final class AgentHub implements AutoCloseable {
     }
   }
 
-  /** The running state of one session, or null when it has none. */
+  /** 一个会话的运行状态；它没有的话为 null。 */
   private Conversation conversation(String sessionId) {
     return sessionId == null || sessionId.isEmpty() ? null : conversations.get(sessionId);
   }
 
   /**
-   * The session whose turn this thread is running.
+   * 这条线程正在跑其回合的那个会话。
    *
-   * <p>Resolved from the calling thread rather than passed in, because the loop hands the approver to
-   * its tools as a plain {@link Approver}: the turn's own session is the only thing that can say
-   * which conversation is asking, and an approval published without one would appear in every open
-   * transcript at once.
+   * <p>从调用线程解析出来，而不是当作参数传进来，因为循环把审批人当作一个普通的 {@link Approver} 交给
+   * 它的工具：只有回合自己的会话能说出是哪个对话在问，而一个不带会话发布的审批会同时出现在每一份打开的
+   * 转录里。
    */
   private String currentTurnSession() {
     for (Conversation conversation : conversations.values()) {
@@ -2056,8 +1964,8 @@ public final class AgentHub implements AutoCloseable {
   // ------------------------------------------------------------------ events
 
   /**
-   * Registers a subscriber and hands back the events it missed, in one atomic step — otherwise an
-   * event published between "read the replay buffer" and "start listening" would be lost.
+   * 注册一个订阅者并在同一个原子步骤里交回它错过的事件——否则在「读重放缓冲区」和「开始监听」之间发布
+   * 的事件会丢掉。
    */
   public List<Event> subscribe(Consumer<Event> subscriber) {
     synchronized (replay) {
@@ -2079,9 +1987,8 @@ public final class AgentHub implements AutoCloseable {
   private void publish(String sessionId, String type, ObjectNode payload) {
     ObjectNode node = payload == null ? Json.object() : payload;
     node.put("type", type);
-    // A payload that already names its session keeps it — the status is *about* one conversation and
-    // is built with that id in hand. Only a payload that says nothing gets the given id, so an empty
-    // one stays "this is about the server", not "this is about session ''".
+    // 已经点名自己会话的载荷保留它——状态是*关于*某个对话的，构建时就拿着那个 id。只有什么都不说的
+    // 载荷才会拿到传进来的 id，所以空的那个仍然是「这是关于服务器的」，而不是「这是关于会话 '' 的」。
     if (!node.has("sessionId")) {
       node.put("sessionId", sessionId == null ? "" : sessionId);
     }
@@ -2103,8 +2010,8 @@ public final class AgentHub implements AutoCloseable {
   }
 
   public void publishStatus() {
-    // The status is about one conversation — the one on screen — so it says which, from the same
-    // place the page reads the id out of: a status with no session would be filed nowhere.
+    // 状态是关于一个对话的——屏幕上那个——所以它点名是哪一个，用的也是页面读出 id 的同一个地方：一个
+    // 没有会话的状态会被归到无处。
     ObjectNode node = statusFields();
     node.put("sessionId", sessionIdOf(session()));
     publish(sessionIdOf(session()), "status", node);
@@ -2114,7 +2021,7 @@ public final class AgentHub implements AutoCloseable {
     publish(sessionIdOf(session()), "usage", usageFields());
   }
 
-  /** Usage of one session, which is what a turn publishes when its own books change. */
+  /** 一个会话的用量，也就是一个回合在自己的账本变化时发布的东西。 */
   public void publishUsage(String sessionId) {
     Conversation conversation = sessionId == null ? null : conversations.get(sessionId);
     FileSession target = conversation == null ? session() : conversation.session();
@@ -2152,15 +2059,13 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * One conversation's live state: its session file, its running turn, and its own books.
+   * 一个对话的实时状态：它的会话文件、它正在跑的回合，以及它自己的账本。
    *
-   * <p>When the server ran one turn at a time this was all instance state, which is precisely why a
-   * running turn locked everything. The unit that can be busy is now the conversation, so the flag,
-   * the loop and the counters live here, and a second conversation simply has its own.
+   * <p>服务器一次只跑一个回合的时候，这些都是实例状态，而那正是一个正在跑的回合把所有东西都锁住的原因。
+   * 现在会忙的单位是对话，所以标记、循环和计数器都住在这里，第二个对话只是有自己的一份。
    *
-   * <p>The counters are the ones the session file already records: they are read and written through
-   * {@link FileSession#totals()}, so two conversations running side by side cannot add their tokens
-   * to each other's ledger.
+   * <p>计数器就是会话文件已经在记录的那些：它们通过 {@link FileSession#totals()} 读写，所以并排运行的
+   * 两个对话不会把 token 加到对方的账本上。
    */
   private final class Conversation {
 
@@ -2168,31 +2073,29 @@ public final class AgentHub implements AutoCloseable {
     private final FileSession session;
     private final AtomicBoolean busy = new AtomicBoolean();
     private final AtomicReference<AgentLoop> loop = new AtomicReference<>();
-    /** The thread running this conversation's turn, so a callback can be attributed to it. */
+    /** 正在跑这个对话回合的线程，好让回调能被归到它身上。 */
     private final AtomicReference<Thread> owner = new AtomicReference<>();
     /**
-     * Messages typed while this conversation was busy, oldest first.
+     * 这个对话忙的时候敲进来的消息，最旧的在前。
      *
-     * <p>Bounded, and the bound is the point: a queue that grows without limit is a way to lose
-     * control of a session that is already running something, and sixteen is more than anybody types
-     * while watching one turn.
+     * <p>有上界，而上界正是重点：一个无限增长的队列，就是在一个已经在跑东西的会话里失去控制的一条路，
+     * 而十六条比任何人看着一个回合时会敲的都多。
      */
     private final Deque<String> queued = new ConcurrentLinkedDeque<>();
     /**
-     * The prompt size at which automatic compaction was last refused, or 0.
+     * 最近一次自动压缩被拒绝时的提示尺寸，或者 0。
      *
-     * <p>A refusal is a model call that produced nothing usable — a summary no smaller than what it
-     * would replace — and without this the same call would be made again at the end of every turn
-     * while the conversation hovers over the budget. It is retried when the conversation has grown
-     * ten per cent past the size that was refused, which is roughly when a summary starts to pay.
+     * <p>一次拒绝是一次没产出任何可用东西的模型调用——一段并不比它要替换的东西小的摘要——没有这个值，
+     * 只要对话在预算上方徘徊，同一个调用就会在每个回合结束时再做一次。它会在对话从被拒绝的尺寸再长过
+     * 一成之后重试，那大致就是摘要开始划算的时候。
      */
     private volatile long autoCompactRefusedAt;
     /**
-     * Where this conversation's tools run, fixed when the turn starts.
+     * 这个对话的工具在哪里运行，在回合启动时定下。
      *
-     * <p>Read once rather than on every tool call, because the active workspace can change while a
-     * turn is running — switching to another workspace must not redirect a job that is already half
-     * done into a different directory. A turn owns its working directory from the moment it starts.
+     * <p>只读一次，而不是每次工具调用都读，因为活动工作区可能在一个回合运行期间改变——切换到另一个
+     * 工作区，绝不能把一个已经做了一半的工作重定向到别的目录里。一个回合从它启动的那一刻起就拥有自己的
+     * 工作目录。
      */
     private volatile Path cwd;
 
@@ -2214,17 +2117,16 @@ public final class AgentHub implements AutoCloseable {
       return cwd;
     }
 
-    /** Re-reads the working directory, which a turn starting now should use. */
+    /** 重新读取工作目录，现在启动的回合应当用它。 */
     void useCurrentCwd() {
       this.cwd = AgentHub.this.cwd();
     }
 
     /**
-     * True once this conversation's turn has been asked to stop.
+     * 这个对话的回合一旦被要求停下就返回 true。
      *
-     * <p>What a sub-agent checks to know it should stop too: aborting a turn has to reach the work the
-     * turn delegated, or the user's stop button leaves a sub-agent running with nothing on screen to
-     * say so.
+     * <p>这是子代理用来知道自己也该停下的依据：中止一个回合必须能到达这个回合委派出去的工作，否则用户
+     * 的停止按钮会留下一个子代理继续跑着，而屏幕上没有任何东西说明这一点。
      */
     boolean aborting() {
       AgentLoop active = loop.get();
@@ -2235,7 +2137,7 @@ public final class AgentHub implements AutoCloseable {
       return busy.get();
     }
 
-    /** Adds a message to this conversation's queue, or returns false when it is full. */
+    /** 把一条消息加入这个对话的队列；队满时返回 false。 */
     boolean enqueue(String text) {
       if (queued.size() >= MAX_QUEUED_MESSAGES) {
         return false;
@@ -2244,17 +2146,17 @@ public final class AgentHub implements AutoCloseable {
       return true;
     }
 
-    /** Puts a message back at the front, for the race where the turn slot was taken in between. */
+    /** 把一条消息放回队首，用于回合槽位在中间被占走的那个竞态。 */
     void enqueueFirst(String text) {
       queued.addFirst(text);
     }
 
-    /** The next message waiting, or null. */
+    /** 下一条在等的消息，没有则为 null。 */
     String dequeue() {
       return queued.pollFirst();
     }
 
-    /** What is waiting, oldest first, for the status the page draws. */
+    /** 正在等的东西，最旧的在前，供页面画出的状态使用。 */
     List<String> queued() {
       return List.copyOf(queued);
     }
@@ -2267,14 +2169,14 @@ public final class AgentHub implements AutoCloseable {
       this.autoCompactRefusedAt = tokens;
     }
 
-    /** Drops what is waiting; an abort that means "stop, all of it" answers the count. */
+    /** 丢掉正在等的东西；一个意思是「停下，全都停下」的中止会报出这个数量。 */
     int clearQueue() {
       int dropped = queued.size();
       queued.clear();
       return dropped;
     }
 
-    /** Claims the turn slot, or returns false when this conversation already has one running. */
+    /** 占下回合槽位；这个对话已经有一个在跑时返回 false。 */
     boolean begin() {
       return busy.compareAndSet(false, true);
     }
@@ -2284,7 +2186,7 @@ public final class AgentHub implements AutoCloseable {
       owner.set(Thread.currentThread());
     }
 
-    /** Releases the turn slot, so the next message in this conversation is accepted. */
+    /** 释放回合槽位，好让这个对话里的下一条消息被接受。 */
     void end() {
       loop.set(null);
       owner.set(null);
@@ -2300,8 +2202,8 @@ public final class AgentHub implements AutoCloseable {
       if (running == null) {
         return false;
       }
-      // A turn waiting for a human is stopped by answering the question: the flag alone would leave
-      // it blocked until the approval timed out, which is not "stopped" in any sense the user meant.
+      // 一个在等人类的回合，是靠回答那个问题来停下的：光有标志会让它一直阻塞到审批超时，那不是用户所想
+      // 的任何意义上的「停下」。
       for (Map.Entry<String, Pending> entry : pendingApprovals.entrySet()) {
         if (id.equals(entry.getValue().sessionId())) {
           entry.getValue().answer().complete(ApprovalAnswer.DENY);
@@ -2338,7 +2240,7 @@ public final class AgentHub implements AutoCloseable {
       session.totals(session.totals().withElapsed(elapsedMillis));
     }
 
-    /** Writes the books to disk; called at turn boundaries so the file survives a kill. */
+    /** 把账本写到磁盘；在回合边界调用，好让文件扛得住被杀。 */
     synchronized void persist() {
       session.totals(session.totals());
     }
@@ -2348,7 +2250,7 @@ public final class AgentHub implements AutoCloseable {
     }
   }
 
-  /** Translates loop callbacks into wire events; nothing here decides policy. */
+  /** 把循环的回调翻译成线上事件；这里没有任何东西做策略决定。 */
   private final class WebListener implements AgentListener {
 
     private final Conversation conversation;
@@ -2373,8 +2275,7 @@ public final class AgentHub implements AutoCloseable {
     public void onToolStart(Message.ToolCall call) {
       conversation.add(0, 0, null, 0, 0, 1, 0, 0);
       publish(conversation.id(), "tool", toolPayload(call, "start"));
-      // The panel counts what is on screen: without this the counters would sit
-      // at the previous turn's totals while a card says a call is running.
+      // 面板数的是屏幕上的东西：没有这一句，卡片说某次调用正在跑，计数器却还停在上一回合的总数上。
       publishUsage(conversation.id());
     }
 
@@ -2393,7 +2294,7 @@ public final class AgentHub implements AutoCloseable {
       publishUsage(conversation.id());
     }
 
-    /** Model turns are counted here, not from usage: a provider that reports no usage still ran. */
+    /** 模型回合在这里计数，而不是来自用量：一个不报用量的提供方照样跑过。 */
     @Override
     public void onTurnStart(int step) {
       conversation.add(0, 0, null, 0, 1, 0, 0, 0);
@@ -2419,42 +2320,41 @@ public final class AgentHub implements AutoCloseable {
     }
   }
 
-  /** Kept for tests that want to assert on the approval contract without a browser. */
+  /** 留给想在无浏览器的情况下断言审批契约的测试。 */
   public Approver approver() {
     return this::askApproval;
   }
 
   /**
-   * The user's rules for this project, which the caller supplies because it has the application home
-   * and this class does not. Until one is set, every request is put to the browser.
+   * 用户在这个项目里的规则，由调用方提供，因为它手里有应用 home 而本类没有。在设置之前，每个请求都
+   * 交给浏览器。
    */
   public void setApprovalRules(ApprovalRules rules) {
     this.approvalRules = rules;
   }
 
   /**
-   * Puts back what the last turn changed.
+   * 把上一回合改动过的东西放回去。
    *
-   * <p>The answer to the question people ask before letting an agent near their files — "may it be
-   * undone" — and the reason approval can be left where it belongs instead of being switched off to
-   * compensate. Refused while a turn is running: undoing underneath one would restore files the model
-   * is in the middle of reasoning about, which is a worse state than either.
+   * <p>这是人们在让代理靠近自己的文件之前会问的那个问题——「可以退回吗」——的答案，也是审批可以被
+   * 留在它该在的位置、而不必为了补偿被关掉的原因。有回合在跑时拒绝：在它底下做退回会恢复模型正在思考
+   * 的文件，那比两种状态中的任何一种都糟。
    */
   public ObjectNode undoTurn() {
     FileSession current = session();
     if (current == null) {
-      throw new IllegalStateException("no session is open");
+      throw new IllegalStateException("没有打开的会话");
     }
     Conversation conversation = conversations.get(current.id());
     if (conversation != null && conversation.running()) {
-      throw new IllegalStateException("a turn is running; abort it before undoing a previous one");
+      throw new IllegalStateException("还有回合在跑；退回上一个回合之前请先中止它");
     }
     List<String> restored = checkpoints.undoLastTurn(current.file(), cwd());
     if (restored.isEmpty()) {
       publish(
           current.id(),
           "notice",
-          Json.object().put("text", "nothing to undo: no turn has changed a file yet"));
+          Json.object().put("text", "没有可退回的东西：还没有哪个回合改动过文件"));
     } else {
       publish(
           current.id(),
@@ -2462,10 +2362,9 @@ public final class AgentHub implements AutoCloseable {
           Json.object()
               .put(
                   "text",
-                  "undone: "
+                  "已退回："
                       + restored.size()
-                      + (restored.size() == 1 ? " file" : " files")
-                      + " put back as they were before the last turn — "
+                      + " 个文件恢复到上一回合之前的样子 —— "
                       + String.join(", ", restored)));
     }
     ObjectNode response = Json.object();
@@ -2477,8 +2376,8 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /**
-   * The approval chain: the rules answer first, the person second, and every automatic answer is said
-   * out loud in the transcript — an approval that happened silently is one nobody can audit.
+   * 审批链：先由规则回答，再由人回答，而每一个自动给出的回答都在转录里说出来——一次静悄悄发生的审批
+   * 是没人能审计的审批。
    */
   private Approver gate() {
     ApprovalRules rules = approvalRules;

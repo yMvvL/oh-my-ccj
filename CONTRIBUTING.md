@@ -1,107 +1,94 @@
-# Contributing
+# 贡献
 
-Small project, one maintainer. Most useful contributions are small: a bug report with the output in
-it, a fix to something that misbehaved, a clearer sentence in a comment that misled you.
+小项目，一位维护者。最有用的贡献都很小：一份带着输出的 bug 报告、对一个运行不正常的东西的修复、把误导过
+你的那句注释写清楚一点。
 
-**Nothing here is a gate.** If the requirements below do not fit what you have time for, open the
-issue or the pull request anyway and say so. A reported bug with no fix is worth more than a fix
-nobody was told about, and an honest "I could not test this" is more useful than silence.
+**这里没有门槛。** 如果下面的要求不合你有的时间，照样开 issue 或 pull request，并说明这一点。一个报了
+但没修的 bug，比一个没人知道的修复更值钱；一句诚实的「我没法测这个」，比沉默更有用。
 
-## Before you open a pull request
+## 开 pull request 之前
 
 ```bash
 ./mvnw test
 ```
 
-That is the whole requirement. No network, no API key, about a minute. CI runs the same command on
-Linux and macOS, so you will find out quickly either way — and if your change is platform-specific,
-not running it yourself is fine as long as you say so.
+这就是全部要求。不需要网络，不需要 API 密钥，大约一分钟。CI 在 Linux 和 macOS 上跑同一条命令，所以无论
+哪种情况你都会很快知道结果——如果你的改动和平台相关，只要说出来，不自己跑也没关系。
 
-The browser cases under `src/test/js/` run under node and are wired into the JUnit suite. Without node
-they are reported as **skipped** rather than passing, so if the summary says `Skipped: 6`, the page was
-not tested. CI installs node, so this only affects your local run.
+`src/test/js/` 下的浏览器用例在 node 下运行，并被接进 JUnit 套件。没有 node 时它们被报告为**跳过**而不是
+通过，所以如果摘要写着 `Skipped: 6`，那个页面就没被测过。CI 会装 node，所以这只影响你本地的运行。
 
-### One trap worth knowing
+### 一个值得知道的坑
 
-`./mvnw package` and `./mvnw verify` write `target/ccj.jar` — **the jar a running ccj executes from**.
-On Linux and macOS a running process keeps the inode it opened, so overwriting the file usually does
-not kill it. This repository is stricter than the platform, deliberately:
+`./mvnw package` 和 `./mvnw verify` 写的是 `target/ccj.jar`——**正在运行的 ccj 执行的那个 jar**。在
+Linux 和 macOS 上，运行中的进程保留它打开时的 inode，所以覆盖这个文件通常不会杀掉它。这个仓库比平台本身
+更严格，而且是刻意的：
 
 ```bash
 ./mvnw -Djar.name=ccj-next package      # writes target/ccj-next.jar, touches nothing live
 ```
 
-The `jar.name` property exists for exactly this, and the launcher uses it when it rebuilds for you.
+`jar.name` 这个属性存在的唯一理由就是这个，启动器替你重新构建时也用它。
 
-## If you are fixing a bug
+## 如果你在修 bug
 
-A test that fails before the fix is the most valuable thing in the pull request — it is the evidence
-that the bug was the bug you thought it was, and it stops the same bug coming back. If you are not sure
-how to write one, describe what you did to reproduce it instead; that is nearly as good, and I can
-usually turn it into a test.
+一个在修复之前就失败的测试，是 pull request 里最有价值的东西——它是「这个 bug 就是你以为的那个 bug」的
+证据，也让同一个 bug 不再回来。如果你不确定怎么写，那就改为描述你用来复现它的步骤；这几乎一样好，我通常
+能把它变成测试。
 
-If it is a one-character fix and the test would be longer than the fix, say so and skip it.
+如果是一处一个字符的修复，而测试会比修复还长，那就说出来并跳过它。
 
-## If you are adding a feature
+## 如果你在加功能
 
-Please open an issue first, briefly. Not for permission — to save you work. Several capabilities are
-deliberately absent (MCP, plugins, sandboxing, multi-user, images) and a few have been considered and
-rejected for reasons that are not obvious from the code. A sentence of back-and-forth is cheaper than a
-weekend spent on something that cannot land.
+请先简短地开一个 issue。不是为了请求许可——是为了省你的时间。有好几项能力是刻意缺席的（插件、沙箱、
+多用户、图片），还有几项被考虑过又拒掉了，理由从代码里看不出来。一句来回比花一个周末做一件落不了地的事要
+便宜。
 
-Small things — a flag, a better error message, a missing case — do not need this. Open the pull request.
+小东西——一个 flag、一条更好的错误消息、一个漏掉的用例——不需要这一步。直接开 pull request。
 
-## Writing style
+## 写作风格
 
-**Comments explain why, not what.** The code says what it does. What is worth writing down is the
-alternative that was rejected and the reason for choosing this one. Not every method needs it: one
-where the choice was real does, and the existing files show the pattern.
+**注释解释为什么，不是解释做什么。** 代码本身说明了它做什么。值得写下来的是被拒掉的另一种做法，以及选择
+这一种的理由。不是每个方法都需要：做了真实取舍的那些需要，现有的文件展示了这个模式。
 
-**Say what you verified.** "Should work" is not a result. If you ran something, quote the command and
-what it printed. If you did not, say so — that is fine, and an honest gap is worth more than a
-confident claim that turns out to be false.
+**说出你验证了什么。**「应该能跑」不是结果。如果你跑了什么，把命令和它打印的内容引出来。如果没跑，就说
+没跑——这没问题，而且诚实的空白比一个后来被证明是假的自信断言更值钱。
 
-**Prefer a measured number to an argued one.** Ten minutes with a stopwatch or a counter beats a
-paragraph of reasoning. A few existing examples, to show the tone rather than to set a bar:
+**宁要量过的数字，不要论证出的数字。** 拿着秒表或计数器花十分钟，胜过一段推理。几个现成例子，用来说明
+语气，不是用来立标准：
 
-- the sub-agent approval path exists because a test showed a sub-agent writing over a real project file
-  with no prompt, since it ran with an always-allow approver;
-- `/compact` refuses to run when its summary would not be smaller, after a real session compacted from
-  4239 to 4236 tokens — a cost with no benefit;
-- the SSE keep-alive is a real event rather than a `: ping` comment because a comment reaches no
-  handler, so a page waiting on an approval saw the prompt flicker while it reconnected underneath;
-- the session-list cache test was shown to be load-bearing by changing the cache condition to
-  `if (false)` and watching it fail.
+- 子代理的审批路径之所以存在，是因为一个测试显示子代理在一个真实项目文件上写而没有提示，因为它跑在一个
+  永远允许的审批者下面；
+- `/compact` 在摘要不会更小时拒绝运行，起因是一次真实会话从 4239 压缩到 4236 token——花了钱没好处；
+- SSE keep-alive 是一个真实事件而不是一条 `: ping` 注释，因为注释到不了任何处理器，所以一个在等审批的
+  页面会在它底下重连时看到提示闪烁；
+- 会话列表缓存测试被证明是承重的，做法是把缓存条件改成 `if (false)`，看着它失败。
 
-None of these were required of anyone. They are what happens when a claim is worth checking.
+这些都没有人要求过。它们是一个说法值得核实时会自然发生的事。
 
-## Style
+## 代码风格
 
-- Java 21, no framework. `javac` warnings are the lint.
-- Two-space indent, 100-column lines. The existing files are consistent; match them.
-- Public methods get a javadoc sentence. Private ones get a comment only where the *why* is not obvious.
-- No new runtime dependency without asking first — the current set is `jackson-databind` and nothing
-  else, and keeping it that way is part of the point.
-- Test names say what behaviour they pin: `aParentDirectoryEscapeIsRefused`, not `testWriteToolRefuses`.
+- Java 21，没有框架。`javac` 的警告就是 lint。
+- 两空格缩进，100 列。现有文件是一致的；跟着它们。
+- 公开方法配一句 javadoc。私有方法只在*为什么*不明显的地方配注释。
+- 不问过不加新的运行时依赖——当前的依赖集是 `jackson-databind`，仅此一个，而保持这样是重点的一部分。
+- 测试名说出它钉住的行为：`aParentDirectoryEscapeIsRefused`，不是 `testWriteToolRefuses`。
 
-## Reporting a bug
+## 报告 bug
 
-What you ran, what you expected, what happened, and the exact output. If a model is involved, say which
-provider and model — behaviour differs enough between them to matter. Do not paste an API key; if one
-appears in output you were about to send, rotate it first.
+你跑了什么、你期望什么、发生了什么，以及确切的输出。如果涉及模型，说出是哪个提供方和哪个模型——它们之间
+的行为差异大到会影响判断。不要粘贴 API 密钥；如果它出现在你正要发出的输出里，先轮换它。
 
-Security issues go through [SECURITY.md](SECURITY.md) rather than a public issue, so a fix can exist
-before the details do.
+安全问题走 [SECURITY.md](SECURITY.md)，而不是公开 issue，这样修复可以在细节公开之前就存在。
 
-## Out of scope
+## 不在范围内
 
-Not because the ideas are bad — because the project is deliberately small, and each of these would turn
-it into something else:
+不是因为想法不好——而是因为这个项目刻意很小，而其中每一项都会把它变成别的东西：
 
-- MCP, a plugin system, a marketplace
-- Sandboxing, or any claim that `bash` is confined (it is not, on purpose)
-- Multi-user accounts, a hosted service, a shared instance
-- Image and file attachments
-- Any platform beyond Linux, macOS and WSL (the shell tool is `/bin/bash`)
+- 插件系统、应用市场
+- 沙箱，或任何声称 `bash` 被限制住的说法（它没有，而且是故意的）
+- 多用户账号、托管服务、共享实例
+- 图片和文件附件
+- Linux、macOS 和 WSL 之外的任何平台（shell 工具是 `/bin/bash`）
 
-If you think one of these is wrong, open an issue and argue for it. The list has changed before.
+如果你觉得其中某一条不对，开个 issue 辩论它。这份清单以前改过。

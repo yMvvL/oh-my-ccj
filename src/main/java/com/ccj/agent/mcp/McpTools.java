@@ -14,18 +14,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The tools the configured MCP servers offer, registered into the tool set this run uses.
+ * 已配置的 MCP 服务器所提供的工具，注册进本次运行所用的工具集。
  *
- * <p>Two phases, because starting every configured server at startup would make the agent pay for
- * capabilities it never reaches for — a machine with four servers would spawn four processes to answer
- * "what does this file say". So {@link #discover} starts each server once, asks it what it has, and
- * shuts it down again; {@link #bind} starts the one a tool actually belongs to, the first time one of
- * its tools is called, and keeps it for the run.
+ * <p>分两个阶段，因为启动时就把每个配置的服务器都拉起来，会让代理为它从不伸手去用的能力买单
+ * ——一台配置了四个服务器的机器，会为了回答「这个文件说了什么」而派生四个进程。所以
+ * {@link #discover} 把每个服务器启动一次、问它有什么、再关掉；{@link #bind} 则在某个工具第一
+ * 次被调用时，启动它真正所属的那个服务器，并为整次运行把它留着。
  *
- * <p>A server that will not start is reported on stderr and skipped: one broken entry in a
- * configuration file must not stop the agent from starting, but it must not be silent either — a
- * capability that is not there and a capability nobody mentioned look identical from inside a
- * conversation.
+ * <p>起不来的服务器会报告到 stderr 并被跳过：配置文件里一个坏掉的条目，不能让代理起不来，但也
+ * 不能一声不吭——不存在的能力和没人提过的能力，从一次对话里看是一模一样的。
  */
 public final class McpTools implements McpTool.Clients {
 
@@ -40,11 +37,11 @@ public final class McpTools implements McpTool.Clients {
     this.file = file;
   }
 
-  /** Reads the configuration and asks every server what it offers. */
+  /** 读取配置，并询问每个服务器它提供什么。 */
   public static McpTools discover(Path file) {
     McpTools tools = new McpTools(McpConfig.from(file), file);
-    // A server is a child process, and a child outlives its parent: without this hook, quitting ccj
-    // leaves one process per server running with no parent to report to.
+    // 服务器是子进程，而子进程会比父进程活得久：没有这个钩子，退出 ccj 会给每个服务器留下
+    // 一个没人可汇报的进程。
     Runtime.getRuntime().addShutdownHook(new Thread(tools::close, "mcp-shutdown"));
     for (McpConfig.Server server : tools.config.servers()) {
       McpClient client = null;
@@ -52,7 +49,7 @@ public final class McpTools implements McpTool.Clients {
         client = McpClient.start(server);
         tools.discovered.addAll(client.tools());
       } catch (RuntimeException e) {
-        tools.complaints.add("MCP server '" + server.name() + "': " + e.getMessage());
+        tools.complaints.add("MCP 服务器 '" + server.name() + "'：" + e.getMessage());
       } finally {
         if (client != null) {
           client.close();
@@ -62,7 +59,7 @@ public final class McpTools implements McpTool.Clients {
     return tools;
   }
 
-  /** The tools to register, each bound to a client that is started when it is first called. */
+  /** 要注册的工具，每个都绑定到一个在首次被调用时才启动的客户端。 */
   public List<Tool> tools() {
     List<Tool> bound = new ArrayList<>(discovered.size());
     for (McpTool tool : discovered) {
@@ -71,7 +68,7 @@ public final class McpTools implements McpTool.Clients {
     return bound;
   }
 
-  /** The running client for a server, started on first use and kept for the run. */
+  /** 某个服务器正在运行的客户端；首次使用时启动，并为整次运行保留。 */
   @Override
   public synchronized McpClient forServer(McpConfig.Server server) {
     McpClient existing = running.get(server.name());
@@ -83,28 +80,27 @@ public final class McpTools implements McpTool.Clients {
     return started;
   }
 
-  /** What went wrong while discovering, for the caller that can print it. */
+  /** 发现过程中出了什么问题，供能把它打印出来的调用方使用。 */
   public List<String> complaints() {
     return List.copyOf(complaints);
   }
 
-  /** The configuration file this came from, for a message that has to say where to look. */
+  /** 本次配置来自哪个文件，供一条必须指明去哪里看的消息使用。 */
   public Path file() {
     return file;
   }
 
-  /** True when nothing was configured, which is the case that must cost nothing. */
+  /** 什么都没配置时为 true；这是必须零成本的那一种情形。 */
   public boolean isEmpty() {
     return config.isEmpty();
   }
 
   /**
-   * Registers every discovered tool, and returns the registry for chaining.
+   * 注册每一个已发现的工具，并返回注册表以便链式调用。
    *
-   * <p>A name that is already taken is not registered and is reported instead: a server must not be
-   * able to shadow `read` or `bash` by naming one of its tools the same, and a tool that silently
-   * replaced a built-in is the worst version of that — the model would keep calling `read` and get
-   * somebody else's program.
+   * <p>已经被占用的名字不会被注册，而是被报告出来：服务器不能靠把自己的某个工具取成同名来
+   * 遮蔽 `read` 或 `bash`，而一个悄悄替换掉内置工具的工具，是这件事最糟糕的版本——模型会继续
+   * 调用 `read`，拿到的却是别人的程序。
    */
   public ToolRegistry registerInto(ToolRegistry registry) {
     tools()
@@ -112,9 +108,9 @@ public final class McpTools implements McpTool.Clients {
             tool -> {
               if (registry.find(tool.name()).isPresent()) {
                 complaints.add(
-                    "MCP tool '"
+                    "MCP 工具 '"
                         + tool.name()
-                        + "' would shadow a tool this agent already has, so it was not registered");
+                        + "' 会遮蔽本代理已有的某个工具，因此没有注册它");
                 return;
               }
               registry.register(tool);
@@ -122,14 +118,14 @@ public final class McpTools implements McpTool.Clients {
     return registry;
   }
 
-  /** Stops every server this run started. */
+  /** 停掉本次运行启动的每一个服务器。 */
   public void close() {
     running.values().forEach(McpClient::close);
     running.clear();
   }
 
   public static String describe(Path home) {
-    return "MCP servers are declared in " + home.resolve("mcp.json");
+    return "MCP 服务器在 " + home.resolve("mcp.json") + " 中声明";
   }
 
 }
