@@ -19,8 +19,8 @@ fiction.
 | Real and working | The loop, both wire protocols, the eight tools, approval, sessions and resume, context projection, compaction with generations, the web UI, workspaces, cross-origin refusal, sub-agents with the conversation's approver |
 | Checked by CI | `./mvnw -B -ntp verify` on Linux and macOS with JDK 21 and Node 20, then packaging the jar and starting it. The Node case files report as skipped when they cannot run, rather than passing |
 | Real but unverified *here* | A change made on the maintainer's Windows machine. There is no JDK, no Maven and no `~/.m2` there, so nothing in this list can be run locally — CI is the only evidence, and a change that never reaches a push has no evidence at all |
-| Missing | MCP, native Windows support, any sandbox |
-| Recently landed | Pictures: one image per turn, described by a **separate** vision model whose endpoint, key and model are configured on their own; the description joins the conversation as ordinary text and the file is stored beside the session. The main model never receives an image, which is why neither wire format, nor `Message`, nor compaction changed. See [VISION.md](VISION.md) |
+| Missing | Native Windows support, any sandbox, and the Phase 1 correctness gaps below |
+| Recently landed | Phase 2.5 — the loop around the loop: checks that run after an edit, approval rules, queued messages, multi-hunk edits, `fetch`, MCP servers, prompt caching with automatic compaction, and undo. Every item is in [CHANGELOG.md](CHANGELOG.md) with what was measured. Before that: pictures:  one image per turn, described by a **separate** vision model whose endpoint, key and model are configured on their own; the description joins the conversation as ordinary text and the file is stored beside the session. The main model never receives an image, which is why neither wire format, nor `Message`, nor compaction changed. See [VISION.md](VISION.md) |
 | Recently removed | The sub-agent staging directory (`<cwd>/.ccj-work`), and with it the promote step. Approval replaced it — see [SUBAGENTS.md](SUBAGENTS.md) |
 
 ## Phase 0 — Make the claims checkable — `done`, with three loose ends
@@ -95,20 +95,18 @@ weakening the approval story. Anything that would need a sandbox to be safe does
   description, the picture is on disk under `<id>.attachments/`, and every refusal (not a picture,
   over 8 MB, busy conversation, no vision model configured) leaves the vision endpoint uncalled. The
   design, the measurements and what was not verified are in [VISION.md](VISION.md).
-- **2.1 An MCP client** — `todo`, **ordered as 2.5.6** — one item, one place in the order. The
-  largest gap against the ecosystem: today the tool set is
-  compiled in, so a user cannot bring their own. The shape matters more than the protocol — remote
-  tools must enter through the same `ToolRegistry` and the same approver, and a server's tools must be
-  visible in the approval prompt as coming from that server.
-  *Acceptance:* a configured MCP server's tool runs through the existing approval path, and a refusal
-  stops it.
+- **2.1 An MCP client** — `done`, as 2.5.6. Remote tools enter through the same `ToolRegistry` and
+  the same approver, and a server's tools are named as that server's — `mcp__fs__read_file` — in the
+  prompt, the transcript and the rules. See [MCP.md](MCP.md).
+  *Acceptance met:* a configured server's tool ran through the approval path and was answered by a
+  rule; a refusal stopped it.
 - **2.2 More protocols** — `todo`. The OpenAI Responses API and Gemini, behind the existing `Provider`
   contract. Deliberately after 2.1: a new wire format adds less than a new tool source.
   *Acceptance:* the same scripted-provider tests pass against each mapping.
-- **2.3 Better editing** — `todo`, **ordered as 2.5.4** — the same rule. A patch-style multi-edit
-  (several hunks, one approval, one write),
-  because a model fixing five places currently produces five prompts.
-  *Acceptance:* one approval shows all hunks, and a partially-applied patch is impossible.
+- **2.3 Better editing** — `done`, as 2.5.4. `edits: [...]` is one approval, one write and one diff;
+  a hunk that misses, matches twice or overlaps refuses the whole change, and a miss comes back with
+  the file's lines around where it was expected.
+  *Acceptance met:* one approval shows all hunks, and a partially applied patch is impossible.
 - **2.4 Sub-agent tuning** — `todo`. Per-role model and effort: a cheap model for `explore`, the main
   one for `verify`. Cost is already counted into the conversation's books, so what is missing is
   per-run visibility — the transcript says a task ran, not what it spent. Not nesting: recursion is

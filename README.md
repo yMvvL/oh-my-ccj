@@ -49,7 +49,7 @@ a place where a long session or an interrupted one goes wrong:
   addresses — loopback plus your tailnet — never a wildcard, and every non-loopback address needs a
   token. Cross-origin requests that would change state are refused.
 
-What it deliberately does not have: MCP, plugins, a sandbox, or multi-user accounts. Pictures arrive
+What it deliberately does not have: plugins, a sandbox, or multi-user accounts. Pictures arrive
 as a description rather than as an image — see the `Picture` row below — and everything else is in
 [Limitations](#limitations).
 
