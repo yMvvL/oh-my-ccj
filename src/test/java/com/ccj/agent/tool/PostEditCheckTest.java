@@ -104,7 +104,7 @@ class PostEditCheckTest {
 
     String result = edit("Foo.java", "not in the file", "whatever");
 
-    assertTrue(result.startsWith("no exact match"), result);
+    assertTrue(result.startsWith("nothing was written: the edit found no exact match"), result);
     assertFalse(Files.exists(cwd.resolve("marker.txt")), "the check ran on a failed edit");
   }
 

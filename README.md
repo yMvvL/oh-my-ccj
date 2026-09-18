@@ -375,7 +375,7 @@ error output show at most `***1234`.
 |---|---|---|
 | `read` | `path`, `offset?`, `limit?` | numbered lines, resumes with `offset`, rejects binary files |
 | `write` | `path`, `content` | creates parents, reports bytes; approval shows an overwrite preview |
-| `edit` | `path`, `old_string`, `new_string`, `replace_all?` | exact match; ambiguity is an error with the match count, denial previews the diff |
+| `edit` | `path`, `old_string`, `new_string`, `replace_all?` — or `edits: [{old_string, new_string, replace_all?}]` | exact match; ambiguity is an error with the match count, and a failed hunk comes back with the file's lines around where it was expected. The `edits` form changes several places in one file **together**: one approval, one write, and nothing written unless every hunk matches (a hunk that overlaps another, or that does not match, refuses the whole change). One diff of the whole file is what the approval shows |
 | `bash` | `command`, `cwd?`, `timeout_seconds?` | `/bin/bash -lc`, stderr merged, exit code reported, output capped with head+tail |
 | `glob` | `pattern`, `path?` | relative-path globbing incl. `**`, newest first, skips `target/`, `.git/`, `node_modules/`, `.idea/` |
 | `grep` | `pattern`, `path?`, `glob?`, `ignore_case?`, `max_results?` | Java regex, skips binaries and files over 2 MiB |

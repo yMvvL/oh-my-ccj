@@ -37,6 +37,188 @@ class EditToolTest {
   }
 
   @Test
+  void severalHunksAreOneApprovalAndOneWrite() throws Exception {
+    // What a model fixing five places used to cost: five calls, five approvals, five writes, and four
+    // chances for the file to change under an approval that had already been shown.
+    Files.writeString(
+        dir.resolve("f.java"),
+        """
+        class F {
+          int a = 1;
+          int b = 2;
+          int c = 3;
+        }
+        """);
+    List<String> approvals = new java.util.ArrayList<>();
+    ToolContext ctx =
+        new ToolContext(
+            dir,
+            request -> {
+              approvals.add(request.detail());
+              return ApprovalAnswer.ALLOW_ONCE;
+            },
+            4096);
+
+    ToolResult result =
+        new EditTool()
+            .execute(
+                """
+                {"path":"f.java","edits":[
+                  {"old_string":"int a = 1;","new_string":"int a = 10;"},
+                  {"old_string":"int c = 3;","new_string":"int c = 30;"}]}
+                """,
+                ctx);
+
+    assertFalse(result.error(), result.content());
+    assertEquals(1, approvals.size(), "one approval for the whole change");
+    assertEquals(
+        """
+        class F {
+          int a = 10;
+          int b = 2;
+          int c = 30;
+        }
+        """,
+        Files.readString(dir.resolve("f.java")));
+    assertTrue(result.content().contains("2 occurrences across 2 hunks"), result.content());
+    // The prompt shows the change as one diff of one file, not one diff per hunk.
+    String detail = approvals.get(0);
+    assertTrue(detail.contains("2 hunks, 2 replacements"), detail);
+    // Whitespace collapsed: the diff marks lines with a sign and a space, and the file's own
+    // indentation follows it — what the assertion is about is that both hunks are in the one diff.
+    String flat = detail.replaceAll("\\s+", " ");
+    assertTrue(flat.contains("- int a = 1;"), flat);
+    assertTrue(flat.contains("+ int a = 10;"), flat);
+    assertTrue(flat.contains("- int c = 3;"), flat);
+    assertTrue(flat.contains("+ int c = 30;"), flat);
+  }
+
+  @Test
+  void oneHunkThatDoesNotMatchWritesNoneOfThem() throws Exception {
+    // All or nothing. A patch that half-applies leaves a file in a state nobody asked for and the
+    // model's next edit is computed against text it never saw.
+    Files.writeString(dir.resolve("f.txt"), "one\ntwo\nthree\n");
+    List<String> approvals = new java.util.ArrayList<>();
+    ToolContext ctx =
+        new ToolContext(
+            dir,
+            request -> {
+              approvals.add(request.detail());
+              return ApprovalAnswer.ALLOW_ONCE;
+            },
+            4096);
+
+    ToolResult result =
+        new EditTool()
+            .execute(
+                """
+                {"path":"f.txt","edits":[
+                  {"old_string":"one","new_string":"1"},
+                  {"old_string":"two","new_string":"2"},
+                  {"old_string":"threee","new_string":"3"}]}
+                """,
+                ctx);
+
+    assertTrue(result.error(), result.content());
+    assertTrue(result.content().startsWith("nothing was written:"), result.content());
+    assertTrue(result.content().contains("hunk 3 of 3"), result.content());
+    assertTrue(result.content().contains("no exact match"), result.content());
+    assertEquals("one\ntwo\nthree\n", Files.readString(dir.resolve("f.txt")), "not one hunk applied");
+    assertEquals(0, approvals.size(), "nothing was asked for either: there was nothing to approve");
+  }
+
+  @Test
+  void aFailedHunkComesBackWithTheLinesAroundWhereItWasExpected() throws Exception {
+    // The failure a model has to recover from most often, and the information it needs is in this
+    // call's hands already: which line it thought it was on, and what is actually there.
+    Files.writeString(
+        dir.resolve("f.txt"),
+        "alpha\nbeta\ngamma delta\nepsilon\nzeta\n");
+
+    ToolResult result =
+        new EditTool()
+            .execute(
+                "{\"path\":\"f.txt\",\"old_string\":\"gamma   delta\",\"new_string\":\"G\"}",
+                new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertTrue(result.error(), result.content());
+    assertTrue(result.content().contains("region(s) match once whitespace is normalised"),
+        result.content());
+    assertTrue(result.content().contains("around line 3"), result.content());
+    assertTrue(result.content().contains(">    3  gamma delta"),
+        "the line itself, marked, with its number: " + result.content());
+    assertTrue(result.content().contains("     2  beta"), "and its neighbours: " + result.content());
+  }
+
+  @Test
+  void overlappingHunksAreRefusedRatherThanGuessedAt() throws Exception {
+    Files.writeString(dir.resolve("f.txt"), "alpha\nbeta\ngamma\n");
+
+    ToolResult result =
+        new EditTool()
+            .execute(
+                """
+                {"path":"f.txt","edits":[
+                  {"old_string":"alpha\\nbeta","new_string":"A"},
+                  {"old_string":"beta\\ngamma","new_string":"B"}]}
+                """,
+                new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertTrue(result.error(), result.content());
+    assertTrue(result.content().contains("hunks 1 and 2 overlap"), result.content());
+    assertEquals("alpha\nbeta\ngamma\n", Files.readString(dir.resolve("f.txt")));
+  }
+
+  @Test
+  void hunkIndexesAreNamedSoARetryKnowsWhichOne() throws Exception {
+    Files.writeString(dir.resolve("f.txt"), "alpha\nalpha\ngamma\n");
+
+    ToolResult result =
+        new EditTool()
+            .execute(
+                """
+                {"path":"f.txt","edits":[
+                  {"old_string":"alpha","new_string":"A"},
+                  {"old_string":"gamma","new_string":"G"}]}
+                """,
+                new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertTrue(result.error(), result.content());
+    assertTrue(result.content().contains("hunk 1 of 2"), result.content());
+    assertTrue(result.content().contains("matches 2 times"), result.content());
+    // And the second hunk's replace_all is not needed for the first: they are separate decisions.
+    ToolResult fixed =
+        new EditTool()
+            .execute(
+                """
+                {"path":"f.txt","edits":[
+                  {"old_string":"alpha","new_string":"A","replace_all":true},
+                  {"old_string":"gamma","new_string":"G"}]}
+                """,
+                new ToolContext(dir, Approver.ALWAYS, 4096));
+    assertFalse(fixed.error(), fixed.content());
+    assertEquals("A\nA\nG\n", Files.readString(dir.resolve("f.txt")));
+  }
+
+  @Test
+  void bothShapesAtOnceIsARefusalRatherThanAGuess() throws Exception {
+    Files.writeString(dir.resolve("f.txt"), "alpha\n");
+
+    ToolResult result =
+        new EditTool()
+            .execute(
+                """
+                {"path":"f.txt","old_string":"alpha","new_string":"A","edits":[
+                  {"old_string":"alpha","new_string":"A"}]}
+                """,
+                new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertTrue(result.error(), result.content());
+    assertTrue(result.content().contains("not both"), result.content());
+    assertEquals("alpha\n", Files.readString(dir.resolve("f.txt")));
+  }
+
+  @Test
   void refusesAmbiguousMatchWithoutReplaceAll() throws Exception {
     Files.writeString(dir.resolve("f.txt"), "alpha\nbeta\nalpha\n");
 

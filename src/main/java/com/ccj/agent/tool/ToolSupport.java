@@ -15,6 +15,8 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.Set;
 
 /**
@@ -222,6 +224,85 @@ final class ToolSupport {
       count++;
       from = at + target.length();
     }
+  }
+
+  /**
+   * The lines around where a hunk was expected, numbered, for a match that failed.
+   *
+   * <p>A failed `edit` is the most common thing a model has to recover from, and the error it used to
+   * get named a count and nothing else: "no exact match", or "1 region matches once whitespace is
+   * normalised". Both are true and neither lets the model fix it without reading the file again —
+   * which is a whole round trip for information this call already has in hand.
+   */
+  static String excerpt(String text, int aroundLine, int contextLines) {
+    List<String> lines = List.of(text.split("\n", -1));
+    if (lines.isEmpty()) {
+      return "(the file is empty)\n";
+    }
+    int centre =
+        aroundLine < 1 ? 1 : Math.min(aroundLine, lines.size());
+    int from = Math.max(1, centre - contextLines);
+    int to = Math.min(lines.size(), centre + contextLines);
+    StringBuilder rendered = new StringBuilder();
+    for (int line = from; line <= to; line++) {
+      rendered
+          .append(line == centre ? "  > " : "    ")
+          .append(String.format("%4d", line))
+          .append("  ")
+          .append(lines.get(line - 1))
+          .append('\n');
+    }
+    return rendered.toString();
+  }
+
+  /**
+   * The 1-based line the needle starts at, or -1 when there is nothing to anchor to.
+   *
+   * <p>Anchored on the needle's first line, because that is the part a model usually gets right and
+   * the indentation below it is where the guess goes wrong. The comparison tolerates the difference
+   * that caused the failure in the first place: runs of whitespace are matched loosely, and if the
+   * whole line cannot be found — the model may have quoted it with different spacing throughout — the
+   * first word is tried before giving up. A neighbourly excerpt anchored slightly wrong is worth more
+   * than "no exact match" and nothing else.
+   */
+  static int lineOfFirstLine(String text, String needle) {
+    String first = null;
+    for (String line : List.of(needle.split("\n", -1))) {
+      if (!line.isBlank()) {
+        first = line;
+        break;
+      }
+    }
+    if (first == null) {
+      return -1;
+    }
+    List<String> words = List.of(first.strip().split("\\s+"));
+    for (int length = words.size(); length >= 1; length--) {
+      int at = indexOfWords(text, words.subList(0, length));
+      if (at >= 0) {
+        int lineNumber = 1;
+        for (int i = 0; i < at; i++) {
+          if (text.charAt(i) == '\n') {
+            lineNumber++;
+          }
+        }
+        return lineNumber;
+      }
+    }
+    return -1;
+  }
+
+  /** Where the first {@code words} appear in order with any whitespace between them, or -1. */
+  private static int indexOfWords(String text, List<String> words) {
+    StringBuilder pattern = new StringBuilder();
+    for (int i = 0; i < words.size(); i++) {
+      if (i > 0) {
+        pattern.append("\\s+");
+      }
+      pattern.append(Pattern.quote(words.get(i)));
+    }
+    Matcher matcher = Pattern.compile(pattern.toString()).matcher(text);
+    return matcher.find() ? matcher.start() : -1;
   }
 
   private static String normaliseWhitespace(String text) {
