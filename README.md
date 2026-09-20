@@ -23,8 +23,8 @@ sandbox: the approval prompt is the only guard, and `--yolo` removes it.
 ---
 
 从零开始用纯 Java 21 写成的编码代理运行时。没有代理框架，没有 HTTP 客户端库，没有 CLI 库——传输用
-`java.net.http`，Web UI 和测试替身用 `com.sun.net.httpserver`——21.6k 行 Java 加一个 8.8k 行的原生
-页面，旁边还有 19.4k 行测试（含 1.7k 行在真 node 里跑的页面用例）。
+`java.net.http`，Web UI 和测试替身用 `com.sun.net.httpserver`——22.5k 行 Java 加一个 8.8k 行的原生页面，
+旁边还有 21.3k 行测试（其中 2.5k 行跑在真 node 里，包括一个真浏览器）。
 
 `ccj` 与模型流式地对话，让模型调用能触碰你文件系统的工具，把结果回喂给它，如此重复直到模型给出回答。
 它是每个编码代理都围绕的那个循环的一个小巧、可读的实现。
