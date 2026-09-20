@@ -246,6 +246,98 @@ class FetchToolTest {
     assertTrue(thrown.getMessage().contains("1048576"), thrown.getMessage());
   }
 
+  @Test
+  void withoutAsTheBodyArrivesVerbatimTagsEntitiesAndAll() throws Exception {
+    // 今天的默认就是这个：剥标记是一种猜测，所以只有调用方点名要，才轮到它发生。
+    String page = "<p>a &amp; b</p>\n<script>var x = 1;</script>";
+
+    try (Stub stub = Stub.start(send(200, "text/html", page))) {
+      ToolResult result = fetch(stub.url("/notes"));
+
+      assertEquals("HTTP 200 text/html (" + page.length() + " 字节)\n" + page, result.content());
+    }
+  }
+
+  @Test
+  void asTextStripsMarkupAndSaysItWasAGuess() throws Exception {
+    String page =
+        "<html><head><title>Notes</title><style>body { color: red }</style></head>\n"
+            + "<body><!-- 草稿 -->\n"
+            + "<h1>Release notes</h1>\n"
+            + "<script>var token = \"leak\";</script>\n"
+            + "<p>Version 1 &amp; 2 &mdash; &copy; 2026</p>\n"
+            + "</body></html>";
+
+    try (Stub stub = Stub.start(send(200, "text/html", page))) {
+      ToolResult result = fetchText(stub.url("/notes"));
+
+      assertFalse(result.error(), result.content());
+      // 剥过的东西走在正文前面，因为模型会把读到的东西当成页面原文引用回去。
+      assertTrue(result.content().startsWith("已按 as:\"text\""), result.content());
+      assertTrue(result.content().contains("猜测"), result.content());
+      // 字节数说的是原始响应体，否则它会读成剥完之后那段的长度。
+      assertTrue(
+          result.content().contains("(" + page.getBytes(StandardCharsets.UTF_8).length + " 字节)"),
+          result.content());
+      // 标签、注释与 script/style 的内容都不见了，实体解开了，块级标签留下了段落边界。
+      assertFalse(result.content().contains("<"), result.content());
+      assertFalse(result.content().contains("草稿"), result.content());
+      assertFalse(result.content().contains("color: red"), result.content());
+      assertFalse(result.content().contains("leak"), result.content());
+      assertTrue(
+          result.content().endsWith(")\nNotes\nRelease notes\nVersion 1 & 2 — © 2026"),
+          result.content());
+    }
+  }
+
+  @Test
+  void asTextTurnsBlockTagsIntoLineBreaksAndCollapsesWhitespace() throws Exception {
+    String page =
+        "<div>\n  <p>first   paragraph</p>\n\n\n  <p>second<br>line</p>\n"
+            + "  <p>a <b>bold</b>word</p>\n</div>";
+
+    try (Stub stub = Stub.start(send(200, "text/html", page))) {
+      ToolResult result = fetchText(stub.url("/prose"));
+
+      assertFalse(result.error(), result.content());
+      // 空行归成一个换行，行内的连续空白归成一个空格，行内标签不留痕（版面里它本来也留不下）。
+      assertTrue(
+          result.content().endsWith(")\nfirst paragraph\nsecond\nline\na boldword"),
+          result.content());
+    }
+  }
+
+  @Test
+  void asTextKeepsAngleBracketsThatAreNotTagsAndOnlyDecodesKnownEntities() throws Exception {
+    String page = "<p>1 &lt; 2 &amp;&amp; 3 &#62; 2 &unknown; a < b</p>";
+
+    try (Stub stub = Stub.start(send(200, "text/html", page))) {
+      ToolResult result = fetchText(stub.url("/escapes"));
+
+      assertFalse(result.error(), result.content());
+      // 认不出的实体原样留着：那里本来就是一个实体，凭空替它换一个字符才是猜。
+      assertTrue(result.content().endsWith(")\n1 < 2 && 3 > 2 &unknown; a < b"), result.content());
+    }
+  }
+
+  @Test
+  void asAcceptsOnlyTextAndNamesTheValueItAccepts() throws Exception {
+    try (Stub stub = Stub.start(send(200, "text/html", "<p>hi</p>"))) {
+      IllegalArgumentException thrown =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  new FetchTool()
+                      .execute(
+                          "{\"url\":\"" + stub.url("/page") + "\",\"as\":\"markdown\"}",
+                          ToolContext.of(dir)));
+
+      assertTrue(thrown.getMessage().contains("\"text\""), thrown.getMessage());
+      assertTrue(thrown.getMessage().contains("markdown"), thrown.getMessage());
+      assertEquals(0, stub.count(), "取值不对的调用一个字节都不该拨出去");
+    }
+  }
+
   private ToolResult fetch(String url) throws Exception {
     return new FetchTool().execute("{\"url\":\"" + url + "\"}", ToolContext.of(dir));
   }
@@ -254,6 +346,11 @@ class FetchToolTest {
     return new FetchTool()
         .execute(
             "{\"url\":\"" + url + "\",\"max_bytes\":" + maxBytes + "}", ToolContext.of(dir));
+  }
+
+  private ToolResult fetchText(String url) throws Exception {
+    return new FetchTool()
+        .execute("{\"url\":\"" + url + "\",\"as\":\"text\"}", ToolContext.of(dir));
   }
 
   /** 一份预置的答复：状态码、内容类型，以及按声明长度写出的响应体。 */

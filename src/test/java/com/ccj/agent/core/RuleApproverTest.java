@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -79,8 +80,9 @@ class RuleApproverTest {
 
     assertEquals(ApprovalAnswer.DENY_BY_RULE, chain.approve(cmd("rm -rf /")));
     assertTrue(person.asked.isEmpty());
-    assertEquals("被审批文件中的某条规则拒绝（可运行 ccj --help、查看 SECURITY.md 了解如何改规则）",
-        ApprovalAnswer.DENY_BY_RULE.refusal());
+    assertTrue(
+        ApprovalAnswer.DENY_BY_RULE.refusal().contains("approvals.json"),
+        "被规则挡下的理由要指出规则在哪个文件里：" + ApprovalAnswer.DENY_BY_RULE.refusal());
     assertEquals("被用户拒绝", ApprovalAnswer.DENY.refusal());
   }
 
@@ -135,5 +137,79 @@ class RuleApproverTest {
     assertEquals(ApprovalAnswer.DENY, chain.approve(cmd("ls")));
     assertEquals(1, person.asked.size(), "做决定的仍然是那个人");
     assertTrue(announced.get(0).contains("审批文件无法读取"), announced.toString());
+  }
+
+  @Test
+  void theFifthAnswerRefusesTheNextSameCallByRuleWithoutAskingAgain() throws IOException {
+    // 「以后都拒绝」得和「永远允许」一样熬过这个进程，否则被一个反复出现的提示烦到的人只剩下把整个会话的
+    // 审批关掉这一条路——而那正是这道关卡要防的事。
+    ApprovalRules rules = rules("{\"projects\": {\"%s\": {}}}");
+    Person askedOnce = new Person(ApprovalAnswer.DENY_ALWAYS);
+    List<String> announced = new ArrayList<>();
+    RuleApprover chain = new RuleApprover(rules, askedOnce, announced::add);
+
+    assertEquals(ApprovalAnswer.DENY_ALWAYS, chain.approve(cmd("make check")));
+    assertEquals(1, askedOnce.asked.size(), "这一次是问人问出来的");
+    assertEquals(
+        List.of("今后一直拒绝，规则写入 " + file + " — bash: make check"),
+        announced,
+        "写下规则这件事要留痕，痕迹里要有文件的位置");
+
+    // 同一个文件上的另一条链：这就是「下一个进程」。
+    Person askedAgain = new Person(ApprovalAnswer.ALLOW_ONCE);
+    List<String> second = new ArrayList<>();
+    RuleApprover reopened =
+        new RuleApprover(ApprovalRules.open(file, project), askedAgain, second::add);
+
+    assertEquals(ApprovalAnswer.DENY_BY_RULE, reopened.approve(cmd("make check")));
+    assertTrue(askedAgain.asked.isEmpty(), "规则作答了，所以这一次没有问人");
+    assertEquals(1, second.size());
+    assertTrue(
+        second.get(0).contains(file.toString()), "挡下它的理由要说清规则在哪个文件里：" + second);
+    assertTrue(
+        ApprovalAnswer.DENY_ALWAYS.refusal().contains("approvals.json"),
+        "这一次的拒绝理由要指出规则被写进了哪里：" + ApprovalAnswer.DENY_ALWAYS.refusal());
+
+    // 而那条规则只说这一条命令、这一个工具：别的命令与别的工具照样得问人。
+    assertEquals(ApprovalAnswer.ALLOW_ONCE, reopened.approve(cmd("make check --verbose")));
+    assertEquals(
+        ApprovalAnswer.ALLOW_ONCE,
+        reopened.approve(ApprovalRequest.file("write", project.resolve("notes.txt"), "写文件")));
+    assertEquals(2, askedAgain.asked.size(), "两件不相干的事都不受那条规则影响");
+  }
+
+  @Test
+  void denyAlwaysWritesTheSameSubjectAllowAlwaysWouldHaveWritten() throws IOException {
+    // 两个答复回答的是同一个问题，所以文件里记下的主语必须一模一样。一条比「永远允许」写得更宽的拒绝规则，
+    // 挡下的就不止用户眼前这件事。
+    rules("{\"projects\": {\"%s\": {}}}"); // 先有项目目录，才写得出指向它的请求
+    List<ApprovalRequest> requests =
+        List.of(
+            cmd("mvn -q -o test"),
+            ApprovalRequest.file("write", project.resolve("src/App.java"), "改文件"));
+    for (ApprovalRequest request : requests) {
+      ApprovalRules forAllow = rules("{\"projects\": {\"%s\": {}}}");
+      new RuleApprover(forAllow, new Person(ApprovalAnswer.ALLOW_ALWAYS), text -> {})
+          .approve(request);
+      JsonNode allowed = writtenRule(file, "allow");
+
+      ApprovalRules forDeny = rules("{\"projects\": {\"%s\": {}}}");
+      new RuleApprover(forDeny, new Person(ApprovalAnswer.DENY_ALWAYS), text -> {})
+          .approve(request);
+      JsonNode denied = writtenRule(file, "deny");
+
+      assertEquals(allowed, denied, "两个答复写下的主语必须是同一条：" + request.summary());
+      assertFalse(
+          Files.readString(file).contains("\"allow\""),
+          "拒绝只写拒绝列表，没有顺手放行什么：" + Files.readString(file));
+    }
+  }
+
+  /** {@code file} 里那个项目唯一的一条 {@code kind} 规则。 */
+  private static JsonNode writtenRule(Path file, String kind) throws IOException {
+    String written = Files.readString(file);
+    JsonNode rules = Json.parse(written).get("projects").fields().next().getValue().path(kind);
+    assertEquals(1, rules.size(), "文件里没有一条 " + kind + " 规则：" + written);
+    return rules.get(0);
   }
 }

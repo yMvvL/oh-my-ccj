@@ -103,22 +103,77 @@ public final class ApprovalRules {
     sessionAllows.add(rule);
   }
 
-  /**
-   * 为这个项目把一条放行规则写进文件，并保留它原有的其他内容。
-   *
-   * <p>写的是确切的规则，绝不扩大：命令按它运行时的样子写，路径按它被触及时的样子写。一句悄悄放行了比用户
-   * 眼前这件事更多东西的「一直允许」，与一个不说清自己在批准什么的审批提示是同一种缺陷。
-   */
+  /** 为这个项目把一条放行规则写进文件，并保留它原有的其他内容。 */
   public void remember(ApprovalRequest request) {
-    Rule rule = ruleFor(request);
+    remember(request, false);
+  }
+
+  /**
+   * 为这个项目把一条拒绝规则写进文件，并保留它原有的其他内容。
+   *
+   * <p>与 {@link #remember} 对称到主语为止：同一条命令、同一个工具名、同一个路径 glob，写进同一个文件的
+   * 另一个列表。这不是顺手为之的对称——两个答复回答的是同一个问题，所以谁都不该在文件里记下比眼前这件事
+   * 更多或更少的东西。没有它的时候，被一个反复出现的提示烦到的人只剩下把整个会话的审批关掉这一条路。
+   */
+  public void rememberDeny(ApprovalRequest request) {
+    remember(request, true);
+  }
+
+  /**
+   * 一条规则的主体：确切的规则，绝不扩大。命令按它运行时的样子写，路径按它被触及时的样子写。一句悄悄放行了
+   * 比用户眼前这件事更多东西的「一直允许」，与一个不说清自己在批准什么的审批提示是同一种缺陷。
+   *
+   * @param deny true 写进拒绝列表，false 写进允许列表
+   */
+  private void remember(ApprovalRequest request, boolean deny) {
+    change(deny, ruleFor(request), true);
+  }
+
+  /**
+   * 为这个项目写入一条规则，并保留文件里其他一切。设置面板的「添加」走的就是这里，所以它写出的东西与
+   * 「始终允许」「以后都拒绝」写下的完全一样——同一条写入、同一个文件、同一个列表，而不是第二套规则格式。
+   *
+   * <p>写之前按读取时那把同样的尺子校验。理由不是整洁：一条无效规则写进去以后，要等到下一次工具调用读它时
+   * 才会炸出来，而那已经不是用户按下按钮的那一刻了，错误也就无从指向引起它的那个字段。所以它带着同一句话在
+   * 这里出现，而文件保持原样。
+   */
+  public void remember(boolean deny, Rule rule) {
+    validate(rule, file);
+    change(deny, rule, true);
+  }
+
+  /**
+   * 按身份删掉一条规则——效果、工具、主语全都一致的那一条。
+   *
+   * @return 删掉了时为 true；文件里本来就没有这条规则时为 false，此时一个字节都不动
+   */
+  public boolean forget(boolean deny, Rule rule) {
+    return change(deny, rule, false);
+  }
+
+  /**
+   * 往文件里加一条规则，或从文件里删一条，并保留其他一切。
+   *
+   * <p>加与删共用这一处读改写：它们的分歧只在列表上的那一处，而写入、路径规范化与仅属主权限没有理由出现
+   * 第二遍。加一条已经在里面的规则不再重写文件——想要的状态已经成立。
+   */
+  private boolean change(boolean deny, Rule rule, boolean add) {
     Map<String, ProjectRules> all = read();
     ProjectRules mine = all.getOrDefault(project.toString(), ProjectRules.empty());
-    List<Rule> allow = new ArrayList<>(mine.allow());
-    if (!allow.contains(rule)) {
-      allow.add(rule);
+    List<Rule> rules = new ArrayList<>(deny ? mine.deny() : mine.allow());
+    if (add) {
+      if (rules.contains(rule)) {
+        return true;
+      }
+      rules.add(rule);
+    } else if (!rules.remove(rule)) {
+      return false;
     }
-    all.put(project.toString(), new ProjectRules(allow, mine.deny()));
+    all.put(
+        project.toString(),
+        deny ? new ProjectRules(mine.allow(), rules) : new ProjectRules(rules, mine.deny()));
     write(all);
+    return true;
   }
 
   /** 本进程知道的每一条规则，供用户索取的那份报告使用。 */
@@ -135,17 +190,27 @@ public final class ApprovalRules {
     return file;
   }
 
+  /**
+   * 这些规则所属的项目路径。规则按项目分键存放，所以设置面板得让人看出自己正在编辑的是哪一层——一个
+   * 目录的规则不是每个目录的规则。
+   */
+  public Path project() {
+    return project;
+  }
+
   private record ProjectRules(List<Rule> allow, List<Rule> deny) {
     static ProjectRules empty() {
       return new ProjectRules(List.of(), List.of());
     }
   }
 
-  private List<Rule> allow() {
+  /** 用户为这个项目写下的放行规则，按文件里的顺序。会话内的放行不在其中，它们不写进文件。 */
+  public List<Rule> allow() {
     return read().getOrDefault(project.toString(), ProjectRules.empty()).allow();
   }
 
-  private List<Rule> deny() {
+  /** 用户为这个项目写下的拒绝规则，按文件里的顺序。 */
+  public List<Rule> deny() {
     return read().getOrDefault(project.toString(), ProjectRules.empty()).deny();
   }
 
@@ -240,6 +305,38 @@ public final class ApprovalRules {
       return tool.startsWith(pattern.substring(0, pattern.length() - 1));
     }
     return pattern.equals(tool);
+  }
+
+  /**
+   * 这条规则若无效，说明它为什么无效；有效时为 null。位置由调用方补上，因为读文件时它落在某一行上，而从
+   * 设置面板进来时它落在某个字段上——同一句话，两种归属。
+   *
+   * <p>这也是读取那条路径用来报错的同一段文字：校验只有一份，否则「一条规则得说清它拦住什么」这件事会在两个
+   * 地方各有一个说法。
+   */
+  private static String problem(Rule rule) {
+    if (rule.tool() == null) {
+      return "审批规则需要 'tool'";
+    }
+    if (rule.command() == null && rule.path() == null && CONTENT_BEARING.contains(rule.tool())) {
+      return "针对 '"
+          + rule.tool()
+          + "' 的规则必须指明 'command' 或 'path'：只写 '"
+          + rule.tool()
+          + "' 会放行它的每一次调用，那是自动批准该做的事";
+    }
+    return null;
+  }
+
+  /** 按读取时那把尺子校验一条规则；无效时抛出带着原因与位置的异常。 */
+  private static void validate(Rule rule, Path file) {
+    String why = problem(rule);
+    if (why != null) {
+      throw new IllegalArgumentException(why + "，位置：" + file);
+    }
+    if (rule.command() != null) {
+      trailingWildcard(rule.command(), file);
+    }
   }
 
   /**
@@ -370,24 +467,15 @@ public final class ApprovalRules {
       String tool = text(entry, "tool");
       String command = text(entry, "command");
       String path = text(entry, "path");
-      if (tool == null) {
-        throw new IllegalArgumentException("审批规则需要 'tool'，位置：" + file + "：" + entry);
-      }
-      if (command == null && path == null && CONTENT_BEARING.contains(tool)) {
-        throw new IllegalArgumentException(
-            "针对 '"
-                + tool
-                + "' 的规则必须指明 'command' 或 'path'：只写 '"
-                + tool
-                + "' 会放行它的每一次调用，那是自动批准该做的事——"
-                + file
-                + "："
-                + entry);
+      Rule rule = new Rule(tool, command, path);
+      String why = problem(rule);
+      if (why != null) {
+        throw new IllegalArgumentException(why + "，位置：" + file + "：" + entry);
       }
       if (command != null) {
         trailingWildcard(command, file);
       }
-      rules.add(new Rule(tool, command, path));
+      rules.add(rule);
     }
     return List.copyOf(rules);
   }

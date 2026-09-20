@@ -8,7 +8,9 @@ import com.ccj.agent.core.ApprovalRequest;
 import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.RuleApprover;
+import com.ccj.agent.core.SpendLimit;
 import com.ccj.agent.core.Compaction;
+import com.ccj.agent.core.Checks;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
 import com.ccj.agent.core.SubAgentRunner;
@@ -38,7 +40,13 @@ import com.ccj.agent.ui.ToolSummary;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
@@ -303,6 +311,12 @@ public final class AgentHub implements AutoCloseable {
     node.put("sessionId", current == null ? "" : current.id());
     node.put("messageCount", current == null ? 0 : current.messages().size());
     node.put("autoApprove", autoApprove.get());
+    // 上限是用户设的，不是推测的；null 表示没设。页面用它把「用了多少」变成「用了多少 / 上限多少」。
+    if (config.maxTotalTokens() == null) {
+      node.putNull("maxTotalTokens");
+    } else {
+      node.put("maxTotalTokens", config.maxTotalTokens());
+    }
     // 一张已经描述好、还没走的图片：刷新之后那条缩略条还在，而不是变成一张看不见、却会跟着下一句话发
     // 出去的图片。
     Held held = heldPicture(current);
@@ -1182,6 +1196,15 @@ public final class AgentHub implements AutoCloseable {
     if (provider.get() == null) {
       throw new IllegalStateException("没有配置模型——打开「设置」添加一个");
     }
+    // 花费上限在**开始之前**判定，而不是在花掉了之后：一个跑了一半才被拦下的回合，既花了钱又没有结果，
+    // 而用户能做的补救（提高上限、改用便宜模型）都得在下一次开始之前做。
+    String overBudget =
+        SpendLimit.refusal(
+            current.totals().inputTokens() + current.totals().outputTokens(),
+            config.maxTotalTokens());
+    if (overBudget != null) {
+      throw new IllegalStateException(overBudget);
+    }
     String composed =
         held == null ? text.strip() : held.block() + (text.isBlank() ? "" : "\n\n" + text.strip());
     if (conversation.begin()) {
@@ -1308,6 +1331,69 @@ public final class AgentHub implements AutoCloseable {
    * <p>返回丢掉的是哪一个的名字，或者 {@code null}：页面说得出「移除了 photo.png」，而点名一张从来
    * 不在那里的图片是一次会撒谎的成功。
    */
+  /**
+   * 下一次退回会动哪些文件，以及还能退回几个回合。
+   *
+   * <p>只读：它不建立任何东西，也不消费任何东西。退回会覆盖磁盘上的文件，而一个会覆盖文件的按钮值得先
+   * 说出它要覆盖什么——这份清单于是成了那个「先说」。
+   */
+  public ObjectNode undoPreview() {
+    FileSession current = session();
+    if (current == null) {
+      throw new IllegalStateException("没有打开的会话");
+    }
+    Conversation conversation = conversations.get(current.id());
+    if (conversation != null && conversation.running()) {
+      throw new IllegalStateException("还有回合在跑；预览退回之前请先中止它");
+    }
+    return checkpoints.previewUndo(current.file(), cwd());
+  }
+
+  /**
+   * 这条会话附件目录里某个文件的小图，或者 {@code null}（那里没有这个文件）。
+   *
+   * @throws IllegalArgumentException 名字不是一个文件名的形状时抛出——它是调用方给的路径参数，而
+   *     {@code ../} 会让它变成「读服务器上的任意文件」
+   */
+  public PictureFile attachmentThumbnail(String name) {
+    FileSession current = session();
+    if (current == null || name == null || name.isBlank()) {
+      return null;
+    }
+    Path directory = AttachmentStore.forSession(current.file()).directory();
+    Path file = resolveInside(directory, name.strip());
+    if (file == null || !Files.isRegularFile(file)) {
+      return null;
+    }
+    byte[] bytes;
+    try {
+      bytes = Files.readAllBytes(file);
+    } catch (IOException e) {
+      throw new IllegalStateException("读不出这张图片：" + e.getMessage());
+    }
+    byte[] thumb = Thumbnails.of(bytes);
+    return new PictureFile(thumb, AttachmentStore.mediaTypeOf(thumb));
+  }
+
+  /**
+   * 把调用方给的一个名字解析成目录里的一个文件，或者 {@code null}。
+   *
+   * <p>规矩是「解析之后仍然必须在那个目录里」：名字里带分隔符、或者解析后跑到目录外面去（{@code ..}、
+   * 绝对路径、指向别处的符号链接），一律返回 {@code null}。检查的是解析结果而不是名字的拼写，因为名字
+   * 的拼写有太多写法。
+   */
+  private static Path resolveInside(Path directory, String name) {
+    Path base = directory.toAbsolutePath().normalize();
+    if (!Files.isDirectory(base)) {
+      return null;
+    }
+    Path candidate = base.resolve(name).normalize();
+    return candidate.getParent() != null && candidate.getParent().equals(base) ? candidate : null;
+  }
+
+  /** 一张图片的字节，以及它们是什么类型。 */
+  public record PictureFile(byte[] bytes, String mediaType) {}
+
   public String discardPicture() {
     FileSession current = session();
     if (current == null) {
@@ -1921,10 +2007,11 @@ public final class AgentHub implements AutoCloseable {
       return switch (posted.strip().toLowerCase(java.util.Locale.ROOT)) {
         case "session" -> ApprovalAnswer.ALLOW_SESSION;
         case "always" -> ApprovalAnswer.ALLOW_ALWAYS;
+        case "never" -> ApprovalAnswer.DENY_ALWAYS;
         case "allow", "once", "yes" -> ApprovalAnswer.ALLOW_ONCE;
         case "deny", "no" -> ApprovalAnswer.DENY;
         default -> throw new IllegalArgumentException(
-            "未知的审批回答 '" + posted + "'；请使用 deny、once、session 或 always");
+            "未知的审批回答 '" + posted + "'；请使用 deny、never、once、session 或 always");
       };
     }
     if (!allow) {
@@ -2474,6 +2561,213 @@ public final class AgentHub implements AutoCloseable {
     restored.forEach(files::add);
     response.put("remaining", checkpoints.undoableTurns(current.file()));
     return response;
+  }
+
+  // ------------------------------------------------- approvals and post-edit checks
+
+  /**
+   * 设置面板需要的审批规则：哪一个项目、哪些条，以及它们的读法。
+   *
+   * <p>{@code describe} 是 {@link ApprovalRules#describe()} 的原文，面板把它直接印出来——规则的读法只有
+   * 一处，面板不再造第二种说法。它与 {@code rules} 同序：先拒绝、再允许，本会话内的放行排在最后（它们不在
+   * 文件里，因此也不在 {@code rules} 里）。
+   */
+  public ObjectNode rulesJson() {
+    ApprovalRules rules = approvalRules;
+    ObjectNode node = Json.object();
+    if (rules == null) {
+      // 没有接上规则文件的 hub：如实说没有，而不是编一个路径出来。
+      node.putNull("file");
+      node.put("project", cwd().toString());
+      node.putArray("rules");
+      node.putArray("describe");
+      return node;
+    }
+    node.put("file", rules.file().toString());
+    node.put("project", rules.project().toString());
+    ArrayNode list = node.putArray("rules");
+    rules.deny().forEach(rule -> list.add(ruleJson(rule, "deny")));
+    rules.allow().forEach(rule -> list.add(ruleJson(rule, "allow")));
+    ArrayNode describe = node.putArray("describe");
+    rules.describe().forEach(describe::add);
+    return node;
+  }
+
+  private static ObjectNode ruleJson(ApprovalRules.Rule rule, String effect) {
+    ObjectNode node = Json.object();
+    node.put("effect", effect);
+    node.put("tool", rule.tool());
+    if (rule.command() == null) {
+      node.putNull("command");
+    } else {
+      node.put("command", rule.command());
+    }
+    if (rule.path() == null) {
+      node.putNull("path");
+    } else {
+      node.put("path", rule.path());
+    }
+    return node;
+  }
+
+  /**
+   * 加一条或删一条审批规则，走 {@link ApprovalRules} 自己那条写入路径，所以面板写出来的文件与手编的完全
+   * 一样。
+   *
+   * <p>改动立刻生效：规则每次工具调用都从文件里读，而这里写的就是那个文件。所以写完之后把同一个文件重新打开
+   * 并设回去——一个没有生效的删除，比一个不能编辑的规则文件更糟。
+   */
+  public ObjectNode applyRules(JsonNode posted) {
+    ApprovalRules rules = approvalRules;
+    if (rules == null) {
+      throw new IllegalArgumentException("这个服务器没有接上审批规则文件，所以规则改不了");
+    }
+    if (posted == null || !posted.isObject()) {
+      throw new IllegalArgumentException("需要一个 JSON 对象");
+    }
+    String effect = posted.path("effect").asText("");
+    boolean deny;
+    if ("deny".equals(effect)) {
+      deny = true;
+    } else if ("allow".equals(effect)) {
+      deny = false;
+    } else {
+      throw new IllegalArgumentException("effect 必须是 'allow' 或 'deny'");
+    }
+    String tool = text(posted, "tool");
+    if (tool == null) {
+      throw new IllegalArgumentException("字段 'tool' 是必需的：一条规则必须点名它拦住的工具");
+    }
+    ApprovalRules.Rule rule =
+        new ApprovalRules.Rule(tool, text(posted, "command"), text(posted, "path"));
+    switch (posted.path("action").asText("")) {
+      case "add" -> rules.remember(deny, rule);
+      case "remove" -> {
+        if (!rules.forget(deny, rule)) {
+          throw new IllegalArgumentException(
+              "这条规则已经不在文件里了——它可能已被另一次改动删掉；列表已重新读取，请看着它再删一次");
+        }
+      }
+      default -> throw new IllegalArgumentException("action 必须是 'add' 或 'remove'");
+    }
+    // **不**重开一份实例：判定每次调用都重读那个文件（`deny()`/`allow()` 里就是 `read()`），所以刚写下的
+    // 规则下一次工具调用就会被看到，而重开会把同一个实例里那个「本会话内放行」的清单丢掉——面板上保存一条
+    // 规则，于是变成了把本次会话已经答过的所有事情再问一遍。
+    return rulesJson();
+  }
+
+  /**
+   * 设置面板需要的编辑后检查，以及它们所在的那个文件。
+   *
+   * <p>{@code timeoutSeconds} 一并回传，是因为 POST 是整份替换：面板得先看见一个检查的全部内容，才能在
+   * 重写那一份时把它原样带回去。丢掉的字段会在下一次编辑时悄悄变成默认值。
+   */
+  public ObjectNode checksJson() {
+    Path file = settings.configFile();
+    ObjectNode node = Json.object();
+    if (file == null) {
+      node.putNull("file");
+      node.putArray("checks");
+      return node;
+    }
+    node.put("file", file.toString());
+    ArrayNode list = node.putArray("checks");
+    for (Checks.Check check : Checks.from(file).declared()) {
+      ObjectNode entry = list.addObject();
+      entry.put("glob", check.glob());
+      entry.put("command", check.command());
+      entry.put("timeoutSeconds", check.timeoutSeconds());
+    }
+    return node;
+  }
+
+  /**
+   * 整份替换配置文件里的 {@code checks} 键，其他键一个都不动。
+   *
+   * <p>校验用的是 {@link Checks} 自己的解析，所以面板上看到的那句话与工具运行时报告的那句话是同一句。它只认
+   * 文件，错误消息里也要指名真正的配置文件，所以这里是先写进去再读回来自检：不合法就原样放回去——配置文件
+   * 绝不能因为一次被拒绝的保存而变得读不出来。
+   */
+  public ObjectNode applyChecks(JsonNode posted) {
+    Path file = settings.configFile();
+    if (file == null) {
+      throw new IllegalArgumentException("这个服务器没有配置文件，所以检查改不了");
+    }
+    JsonNode block = posted == null || !posted.isObject() ? null : posted.get("checks");
+    if (block == null) {
+      throw new IllegalArgumentException(
+          "需要一个 'checks' 数组：正文形如 {\"checks\": [{\"glob\": \"**/*.java\", \"command\":"
+              + " \"mvn -q -o -DskipTests compile\"}]}");
+    }
+    JsonNode root;
+    try {
+      root = Files.isRegularFile(file) ? Json.parse(Files.readString(file)) : Json.object();
+    } catch (IOException e) {
+      throw new UncheckedIOException("无法读取 " + file, e);
+    }
+    if (!root.isObject()) {
+      throw new IllegalArgumentException("配置文件 " + file + " 必须包含一个 JSON 对象");
+    }
+    ObjectNode updated = (ObjectNode) root;
+    if (block.isNull() || (block.isArray() && block.isEmpty())) {
+      updated.remove("checks");
+    } else {
+      updated.set("checks", block);
+    }
+    byte[] before = readOrNull(file);
+    writeConfig(file, updated);
+    try {
+      Checks.from(file).declared();
+    } catch (RuntimeException e) {
+      restore(file, before);
+      throw e;
+    }
+    return checksJson();
+  }
+
+  /** 文件此刻的字节；不存在时为 null。 */
+  private static byte[] readOrNull(Path file) {
+    try {
+      return Files.isRegularFile(file) ? Files.readAllBytes(file) : null;
+    } catch (IOException e) {
+      throw new UncheckedIOException("无法读取 " + file, e);
+    }
+  }
+
+  /** 把文件放回它原来的样子；它原来不存在时删掉。 */
+  private static void restore(Path file, byte[] before) {
+    try {
+      if (before == null) {
+        Files.deleteIfExists(file);
+      } else {
+        Files.write(file, before);
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException("无法还原 " + file, e);
+    }
+  }
+
+  /** 写回配置文件：只动调用方改过的那个键，其余一切照旧，并像写设置那样限制为仅属主可读。 */
+  private static void writeConfig(Path file, ObjectNode root) {
+    try {
+      Path parent = file.toAbsolutePath().getParent();
+      if (parent != null) {
+        Files.createDirectories(parent);
+      }
+      Files.writeString(
+          file,
+          Json.writePretty(root) + "\n",
+          StandardCharsets.UTF_8,
+          StandardOpenOption.CREATE,
+          StandardOpenOption.TRUNCATE_EXISTING);
+      try {
+        Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+      } catch (UnsupportedOperationException | IOException ignored) {
+        // 不是 POSIX 文件系统；内容已经写下了，而那才是被要求的事。
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException("无法写入 " + file, e);
+    }
   }
 
   /**

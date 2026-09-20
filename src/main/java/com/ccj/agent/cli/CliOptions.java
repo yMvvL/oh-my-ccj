@@ -26,6 +26,7 @@ public record CliOptions(
     Double temperature,
     Integer maxTokens,
     Integer maxContextTokens,
+    Integer maxTotalTokens,
     String reasoning,
     boolean yolo,
     String resume,
@@ -75,7 +76,8 @@ public record CliOptions(
         maxContextTokens,
         null,
         Map.of(),
-        vision());
+        vision(),
+        maxTotalTokens);
   }
 
   /**
@@ -106,6 +108,7 @@ public record CliOptions(
     Double temperature = null;
     Integer maxTokens = null;
     Integer maxContextTokens = null;
+    Integer maxTotalTokens = null;
     String reasoning = null;
     boolean yolo = false;
     String resume = null;
@@ -255,6 +258,10 @@ public record CliOptions(
           maxContextTokens = integer(name, take(args, i, name, inline));
           i += inline == null ? 2 : 1;
         }
+        case "--max-total-tokens" -> {
+          maxTotalTokens = integer(name, take(args, i, name, inline));
+          i += inline == null ? 2 : 1;
+        }
         case "--reasoning" -> {
           reasoning = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
@@ -310,6 +317,7 @@ public record CliOptions(
         temperature,
         maxTokens,
         maxContextTokens,
+        maxTotalTokens,
         reasoning,
         yolo,
         resume,
@@ -360,6 +368,9 @@ public record CliOptions(
               --max-context-tokens <n>
                                    提示词预算：超过它，旧的工具结果会被省略，更早的往来会在请求
                                    发出之前被丢弃
+              --max-total-tokens <n>
+                                   花费上限：这条会话累计用掉的 token（输入加输出）超过它，就不再
+                                   开始新的回合；不设置表示不设上限
               --reasoning <level>  模型该思考多少：low、high 或 max
               --system <text>      本次运行的系统提示词
 

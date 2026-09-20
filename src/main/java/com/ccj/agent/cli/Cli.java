@@ -7,6 +7,7 @@ import com.ccj.agent.core.ApprovalAnswer;
 import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.RuleApprover;
+import com.ccj.agent.core.SpendLimit;
 import com.ccj.agent.core.Checks;
 import com.ccj.agent.session.CheckpointStore;
 import com.ccj.agent.mcp.McpTools;
@@ -439,7 +440,7 @@ public final class Cli {
                 + request.title()
                 + " — "
                 + request.detail()
-                + "？[y/N/s=本会话/a=始终] ");
+                + "？[y/N/s=本会话/a=始终/d=以后都拒绝] ");
         out.flush();
         String answer = in.readLine();
         if (answer == null) {
@@ -450,6 +451,8 @@ public final class Cli {
           case "y", "yes" -> ApprovalAnswer.ALLOW_ONCE;
           case "s", "session" -> ApprovalAnswer.ALLOW_SESSION;
           case "a", "always" -> ApprovalAnswer.ALLOW_ALWAYS;
+          // 「以后都拒绝」和「始终允许」是一对：后者写一条 allow 规则，前者写一条 deny 规则。
+          case "d", "never" -> ApprovalAnswer.DENY_ALWAYS;
           default -> ApprovalAnswer.DENY;
         };
       } catch (IOException e) {
@@ -1022,6 +1025,18 @@ public final class Cli {
     }
 
     private void turn(String input) {
+      // 同一条上限，同一个判定：终端与网页是同一台机器上的同一条会话，两边不该有不同的规矩。判定在
+      // 回合开始之前，而且**不进** checkpoints.beginTurn——一次被拒绝的输入没有改动任何文件，所以它
+      // 不该留下一个可以退回的回合。
+      String overBudget =
+          SpendLimit.refusal(
+              session.totals().inputTokens() + session.totals().outputTokens(),
+              config.maxTotalTokens());
+      if (overBudget != null) {
+        err.println(overBudget);
+        err.flush();
+        return;
+      }
       checkpoints.beginTurn(session.file(), cwd);
       try {
         loop.run(input);

@@ -78,8 +78,9 @@ public record ToolContext(
   /**
    * 请求许可，并返回要交还回去的拒绝理由——获准时返回 null。
    *
-   * <p>返回的是答复而不是请求的文本，因为审批现在有四种结果：可以一次、本会话可以、一直可以，以及两种对
-   * 日后翻转录的人来说读法不同的「不行」。
+   * <p>返回的是答复而不是请求的文本，因为审批现在有五种结果：可以一次、本会话可以、一直可以、一直不可以
+   * （三者都会写进或来自规则文件），以及三种对日后翻转录的人来说读法不同的「不行」——我刚才说的不行、
+   * 我刚说不行并且记了下来、以及你先前写下的规则说不行。
    */
   public String refusal(ApprovalRequest request) {
     ApprovalAnswer answer = approver.approve(request);

@@ -25,6 +25,10 @@ import java.util.Map;
  * <p>{@code baseUrl}、{@code apiKey} 和 {@code apiKeyEnv} 是<em>属于提供方的</em>：只有挨着它们被填写时
  * 所针对的那个提供方，它们才有意义，而 {@code settingsFor} 记录的正是这件事。见
  * {@link #settingsBelongTo}。
+ *
+ * <p>{@code maxTotalTokens} 是这条会话累计花掉多少 token 的上限，null 表示不设上限——它与
+ * {@code maxContextTokens} 是两件事：后者管一次请求能带多少内容，前者管这条会话一共能花多少，越过之后
+ * 就不再开始新回合。判定在 {@link SpendLimit} 里，因为这个类只负责「值是什么」，不负责「值意味着什么」。
  */
 public record Config(
     String provider,
@@ -41,7 +45,8 @@ public record Config(
     Integer maxContextTokens,
     String settingsFor,
     Map<String, ProviderSettings> remembered,
-    VisionConfig vision) {
+    VisionConfig vision,
+    Integer maxTotalTokens) {
 
   /**
    * 上下文预算出现之前的字段形态，这样不关心它的调用方就不必点它的名。
@@ -73,6 +78,7 @@ public record Config(
         null,
         null,
         Map.of(),
+        null,
         null);
   }
 
@@ -107,6 +113,48 @@ public record Config(
         maxContextTokens,
         null,
         Map.of(),
+        null,
+        null);
+  }
+
+  /**
+   * 花费上限出现之前的字段形态，这样不关心它的调用方就不必点它的名：不设上限，正是这个字段缺席时的意思。
+   *
+   * <p>网页表单就走这条路——它按位置点名每一个它管理的字段，为了让一个 String 别落进别的槽位里；它不管理的
+   * 字段显式给 null，包括这个。
+   */
+  public Config(
+      String provider,
+      String model,
+      String baseUrl,
+      String apiKey,
+      String apiKeyEnv,
+      Double temperature,
+      Integer maxTokens,
+      Boolean autoApprove,
+      Integer outputLimitBytes,
+      String systemPrompt,
+      String reasoning,
+      Integer maxContextTokens,
+      String settingsFor,
+      Map<String, ProviderSettings> remembered,
+      VisionConfig vision) {
+    this(
+        provider,
+        model,
+        baseUrl,
+        apiKey,
+        apiKeyEnv,
+        temperature,
+        maxTokens,
+        autoApprove,
+        outputLimitBytes,
+        systemPrompt,
+        reasoning,
+        maxContextTokens,
+        settingsFor,
+        remembered,
+        vision,
         null);
   }
 
@@ -167,7 +215,8 @@ public record Config(
         pick(maxContextTokens, higher.maxContextTokens),
         pick(settingsFor, higher.settingsFor),
         mergeRemembered(remembered, higher.remembered),
-        mergeVision(vision, higher.vision));
+        mergeVision(vision, higher.vision),
+        pick(maxTotalTokens, higher.maxTotalTokens));
   }
 
   /**
@@ -268,7 +317,7 @@ public record Config(
   public Config forgetProviderSettings() {
     return new Config(
         provider, model, null, null, null, temperature, maxTokens, autoApprove, outputLimitBytes,
-        systemPrompt, reasoning, maxContextTokens, null, remembered, vision);
+        systemPrompt, reasoning, maxContextTokens, null, remembered, vision, maxTotalTokens);
   }
 
   /**
@@ -285,7 +334,7 @@ public record Config(
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
         outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor,
-        remembered, vision.withoutApiKey());
+        remembered, vision.withoutApiKey(), maxTotalTokens);
   }
 
   /**
@@ -299,7 +348,7 @@ public record Config(
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
         outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor,
-        remembered, null);
+        remembered, null, maxTotalTokens);
   }
 
   /** 同一份配置，但把它的端点和凭据字段标记为属于 {@code provider}。 */
@@ -319,7 +368,8 @@ public record Config(
         maxContextTokens,
         provider,
         remembered,
-        vision);
+        vision,
+        maxTotalTokens);
   }
 
   /** 为 {@code provider} 记住的配对，如果有的话。 */
@@ -366,7 +416,8 @@ public record Config(
         maxContextTokens,
         settingsFor,
         remembered,
-        vision);
+        vision,
+        maxTotalTokens);
   }
 
   /** 忘掉为 {@code provider} 记住的东西。 */
@@ -417,7 +468,8 @@ public record Config(
             maxContextTokens,
             provider,
             next,
-            vision)
+            vision,
+            maxTotalTokens)
         .resolved();
   }
 
@@ -464,14 +516,14 @@ public record Config(
     return new Config(
         provider, model, baseUrl, key, apiKeyEnv, temperature, maxTokens, autoApprove,
         outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor,
-        remembered, vision);
+        remembered, vision, maxTotalTokens);
   }
 
   private Config withRemembered(Map<String, ProviderSettings> next) {
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
         outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor, next,
-        vision);
+        vision, maxTotalTokens);
   }
 
   /** 补上取决于所选提供方的默认值。 */
@@ -499,7 +551,8 @@ public record Config(
         maxContextTokens,
         settingsFor,
         remembered,
-        vision);
+        vision,
+        maxTotalTokens);
   }
 
   /**
@@ -589,7 +642,8 @@ public record Config(
         integer(root, "maxContextTokens"),
         text(root, "settingsFor"),
         readRemembered(root),
-        readVision(root));
+        readVision(root),
+        integer(root, "maxTotalTokens"));
   }
 
   /**
@@ -656,7 +710,8 @@ public record Config(
         parseInteger(env.get("CCJ_MAX_CONTEXT_TOKENS")),
         null,
         Map.of(),
-        readEnvVision(env));
+        readEnvVision(env),
+        parseInteger(env.get("CCJ_MAX_TOTAL_TOKENS")));
   }
 
   /**
@@ -739,6 +794,7 @@ public record Config(
     putNumber(root, "maxTokens", managed.maxTokens());
     putText(root, "reasoning", managed.reasoning());
     putNumber(root, "maxContextTokens", managed.maxContextTokens());
+    putNumber(root, "maxTotalTokens", managed.maxTotalTokens());
 
     try {
       Path parent = file.toAbsolutePath().getParent();
@@ -865,6 +921,8 @@ public record Config(
     out.put(
         "maxContextTokens",
         maxContextTokens == null ? "（无预算）" : String.valueOf(maxContextTokens));
+    out.put(
+        "maxTotalTokens", maxTotalTokens == null ? "（无上限）" : String.valueOf(maxTotalTokens));
     out.put("vision", describeVision(env));
     return out;
   }

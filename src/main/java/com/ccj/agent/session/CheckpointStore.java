@@ -188,28 +188,21 @@ public final class CheckpointStore {
     if (turns.isEmpty()) {
       return List.of();
     }
-    int newest = turns.get(turns.size() - 1);
-    Path turn = directory.resolve(Integer.toString(newest));
-    JsonNode manifest;
-    try {
-      Path file = turn.resolve("manifest.json");
-      if (!Files.isRegularFile(file)) {
-        // 一个什么都没记录的回合：没有可撤销的，它的目录也删掉，好让下一次撤销够得着它前面的那个回合。
-        deleteRecursively(turn);
-        return List.of();
-      }
-      manifest = Json.parse(Files.readString(file, StandardCharsets.UTF_8));
-    } catch (IOException | IllegalArgumentException e) {
+    Path turn = directory.resolve(Integer.toString(turns.get(turns.size() - 1)));
+    JsonNode manifest = readManifest(turn);
+    if (manifest == null) {
+      // 一个什么都没记录的回合：没有可撤销的，它的目录也删掉，好让下一次撤销够得着它前面的那个回合。
+      deleteRecursively(turn);
       return List.of();
     }
     List<String> restored = new ArrayList<>();
     for (JsonNode entry : manifest.path("files")) {
-      Path target = project.resolve(entry.path("path").asText()).normalize();
-      if (!target.startsWith(project.toAbsolutePath().normalize())) {
+      Path target = targetOf(entry, project);
+      if (target == null) {
         continue; // 指到别处的 manifest 不该照做
       }
       try {
-        if (entry.path("existed").asBoolean(false)) {
+        if (restores(entry)) {
           Path blob = turn.resolve(entry.path("blob").asText());
           Files.createDirectories(target.getParent());
           Files.writeString(target, Files.readString(blob, StandardCharsets.UTF_8),
@@ -226,6 +219,42 @@ public final class CheckpointStore {
     return List.copyOf(restored);
   }
 
+  /**
+   * 下一次退回会动哪些文件、还能退回几个回合——只读。
+   *
+   * <p>退回是唯一一个会覆盖磁盘的按钮，所以清单要在按下去之前看得见：「按下去再发现」比「先说会改什么」
+   * 贵得多。这个方法因此什么都不改——不建目录、不写文件、不删回合；一个自己动了磁盘的预览，没人敢先看
+   * 一眼。
+   *
+   * @param sessionFile 会话文件，检查点与它并排；没有会话文件时回到空清单
+   * @param project 项目根目录，清单里的路径相对它给出，和 {@link #undoLastTurn} 收得下的是同一套
+   * @return {@code {"files":[{"path":…,"action":"restore"|"delete"}],"turns":n}}；没有可退回的回合时
+   *     files 为空、turns 为 0。turns 包括这一次在内：它和 {@link #undoableTurns} 说的是同一个数
+   */
+  public ObjectNode previewUndo(Path sessionFile, Path project) {
+    Path directory = directoryFor(sessionFile);
+    List<Integer> turns = directory == null ? List.of() : turnNumbers(directory);
+    ObjectNode preview = Json.object();
+    ArrayNode files = preview.putArray("files");
+    if (!turns.isEmpty()) {
+      // 取的是 undoLastTurn 会动手的那个回合：预览说的必须就是下一次退回真会做的那件事。
+      int newest = turns.get(turns.size() - 1);
+      JsonNode manifest = readManifest(directory.resolve(Integer.toString(newest)));
+      if (manifest != null) {
+        for (JsonNode entry : manifest.path("files")) {
+          if (targetOf(entry, project) == null) {
+            continue; // 退回不照做的东西，预览也不该承诺
+          }
+          ObjectNode file = files.addObject();
+          file.put("path", entry.path("path").asText());
+          file.put("action", actionOf(entry));
+        }
+      }
+    }
+    preview.put("turns", turns.size());
+    return preview;
+  }
+
   /** 有多少个回合可以撤销，最新的在前，给想说这句话的调用方用。 */
   public int undoableTurns(Path sessionFile) {
     Path directory = directoryFor(sessionFile);
@@ -239,6 +268,35 @@ public final class CheckpointStore {
     }
     Path root = sessionFile.toAbsolutePath().normalize();
     return root.resolveSibling(root.getFileName().toString().replace(".jsonl", "") + ".checkpoints");
+  }
+
+  /** 那个回合的 manifest，不在了或者读不出来时为 null。 */
+  private static JsonNode readManifest(Path turn) {
+    Path file = turn.resolve("manifest.json");
+    if (!Files.isRegularFile(file)) {
+      return null;
+    }
+    try {
+      return Json.parse(Files.readString(file, StandardCharsets.UTF_8));
+    } catch (IOException | IllegalArgumentException e) {
+      return null;
+    }
+  }
+
+  /** 回合开始时就存在的文件是放回原样；回合新建的是删掉——退回与预览都从这里取答案。 */
+  private static boolean restores(JsonNode entry) {
+    return entry.path("existed").asBoolean(false);
+  }
+
+  /** 上面那个判断说给人听的样子。 */
+  private static String actionOf(JsonNode entry) {
+    return restores(entry) ? "restore" : "delete";
+  }
+
+  /** 条目指向的文件，落在项目之外时为 null（那种条目连退回都不照做）。 */
+  private static Path targetOf(JsonNode entry, Path project) {
+    Path target = project.resolve(entry.path("path").asText()).normalize();
+    return target.startsWith(project.toAbsolutePath().normalize()) ? target : null;
   }
 
   private static String relative(Path file, Path project) {

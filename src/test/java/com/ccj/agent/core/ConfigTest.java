@@ -662,6 +662,72 @@ class ConfigTest {
     assertEquals("sk-vision", budgeted.vision().apiKey());
   }
 
+  @Test
+  void theSpendLimitIsUnsetByDefault() {
+    // null 是「不设上限」，与「上限是 0」不是一回事：默认必须是不设，否则每个回合都会被挡下。
+    assertNull(Config.empty().maxTotalTokens());
+    assertNull(Config.empty().resolved().maxTotalTokens());
+    assertEquals("（无上限）", Config.empty().resolved().describe(Map.of()).get("maxTotalTokens"));
+    assertEquals(
+        "10000",
+        Config.empty().merge(spendLimit(10000)).resolved().describe(Map.of()).get("maxTotalTokens"));
+  }
+
+  @Test
+  void theSpendLimitComesFromFileAndEnvironment() throws IOException {
+    Path file = tmp.resolve("config.json");
+    Files.writeString(file, "{\"maxTotalTokens\": 250000}");
+
+    assertEquals(250000, Config.fromFile(file).maxTotalTokens().intValue());
+    assertEquals(
+        300000,
+        Config.fromEnv(Map.of("CCJ_MAX_TOTAL_TOKENS", "300000")).maxTotalTokens().intValue());
+    assertNull(Config.fromEnv(Map.of()).maxTotalTokens(), "没有变量就不设上限");
+  }
+
+  @Test
+  void theSpendLimitIsLayeredLikeEveryOtherLimit() throws IOException {
+    Path file = tmp.resolve("config.json");
+    Files.writeString(file, "{\"maxTotalTokens\": 100000}");
+
+    assertEquals(
+        200000,
+        Config.layered(file, Map.of("CCJ_MAX_TOTAL_TOKENS", "200000"), null).maxTotalTokens().intValue(),
+        "环境变量胜过文件");
+    assertEquals(
+        400000,
+        Config.layered(file, Map.of("CCJ_MAX_TOTAL_TOKENS", "200000"), spendLimit(400000))
+            .maxTotalTokens()
+            .intValue(),
+        "调用方的 flag 又胜过环境变量");
+    assertEquals(
+        100000,
+        Config.empty().merge(spendLimit(100000)).merge(Config.empty()).maxTotalTokens().intValue(),
+        "上层没提到它，就留着下层：合并不把「没说」读成「取消」");
+  }
+
+  @Test
+  void writeIntoPersistsTheSpendLimit() throws IOException {
+    Path file = tmp.resolve("config.json");
+    Config.writeInto(file, Config.empty().merge(spendLimit(123456)));
+
+    assertTrue(Files.readString(file).contains("maxTotalTokens"));
+    assertEquals(123456, Config.fromFile(file).maxTotalTokens().intValue());
+
+    // 清空就是清空：一个 null 上限让这个键从文件里消失，而不是留个空位等人猜。
+    Config.writeInto(
+        file,
+        Config.empty()
+            .merge(new Config(null, "m", null, null, null, null, null, null, null, null, null)));
+    assertFalse(Files.readString(file).contains("maxTotalTokens"));
+    assertNull(Config.fromFile(file).maxTotalTokens());
+  }
+
+  private static Config spendLimit(Integer maxTotalTokens) {
+    return new Config(null, null, null, null, null, null, null, null, null, null, null, null,
+        null, null, null, maxTotalTokens);
+  }
+
   private static Config reasoning(String level) {
     return new Config(null, null, null, null, null, null, null, null, null, null, level);
   }

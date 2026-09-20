@@ -137,6 +137,10 @@
     photoPendingName: $('photo-pending-name'),
     btnPhotoDrop: $('photo-pending-drop'),
     btnUndo: $('btn-undo'),
+    undoConfirm: $('undo-confirm'),
+    undoConfirmText: $('undo-confirm-text'),
+    undoConfirmYes: $('undo-confirm-yes'),
+    undoConfirmNo: $('undo-confirm-no'),
     side: $('side'),
     toolList: $('tool-list'),
     usage: $('usage'),
@@ -153,6 +157,8 @@
     uErrorsRow: $('u-errors-row'),
     uErrors: $('u-errors'),
     uTools: $('u-tools'),
+    uSpend: $('u-spend'),
+    uSpendRow: $('u-spend-row'),
     uCompactions: $('u-compact'),
     uCompactionRow: $('u-compact-row'),
     uElapsed: $('u-elapsed'),
@@ -222,7 +228,30 @@
     cfgNewApiKeyEnv: $('cfg-new-apikeyenv'),
     cfgNewModels: $('cfg-new-models'),
     cfgProviderFormError: $('cfg-provider-form-error'),
-    cfgProviderSave: $('cfg-provider-save')
+    cfgProviderSave: $('cfg-provider-save'),
+    cfgRulesScope: $('cfg-rules-scope'),
+    cfgRulesNote: $('cfg-rules-note'),
+    cfgRulesList: $('cfg-rules-list'),
+    cfgRuleForm: $('cfg-rule-form'),
+    cfgRuleEffect: $('cfg-rule-effect'),
+    cfgRuleTool: $('cfg-rule-tool'),
+    cfgRuleToolError: $('cfg-rule-tool-error'),
+    cfgRuleCommand: $('cfg-rule-command'),
+    cfgRuleCommandError: $('cfg-rule-command-error'),
+    cfgRulePath: $('cfg-rule-path'),
+    cfgRuleFormError: $('cfg-rule-form-error'),
+    cfgRuleSave: $('cfg-rule-save'),
+    cfgChecksFile: $('cfg-checks-file'),
+    cfgChecksNote: $('cfg-checks-note'),
+    cfgChecksList: $('cfg-checks-list'),
+    cfgCheckForm: $('cfg-check-form'),
+    cfgCheckGlob: $('cfg-check-glob'),
+    cfgCheckGlobError: $('cfg-check-glob-error'),
+    cfgCheckTimeout: $('cfg-check-timeout'),
+    cfgCheckCommand: $('cfg-check-command'),
+    cfgCheckCommandError: $('cfg-check-command-error'),
+    cfgCheckFormError: $('cfg-check-form-error'),
+    cfgCheckSave: $('cfg-check-save')
   };
 
   // ------------------------------------------------------------------- 状态
@@ -266,7 +295,9 @@
     reasoningLevels: null, // status.reasoningLevels：提供方接受的思考强度档位
     configProviders: [],    // 服务器称可用的提供方名字（GET /api/config）
     keyProvider: '',        // 设置表单的密钥字段当前针对哪个提供方
-    rememberedProviders: [] // 服务器称已保存密钥的提供方名字（GET /api/config）
+    rememberedProviders: [], // 服务器称已保存密钥的提供方名字（GET /api/config）
+    rules: null,            // GET /api/rules 的 {file, project, rules, describe}，加载完成前为 null
+    checks: null            // GET /api/checks 的 {file, checks}，加载完成前为 null
   };
 
   // ------------------------------------------------------------- 文本批处理
@@ -686,6 +717,13 @@
     dom.uCompactionRow.hidden = !(isFinite(compactions) && compactions > 0);
     setUsageCell(dom.uCompactions, fmtCount(u.compactions), false);
     setUsageCell(dom.uElapsed, fmtDuration(u.elapsedMs), false);
+    // 上限报了才显示这一行，而且把「用了多少」一起说出来：只报上限，人还得自己去找分子。
+    const cap = Number(state.maxTotalTokens);
+    dom.uSpendRow.hidden = !(isFinite(cap) && cap > 0);
+    if (isFinite(cap) && cap > 0) {
+      const spent = (Number(u.inputTokens) || 0) + (Number(u.outputTokens) || 0);
+      dom.uSpend.textContent = fmtCount(spent) + ' / ' + fmtCount(cap);
+    }
     const limit = Number(u.contextLimit);
     const used = Number(u.contextTokens);
     setUsageCell(
@@ -769,6 +807,10 @@
     }
     setChips(status);
     if (Array.isArray(status.tools)) { renderTools(status.tools); }
+    if ('maxTotalTokens' in status) {
+      // 先记下来再渲染用量：那一行要同时用到两个来源，而它们的到达顺序没有保证。
+      state.maxTotalTokens = status.maxTotalTokens;
+    }
     if (status.usage && typeof status.usage === 'object') { renderUsage(status.usage); }
     if (typeof status.autoApprove === 'boolean') {
       state.autoApprove = status.autoApprove;
@@ -1497,9 +1539,78 @@
     return block[key];
   }
 
+  /* 一条带着图片的消息在会话文件里长这样：
+   *
+   *   [picture 白板.png] <视觉模型写的描述>
+   *
+   *   (The picture this describes is saved at …; read it if a detail the description dropped matters.)
+   *
+   *   用户自己说的话
+   *
+   * 那段文本**一个字都不能改**——会话文件、重放和压缩都靠它，而渲染时加上去的标记会现场有、之后
+   * 没了。所以这里只做摆放：同一段文本在屏幕上变成一条缩略条、一段可以展开的描述，然后是用户说的
+   * 那句话。解析不出来（旧格式、人手打的消息）时原样当文本显示，而不是猜。
+   */
+  const PICTURE_TRAILER = '\n\n(The picture this describes is saved at ';
+  const PICTURE_TRAILER_END = 'matters.)';
+
+  function pictureParts(text) {
+    if (text.indexOf('[picture ') !== 0) {
+      return null;
+    }
+    const close = text.indexOf('] ', '[picture '.length);
+    if (close < 0) {
+      return null;
+    }
+    const name = text.slice('[picture '.length, close);
+    let rest = text.slice(close + 2);
+    let said = '';
+    const trailer = rest.indexOf(PICTURE_TRAILER);
+    if (trailer >= 0) {
+      const end = rest.indexOf(PICTURE_TRAILER_END, trailer);
+      if (end >= 0) {
+        said = rest.slice(end + PICTURE_TRAILER_END.length).replace(/^\s+/, '');
+        rest = rest.slice(0, trailer);
+      }
+    }
+    return { name: name, description: rest.trim(), said: said.trim() };
+  }
+
+  function pictureBubble(picture) {
+    const wrap = el('div', 'bubble bubble-picture');
+    const head = el('div', 'picture-head');
+
+    const thumb = el('img', 'picture-thumb');
+    thumb.alt = '';
+    // 缩略图由服务器画（它手上有那些字节）；画不出来时它回原始字节，所以这里不需要兜底。
+    thumb.src = '/api/attachment/thumb?name=' + encodeURIComponent(picture.name);
+    head.appendChild(thumb);
+
+    const label = el('div', 'picture-label');
+    label.appendChild(el('div', 'picture-name', picture.name));
+    label.appendChild(el('div', 'picture-hint', '图片 · 由视觉模型描述'));
+    head.appendChild(label);
+    wrap.appendChild(head);
+
+    if (picture.description) {
+      const details = document.createElement('details');
+      details.className = 'picture-description';
+      const summary = document.createElement('summary');
+      summary.textContent = '描述（' + picture.description.length + ' 字符）';
+      details.appendChild(summary);
+      details.appendChild(el('div', 'picture-text', picture.description));
+      wrap.appendChild(details);
+    }
+    if (picture.said) {
+      wrap.appendChild(el('div', 'picture-said', picture.said));
+    }
+    return wrap;
+  }
+
   function appendUser(text) {
     const row = el('div', 'ev ev-user');
-    row.appendChild(el('div', 'bubble', text));
+    const picture = pictureParts(text);
+    row.appendChild(picture ? pictureBubble(picture) : el('div', 'bubble', text));
     state.block = null;
     appendToTranscript(row);
   }
@@ -1529,6 +1640,9 @@
    * 会话」）永远不会把同一个对话取回或渲染两次。 */
   function noteSession(id) {
     if (id === state.sessionId) { return; }
+    // 一次退回的确认属于它被武装时的那条会话；换了会话它就该走人，否则第二次按会把另一条
+    // 对话的文件放回去。
+    if (typeof setUndoArmed === 'function') { setUndoArmed(null); }
     state.sessionId = id;
     // 切换工作区会分配一个全新的空会话；它的历史就是一屏空白，所以只记下 id，
     // 不去动那个面板。切换之后的那次 resume 才是真正取回对话的动作。
@@ -1869,27 +1983,29 @@
     const detailNode = el('pre', 'approval-detail', str(detail) || '（无细节）');
     root.appendChild(detailNode);
 
-    /* 四个答案，因为本来就有四个：不、同意一次、本会话内同意、以及从今以后都同意 ——
-     * 后者会作为规则写进 approvals 文件。在这之前只有两个，而想表达「别再问这个了」的
-     * 唯一办法是头部那个整会话开关，也就是那个没人敢碰的开关。按钮上的字就是服务器据以
-     * 行动的字。 */
+    /* 五个答案，因为「以后都拒绝」和「始终允许」是一对：从今以后同意会作为一条 allow 规则写进
+     * approvals 文件，而从今以后不同意过去不存在——想表达「别再问这个了」的唯一办法是头部那个
+     * 整会话开关，也就是那个没人敢碰的开关。四个答案里只有一个方向是持久的，那是不对称的。
+     * 按钮上的字就是服务器据以行动的字。 */
     const actions = el('div', 'approval-actions');
     const stateEl = el('span', 'approval-state', '等待回答');
     const deny = el('button', 'btn danger', '拒绝');
     const once = el('button', 'btn primary', '只允许这一次');
     const session = el('button', 'btn', '本会话都允许');
     const always = el('button', 'btn', '始终允许');
-    [deny, once, session, always].forEach(function (button) { button.type = 'button'; });
+    const never = el('button', 'btn', '以后都拒绝');
+    [deny, once, session, always, never].forEach(function (button) { button.type = 'button'; });
     actions.appendChild(deny);
     actions.appendChild(once);
     actions.appendChild(session);
     actions.appendChild(always);
+    actions.appendChild(never);
     actions.appendChild(stateEl);
     root.appendChild(actions);
 
     const rec = {
       id: id, root: root, approve: once, deny: deny,
-      session: session, always: always, stateEl: stateEl, resolved: false,
+      session: session, always: always, never: never, stateEl: stateEl, resolved: false,
       at: Date.now()
     };
 
@@ -1901,6 +2017,7 @@
       rec.deny.disabled = true;
       rec.session.disabled = true;
       rec.always.disabled = true;
+      rec.never.disabled = true;
       rec.stateEl.textContent = label;
       rec.stateEl.className = 'approval-state ' + cls;
       refreshLive();
@@ -1910,7 +2027,7 @@
 
     rec.answer = function (choice) {
       if (rec.resolved) { return; }
-      const allowed = choice !== 'deny';
+      const allowed = choice !== 'deny' && choice !== 'never';
       rec.settle(allowed, APPROVAL_LABELS[choice] || '已应答', allowed ? 'ok' : 'bad');
       answerApproval(id, choice);
     };
@@ -1919,6 +2036,7 @@
     once.addEventListener('click', function () { rec.answer('once'); });
     session.addEventListener('click', function () { rec.answer('session'); });
     always.addEventListener('click', function () { rec.answer('always'); });
+    never.addEventListener('click', function () { rec.answer('never'); });
 
     state.approvals.set(id, rec);
     appendToTranscript(root);
@@ -1929,6 +2047,7 @@
    * 也是自动批准开关代表用户去按的那一个。 */
   const APPROVAL_LABELS = {
     deny: '已拒绝',
+    never: '已拒绝，并写下一条拒绝规则',
     once: '已允许一次',
     session: '本会话内已允许',
     always: '从此允许（规则已保存）'
@@ -4187,6 +4306,304 @@
     }
   }
 
+  // -------------------------------------------------------------- 审批规则
+
+  /* 规则按项目存，而面板要让人看出自己改的是哪一层的规则——一个目录的规则不是每个目录的规则——所以
+   * 项目路径与文件都印在列表上方。
+   *
+   * 每条规则的显示文字来自服务器的 describe()：规则的读法只有一处，页面不再造第二种说法。它与 rules
+   * 同序（先拒绝、再允许），所以第 i 行配的就是第 i 条规则；本会话内的放行排在后面，它们不写进文件，
+   * 因此只读。 */
+  function renderRules() {
+    dom.cfgRulesList.textContent = '';
+    const payload = state.rules;
+    const rules = payload && Array.isArray(payload.rules) ? payload.rules : [];
+    const describe = payload && Array.isArray(payload.describe) ? payload.describe.map(str) : [];
+    const session = describe.slice(rules.length);
+    const file = payload ? str(payload.file) : '';
+    dom.cfgRulesScope.textContent = file
+      ? '项目 ' + str(payload.project) + ' · 规则文件 ' + file
+      : '服务器没有报告审批规则文件。';
+    if (!rules.length && !session.length) {
+      dom.cfgRulesList.appendChild(el('li', 'muted provider-empty',
+        '这个项目还没有规则。在审批提示上按「始终允许」或「以后都拒绝」就会写一条，也可以在下面添加——'
+        + '写出来的东西与手编那个文件完全一样。'));
+      return;
+    }
+    rules.forEach(function (rule, index) {
+      dom.cfgRulesList.appendChild(ruleRow(rule, describe[index]));
+    });
+    session.forEach(function (line) {
+      dom.cfgRulesList.appendChild(ruleRow(null, line));
+    });
+  }
+
+  /* `rule` 为 null 表示那是只在本进程内有效的放行：它不写进文件，所以没有删除控件。 */
+  function ruleRow(rule, text) {
+    const li = el('li', 'provider-item');
+    if (rule) { li.setAttribute('data-effect', str(rule.effect)); }
+    const top = el('div', 'provider-top');
+    top.appendChild(el('span', 'provider-name', str(text)));
+    if (rule) {
+      const actions = el('span', 'provider-actions');
+      const remove = deleteControl(actions, '删除', function (control) {
+        removeRule(rule, control);
+      });
+      remove.idle.title = '删掉这条规则——之后同样的调用会重新询问';
+      top.appendChild(actions);
+    } else {
+      top.appendChild(el('span', 'provider-meta', '本会话内有效，不写进文件'));
+    }
+    li.appendChild(top);
+    return li;
+  }
+
+  function rulesNote(text) {
+    dom.cfgRulesNote.textContent = str(text);
+    dom.cfgRulesNote.hidden = !text;
+  }
+
+  function clearRuleErrors() {
+    [dom.cfgRuleToolError, dom.cfgRuleCommandError, dom.cfgRuleFormError].forEach(function (node) {
+      node.textContent = '';
+      node.hidden = true;
+    });
+  }
+
+  async function refreshRules() {
+    rulesNote('');
+    clearRuleErrors();
+    try {
+      const payload = await request('/api/rules');
+      state.rules = payload && typeof payload === 'object' ? payload : null;
+      renderRules();
+    } catch (err) {
+      state.rules = null;
+      dom.cfgRulesScope.textContent = '';
+      dom.cfgRulesList.textContent = '';
+      dom.cfgRulesList.appendChild(el('li', 'muted',
+        '无法读取审批规则：' + str(err && err.message)));
+    }
+  }
+
+  function rulePayload(action, rule) {
+    return {
+      action: action,
+      effect: str(rule.effect),
+      tool: str(rule.tool),
+      command: rule.command === null || rule.command === undefined ? '' : str(rule.command),
+      path: rule.path === null || rule.path === undefined ? '' : str(rule.path)
+    };
+  }
+
+  async function removeRule(rule, control) {
+    rulesNote('');
+    clearRuleErrors();
+    control.busy();
+    try {
+      const res = await postJSON('/api/rules', rulePayload('remove', rule));
+      if (res && typeof res === 'object') { state.rules = res; renderRules(); }
+      rulesNote('规则已删除——同样的调用会重新询问。');
+    } catch (err) {
+      control.reset();
+      rulesNote('无法删除：' + str(err && err.message));
+    }
+  }
+
+  /* 被拒的规则落回表单上它说的那个字段：core 的校验消息点明了是 'tool' 还是 'command'/'path'，把它放对
+   * 位置，比让人在一句笼统的报错里去找那句话更省一次来回。 */
+  function showRuleFormError(err) {
+    const message = str(err && err.message) || '无法添加这条规则。';
+    if (/'tool'|点名一个工具/.test(message)) {
+      fieldError(dom.cfgRuleToolError, message);
+      dom.cfgRuleTool.focus();
+    } else if (/command|path|通配符|命令/.test(message)) {
+      fieldError(dom.cfgRuleCommandError, message);
+      dom.cfgRuleCommand.focus();
+    } else {
+      dom.cfgRuleFormError.textContent = message;
+      dom.cfgRuleFormError.hidden = false;
+    }
+  }
+
+  async function addRule() {
+    rulesNote('');
+    clearRuleErrors();
+    const tool = dom.cfgRuleTool.value.trim();
+    if (!tool) {
+      fieldError(dom.cfgRuleToolError, '点名一个工具，比如 bash、edit 或某个 MCP 工具。');
+      dom.cfgRuleTool.focus();
+      return;
+    }
+    const command = dom.cfgRuleCommand.value.trim();
+    const path = dom.cfgRulePath.value.trim();
+    if (!command && !path) {
+      fieldError(dom.cfgRuleCommandError, '给一条命令或一个路径 glob——只写工具名会放行它的每一次调用。');
+      dom.cfgRuleCommand.focus();
+      return;
+    }
+    dom.cfgRuleSave.disabled = true;
+    try {
+      const res = await postJSON('/api/rules', {
+        action: 'add',
+        effect: dom.cfgRuleEffect.value,
+        tool: tool,
+        command: command,
+        path: path
+      });
+      if (res && typeof res === 'object') { state.rules = res; renderRules(); }
+      dom.cfgRuleTool.value = '';
+      dom.cfgRuleCommand.value = '';
+      dom.cfgRulePath.value = '';
+      rulesNote('规则已保存——下一次工具调用就会用它。');
+    } catch (err) {
+      showRuleFormError(err);
+    }
+    dom.cfgRuleSave.disabled = false;
+  }
+
+  // ------------------------------------------------------------ 编辑后检查
+
+  function renderChecks() {
+    dom.cfgChecksList.textContent = '';
+    const payload = state.checks;
+    const checks = payload && Array.isArray(payload.checks) ? payload.checks : [];
+    const file = payload ? str(payload.file) : '';
+    dom.cfgChecksFile.textContent = file
+      ? '配置文件 ' + file
+      : '服务器没有报告配置文件路径。';
+    if (!checks.length) {
+      dom.cfgChecksList.appendChild(el('li', 'muted provider-empty',
+        '还没有检查。添加一条匹配的文件与命令，编辑命中那个 glob 的文件时它就会跑。'));
+      return;
+    }
+    checks.forEach(function (check) {
+      dom.cfgChecksList.appendChild(checkRow(check));
+    });
+  }
+
+  function checkRow(check) {
+    const li = el('li', 'provider-item');
+    const top = el('div', 'provider-top');
+    top.appendChild(el('span', 'provider-name', str(check.command)));
+    const actions = el('span', 'provider-actions');
+    const remove = deleteControl(actions, '删除', function (control) {
+      removeCheck(check, control);
+    });
+    remove.idle.title = '删掉这条检查——之后编辑命中它的文件不会再跑它';
+    top.appendChild(actions);
+    li.appendChild(top);
+    li.appendChild(el('span', 'provider-url', '命中 ' + str(check.glob)));
+    const seconds = check.timeoutSeconds === null || check.timeoutSeconds === undefined
+      ? '' : str(check.timeoutSeconds);
+    li.appendChild(el('span', 'provider-meta', seconds ? '超时 ' + seconds + ' 秒' : '默认超时'));
+    return li;
+  }
+
+  function checksNote(text) {
+    dom.cfgChecksNote.textContent = str(text);
+    dom.cfgChecksNote.hidden = !text;
+  }
+
+  function clearCheckErrors() {
+    [dom.cfgCheckGlobError, dom.cfgCheckCommandError, dom.cfgCheckFormError].forEach(function (node) {
+      node.textContent = '';
+      node.hidden = true;
+    });
+  }
+
+  async function refreshChecks() {
+    checksNote('');
+    clearCheckErrors();
+    try {
+      const payload = await request('/api/checks');
+      state.checks = payload && typeof payload === 'object' ? payload : null;
+      renderChecks();
+    } catch (err) {
+      state.checks = null;
+      dom.cfgChecksFile.textContent = '';
+      dom.cfgChecksList.textContent = '';
+      dom.cfgChecksList.appendChild(el('li', 'muted',
+        '无法读取检查：' + str(err && err.message)));
+    }
+  }
+
+  function currentChecks() {
+    return state.checks && Array.isArray(state.checks.checks) ? state.checks.checks : [];
+  }
+
+  /* POST 是整份替换，所以每一条检查先把服务器给的全部字段原样带上——少带一个字段，它就会在下一次编辑时
+   * 悄悄变成默认值。glob 写在前面，只是为了让写出来的文件读起来和文档里那个例子一样。 */
+  function checkEntry(check) {
+    const entry = {};
+    if (str(check.glob)) { entry.glob = str(check.glob); }
+    entry.command = str(check.command);
+    if (check.timeoutSeconds !== null && check.timeoutSeconds !== undefined) {
+      entry.timeoutSeconds = check.timeoutSeconds;
+    }
+    return entry;
+  }
+
+  async function removeCheck(check, control) {
+    checksNote('');
+    clearCheckErrors();
+    control.busy();
+    const remaining = currentChecks().filter(function (entry) { return entry !== check; });
+    try {
+      const res = await postJSON('/api/checks', { checks: remaining.map(checkEntry) });
+      if (res && typeof res === 'object') { state.checks = res; renderChecks(); }
+      checksNote('检查已删除——它对这条命令不再起作用。');
+    } catch (err) {
+      control.reset();
+      checksNote('无法删除：' + str(err && err.message));
+    }
+  }
+
+  function showCheckFormError(err) {
+    const message = str(err && err.message) || '无法添加这条检查。';
+    if (/'command'|没有 'command'|命令/.test(message)) {
+      fieldError(dom.cfgCheckCommandError, message);
+      dom.cfgCheckCommand.focus();
+    } else if (/glob/.test(message)) {
+      fieldError(dom.cfgCheckGlobError, message);
+      dom.cfgCheckGlob.focus();
+    } else {
+      dom.cfgCheckFormError.textContent = message;
+      dom.cfgCheckFormError.hidden = false;
+    }
+  }
+
+  async function addCheck() {
+    checksNote('');
+    clearCheckErrors();
+    const command = dom.cfgCheckCommand.value.trim();
+    if (!command) {
+      fieldError(dom.cfgCheckCommandError, '输入要运行的命令，比如 mvn -q -o -DskipTests compile。');
+      dom.cfgCheckCommand.focus();
+      return;
+    }
+    const entry = {};
+    const glob = dom.cfgCheckGlob.value.trim();
+    if (glob) { entry.glob = glob; }
+    entry.command = command;
+    const timeout = dom.cfgCheckTimeout.value.trim();
+    if (timeout) { entry.timeoutSeconds = Number(timeout); }
+    dom.cfgCheckSave.disabled = true;
+    try {
+      const res = await postJSON('/api/checks', {
+        checks: currentChecks().map(checkEntry).concat([entry])
+      });
+      if (res && typeof res === 'object') { state.checks = res; renderChecks(); }
+      dom.cfgCheckGlob.value = '';
+      dom.cfgCheckCommand.value = '';
+      dom.cfgCheckTimeout.value = '';
+      checksNote('检查已保存——对下一次编辑生效。');
+    } catch (err) {
+      showCheckFormError(err);
+    }
+    dom.cfgCheckSave.disabled = false;
+  }
+
   function renderSettings(cfg) {
     // 服务器称可用的那些名字。当前这个即使这个版本不再列出也留在下拉里，而字段保留它
     // 手上的内容：提供方名字是配置，不是一个封闭集合。
@@ -4433,6 +4850,8 @@
     }
     await catalog;   // renderSettings 依据目录给提供方列表加标签
     renderSettings(cfg && typeof cfg === 'object' ? cfg : {});
+    // 规则与检查也每次重新取，理由和目录一样：面板给的是服务器*现在*有的东西，不是上次有的。
+    await Promise.all([refreshRules(), refreshChecks()]);
     focusSettingsForm();
   }
 
@@ -4614,9 +5033,47 @@
     if (event.key === 'Escape' && !dom.photoMenu.hidden) { openPhotoMenu(false); }
   });
 
-  /* 把上一回合改动过的东西放回去。服务器用恢复的内容作答并发布一条通知，转录里的说明就在
-   * 那里——这一侧只报告拒绝，因为拒绝正是没有别的东西会报告的那种情况。 */
+  /* 退回会覆盖磁盘上的文件，所以它和删除用同一个手势：第一次按**武装**它，并把即将发生的事
+   * 列出来——那份清单来自服务器的预览（`GET /api/undo`），而不是页面猜的；第二次按才真的动。
+   *
+   * 预览这一步也顺手回答了「有没有可退的」：没有可退回的回合时，说一声就好，不去武装一个什么
+   * 都不会做的确认。 */
+  function setUndoArmed(files) {
+    const armed = !!files;
+    dom.undoConfirm.hidden = !armed;
+    dom.btnUndo.classList.toggle('armed', armed);
+    dom.btnUndo.setAttribute('aria-expanded', armed ? 'true' : 'false');
+    if (!armed) {
+      dom.undoConfirmText.textContent = '';
+      return;
+    }
+    const names = files.map(function (f) { return f.path; });
+    const shown = names.slice(0, 3).join('、');
+    const more = names.length > 3 ? ' 等 ' + names.length + ' 个文件' : '';
+    dom.undoConfirmText.textContent = '将把 ' + shown + more + ' 放回上一回合之前的样子';
+    dom.undoConfirmYes.focus();
+  }
+
   async function undoLastTurn() {
+    if (!dom.undoConfirm.hidden) { return; }   // 已经在等确认了，第二次按走下面那个按钮
+    let preview;
+    try {
+      preview = await request('/api/undo');
+    } catch (err) {
+      appendError('退回：' + err.message);
+      return;
+    }
+    if (!preview || !preview.turns) {
+      appendNotice('没有可退回的改动');
+      return;
+    }
+    setUndoArmed(preview.files || []);
+  }
+
+  /* 确认之后才动磁盘。服务器会发布一条通知说明恢复了什么，转录里的说明就在那里——这一侧只
+   * 报告拒绝，因为拒绝正是没有别的东西会报告的那种情况。 */
+  async function undoConfirmed() {
+    setUndoArmed(null);
     try {
       const res = await postJSON('/api/undo', {});
       if (res && res.restored === 0) { appendNotice('没有可退回的改动'); }
@@ -4626,6 +5083,12 @@
   }
 
   dom.btnUndo.addEventListener('click', undoLastTurn);
+  dom.undoConfirmYes.addEventListener('click', undoConfirmed);
+  dom.undoConfirmNo.addEventListener('click', function () { setUndoArmed(null); });
+  // 换会话之后那条确认属于别的对话，所以它走人；Escape 也一样。
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !dom.undoConfirm.hidden) { setUndoArmed(null); }
+  });
 
   dom.photoCamera.addEventListener('change', function () {
     const file = dom.photoCamera.files && dom.photoCamera.files[0];
@@ -4814,6 +5277,14 @@
   dom.cfgProviderForm.addEventListener('submit', function (event) {
     event.preventDefault();
     addProvider();
+  });
+  dom.cfgRuleForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    addRule();
+  });
+  dom.cfgCheckForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    addCheck();
   });
   dom.cfgClearKey.addEventListener('change', function () {
     const clearing = dom.cfgClearKey.checked;

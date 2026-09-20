@@ -47,6 +47,7 @@ class CliOptionsTest {
               "--temperature", "0.5",
               "--reasoning", "high",
               "--max-context-tokens", "100",
+              "--max-total-tokens", "50000",
               "--vision-base-url", "http://x",
               "--vision-model", "vm",
               "--vision-api-key-env", "VV",
@@ -62,6 +63,7 @@ class CliOptionsTest {
     assertEquals("t", all.webToken());
     assertEquals(10, all.maxTokens());
     assertEquals(100, all.maxContextTokens());
+    assertEquals(50000, all.maxTotalTokens());
     assertEquals("http://x", all.visionBaseUrl());
     assertEquals("vm", all.visionModel(), "最后一个也仍然拿到了它的值");
     assertEquals("vk", all.visionApiKey());
@@ -172,6 +174,19 @@ class CliOptionsTest {
     assertEquals(120000, overrides.maxContextTokens());
     assertNull(CliOptions.parse(new String[0]).reasoning());
     assertNull(CliOptions.parse(new String[0]).maxContextTokens());
+  }
+
+  @Test
+  void theSpendCapIsAFlagToo() {
+    CliOptions options = CliOptions.parse(new String[] {"--max-total-tokens", "50000"});
+
+    assertEquals(50000, options.maxTotalTokens());
+    assertEquals(50000, options.overrides().maxTotalTokens(), "它会到达配置层");
+    assertNull(CliOptions.parse(new String[0]).maxTotalTokens(), "没有 flag 就不设上限");
+    assertNull(CliOptions.parse(new String[0]).overrides().maxTotalTokens());
+    assertTrue(
+        CliOptions.usage().contains("--max-total-tokens"),
+        "没人找得到的 flag，就是没人有的 flag");
   }
 
   @Test

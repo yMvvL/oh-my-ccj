@@ -188,6 +188,14 @@
             <p class="picker-error err" id="picker-error" data-role="error" role="alert" hidden></p>
           </div>
         </div>
+          <!-- 退回是破坏性的，所以它和删除用同一个手势：第一次按只是*武装*它，并把将要恢复的
+               文件列出来；第二次按才真的动磁盘。列出来的清单来自服务器的预览，所以它说的是它会
+               做的事，而不是页面猜它要做的事。 -->
+          <div class="undo-confirm" id="undo-confirm" role="status" hidden>
+            <span class="undo-confirm-text" id="undo-confirm-text"></span>
+            <button type="button" class="btn danger sm" id="undo-confirm-yes">确认退回</button>
+            <button type="button" class="btn ghost sm" id="undo-confirm-no">取消</button>
+          </div>
           <!-- 已经描述好、还没发出去的那张图片。它必须看得见：跟着下一句话一起走的是它，
                而一条看不见的附件就是「我明明只是想问个问题」的来源。 -->
           <div class="photo-pending" id="photo-pending" role="status" hidden>
@@ -254,6 +262,8 @@
               <tr id="u-compact-row"><th scope="row">压缩次数</th><td id="u-compact">—</td></tr>
               <tr><th scope="row">耗时</th><td id="u-elapsed">—</td></tr>
               <tr><th scope="row">上下文（估算）</th><td id="u-context">—</td></tr>
+              <!-- 只有设了花费上限才出现：一个「不设上限」的行，除了占地方没有别的作用。 -->
+              <tr id="u-spend-row" hidden><th scope="row">花费上限</th><td id="u-spend">—</td></tr>
             </tbody>
           </table>
         </div>
@@ -491,6 +501,104 @@
 
             <div class="provider-form-actions">
               <button type="submit" class="btn primary" id="cfg-provider-save">添加提供方</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- 审批规则。它们是按项目存的文件，正是「别再问我这个」最关键的机制，而在此之前它的门槛是
+           「在这台机器上编辑一个 JSON 文件」——手机做不到。这里能增删，写出来的是同一条规则。
+           规则文件每次工具调用都会被重新读，所以存的当下就生效。 -->
+      <section class="provider-section" id="cfg-rules-section" aria-labelledby="cfg-rules-title">
+        <h3 class="settings-subhead" id="cfg-rules-title">审批规则</h3>
+        <p class="field-hint" id="cfg-rules-hint">
+          规则按项目存放，每一次工具调用都会被重新读取，所以这里存下或删掉之后，下一次调用就用它。
+          在审批提示上按「始终允许」或「以后都拒绝」写下的也在这里——它们是同一条规则，只是入口不同。
+        </p>
+        <p class="field-hint" id="cfg-rules-scope"></p>
+        <p class="err provider-note" id="cfg-rules-note" role="status" hidden></p>
+        <ul class="provider-list" id="cfg-rules-list">
+          <li class="muted">加载中…</li>
+        </ul>
+
+        <div class="provider-add">
+          <form class="provider-form" id="cfg-rule-form" autocomplete="off">
+            <div class="field-row">
+              <div class="field">
+                <label for="cfg-rule-effect">效果</label>
+                <select id="cfg-rule-effect">
+                  <option value="allow">允许——不问就跑</option>
+                  <option value="deny">拒绝——不问就挡</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="cfg-rule-tool">工具</label>
+                <input type="text" id="cfg-rule-tool" spellcheck="false" autocomplete="off" placeholder="bash">
+                <span class="field-error" id="cfg-rule-tool-error" hidden></span>
+              </div>
+            </div>
+            <div class="field">
+              <label for="cfg-rule-command">命令 <span class="field-optional">或路径，二选一</span></label>
+              <input type="text" id="cfg-rule-command" spellcheck="false" autocomplete="off"
+                     placeholder="git status —— 结尾写 ' *' 表示后面还能带参数">
+              <span class="field-error" id="cfg-rule-command-error" hidden></span>
+            </div>
+            <div class="field">
+              <label for="cfg-rule-path">路径 glob <span class="field-optional">相对项目</span></label>
+              <input type="text" id="cfg-rule-path" spellcheck="false" autocomplete="off" placeholder="src/**">
+            </div>
+            <p class="field-hint">
+              shell 会执行的命令里不能出现能把一条命令变成几条的字符；通配符只能写在结尾。对 bash、edit、
+              write 来说，命令或路径必须给一个——只写工具名等于放行它的每一次调用。
+            </p>
+            <p class="err" id="cfg-rule-form-error" role="alert" hidden></p>
+            <div class="provider-form-actions">
+              <button type="submit" class="btn primary" id="cfg-rule-save">添加规则</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- 编辑后检查。它们也在配置文件里，也是每次用到时重新读，所以同样不需要重启。 -->
+      <section class="provider-section" id="cfg-checks-section" aria-labelledby="cfg-checks-title">
+        <h3 class="settings-subhead" id="cfg-checks-title">编辑后检查</h3>
+        <p class="field-hint" id="cfg-checks-hint">
+          一次编辑或写入命中的文件之后自动运行的命令，它的判定会附在工具结果里，让坏掉的改动在同一步就被看见。
+          命令写在配置文件的 <code>checks</code> 键下；每次编辑查找适用检查时都会重新读它，所以保存后对下一次
+          编辑生效，不必重启。命令是你自己写的，运行时不再询问——这是写明的放宽。
+        </p>
+        <p class="field-hint" id="cfg-checks-file"></p>
+        <p class="err provider-note" id="cfg-checks-note" role="status" hidden></p>
+        <ul class="provider-list" id="cfg-checks-list">
+          <li class="muted">加载中…</li>
+        </ul>
+
+        <div class="provider-add">
+          <form class="provider-form" id="cfg-check-form" autocomplete="off">
+            <div class="field-row">
+              <div class="field">
+                <label for="cfg-check-glob">命中哪些文件</label>
+                <input type="text" id="cfg-check-glob" spellcheck="false" autocomplete="off" placeholder="**/*.java">
+                <span class="field-error" id="cfg-check-glob-error" hidden></span>
+              </div>
+              <div class="field">
+                <label for="cfg-check-timeout">超时（秒） <span class="field-optional">可选</span></label>
+                <input type="number" id="cfg-check-timeout" min="1" max="600" step="1" placeholder="120">
+              </div>
+            </div>
+            <div class="field">
+              <label for="cfg-check-command">命令</label>
+              <input type="text" id="cfg-check-command" spellcheck="false" autocomplete="off"
+                     placeholder="mvn -q -o -DskipTests compile">
+              <span class="field-error" id="cfg-check-command-error" hidden></span>
+            </div>
+            <p class="field-hint">
+              glob 决定检查什么时候跑，不决定命令去看什么：给它配一条覆盖所选范围的命令，否则它会就一个没读过的
+              文件报告成功。留空表示匹配这个项目里的任何文件。
+            </p>
+            <p class="err" id="cfg-check-form-error" role="alert" hidden></p>
+            <div class="provider-form-actions">
+              <button type="submit" class="btn primary" id="cfg-check-save">添加检查</button>
             </div>
           </form>
         </div>

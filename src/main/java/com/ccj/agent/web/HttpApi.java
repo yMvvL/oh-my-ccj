@@ -224,6 +224,7 @@ public final class HttpApi implements AutoCloseable {
         case "/api/abort" -> abort(exchange);
         case "/api/compact" -> compact(exchange);
         case "/api/undo" -> undo(exchange);
+        case "/api/attachment/thumb" -> thumbnail(exchange);
         case "/api/approval" -> approval(exchange);
         case "/api/auto-approve" -> autoApprove(exchange);
         case "/api/session" -> session(exchange);
@@ -233,6 +234,8 @@ public final class HttpApi implements AutoCloseable {
         case "/api/providers" -> providers(exchange);
         case "/api/config" -> config(exchange);
         case "/api/config/test" -> configTest(exchange);
+        case "/api/rules" -> rules(exchange);
+        case "/api/checks" -> checks(exchange);
         default -> error(exchange, 404, "没有这个端点：" + path);
       }
     } catch (IllegalArgumentException e) {
@@ -339,12 +342,58 @@ public final class HttpApi implements AutoCloseable {
    * <p>回答里给出恢复了什么、还有多少个回合可以退回，这样页面两件事都能说；对话本身则通过一条通知说明，
    * 和服务器做的其他每件事一样。
    */
+  /**
+   * 退回：{@code GET} 是预览，{@code POST} 是执行。
+   *
+   * <p>两件事共用一个路径，因为它们是同一个动作的两半——而预览存在的理由，是退回会覆盖磁盘上的文件。
+   * 一个会覆盖文件的按钮，值得先说出它要覆盖什么。
+   */
   private void undo(HttpExchange exchange) throws IOException {
+    if ("GET".equals(exchange.getRequestMethod())) {
+      respond(exchange, 200, hub.undoPreview());
+      return;
+    }
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "需要 POST");
+      error(exchange, 405, "需要 GET 或 POST");
       return;
     }
     respond(exchange, 200, hub.undoTurn());
+  }
+
+  /**
+   * 这条会话附件目录里某个文件的小图。
+   *
+   * <p>名字必须就是转录里写的那个，而且只在这条会话自己的附件目录里找：这个路径参数是调用方给的，所以
+   * 一次 {@code ../} 就能把它变成「读服务器上的任意文件」。它服务的是**这条会话里的任何一张图片**，不只是
+   * 待发送的那一张——历史消息里的图片也要画得出小图。
+   *
+   * <p>画不出小图不是错误：{@code Thumbnails.of} 解不出来的格式会原样交回字节，所以一张 WebP 拿到的
+   * 是它自己，而页面照样显示得出来。
+   */
+  private void thumbnail(HttpExchange exchange) throws IOException {
+    if (!"GET".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "需要 GET");
+      return;
+    }
+    AgentHub.PictureFile picture;
+    try {
+      picture = hub.attachmentThumbnail(queryParam(exchange, "name"));
+    } catch (IllegalArgumentException e) {
+      error(exchange, 400, e.getMessage());
+      return;
+    }
+    if (picture == null) {
+      error(exchange, 404, "这条会话里没有这张图片");
+      return;
+    }
+    exchange.getResponseHeaders().add("Content-Type", picture.mediaType());
+    // 图片在同一秒里不会变两次，但它**会**变：同一个名字在被取代之后可能是另一张图。所以让它每次
+    // 都问一次——这些字节是本机磁盘上的，代价比一个陈旧的缩略图小。
+    exchange.getResponseHeaders().add("Cache-Control", "no-cache");
+    exchange.sendResponseHeaders(200, picture.bytes().length);
+    try (OutputStream out = exchange.getResponseBody()) {
+      out.write(picture.bytes());
+    }
   }
 
   private void compact(HttpExchange exchange) throws IOException {
@@ -523,6 +572,41 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     respond(exchange, 200, hub.testConfiguration(Json.parse(readBody(exchange))));
+  }
+
+  /**
+   * 审批规则：读它们，或者加一条/删一条。GET 回的是那个项目此刻的规则与它们的读法；POST 回的是一份同样
+   * 形状的新列表，所以面板不必再发一次 GET——它看到的永远刚刚写下的那份文件。
+   */
+  private void rules(HttpExchange exchange) throws IOException {
+    String method = exchange.getRequestMethod();
+    if ("GET".equals(method)) {
+      respond(exchange, 200, hub.rulesJson());
+      return;
+    }
+    if (!"POST".equals(method)) {
+      error(exchange, 405, "需要 GET 或 POST");
+      return;
+    }
+    // 校验失败是 IllegalArgumentException，route() 会用 400 回答它；消息来自 ApprovalRules 自己。
+    respond(exchange, 200, hub.applyRules(Json.parse(readBody(exchange))));
+  }
+
+  /**
+   * 编辑后检查：读它们，或者整份替换。校验用的是 {@code Checks} 自己的解析，所以 400 里的那句话与工具
+   * 运行时报告的是同一句。
+   */
+  private void checks(HttpExchange exchange) throws IOException {
+    String method = exchange.getRequestMethod();
+    if ("GET".equals(method)) {
+      respond(exchange, 200, hub.checksJson());
+      return;
+    }
+    if (!"POST".equals(method)) {
+      error(exchange, 405, "需要 GET 或 POST");
+      return;
+    }
+    respond(exchange, 200, hub.applyChecks(Json.parse(readBody(exchange))));
   }
 
   private void autoApprove(HttpExchange exchange) throws IOException {

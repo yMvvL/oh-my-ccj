@@ -1183,6 +1183,63 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 .photo-menu .btn { justify-content: flex-start; }
 
+/* 武装起来的退回：它列出来的名字来自服务器预览，所以它说的是它会做的事。 */
+.undo-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+.undo-confirm-text { flex: 1 1 auto; }
+.btn.armed { color: var(--dsw-alias-state-error-primary); }
+
+/* 一条带图片的消息：缩略条、可以展开的描述、然后是用户自己说的那句话。摆放成这样是因为
+ * 描述常常有一千多字符——它必须读得到，但不该把「你说的话」淹掉。 */
+.bubble-picture { padding: 10px 12px; }
+.picture-head { display: flex; align-items: center; gap: 10px; }
+.picture-thumb {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--dsw-alias-bg-tertiary);
+}
+.picture-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.picture-hint { font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+.picture-description { margin-top: 8px; }
+.picture-description > summary {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+.picture-text {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+}
+.picture-said {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-border-secondary);
+  white-space: pre-wrap;
+}
+
 /* 拖着一张图片进窗口时，输入框自己亮起来：能放的地方不说，用户没法知道这里能不能放。 */
 .composer-card.drop-target {
   border-color: var(--dsw-alias-state-business-primary);
@@ -1624,6 +1681,11 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 
 .provider-form-actions { display: flex; justify-content: flex-end; }
+
+/* 规则与检查沿用提供方列表的形状；只有一处不同：一条规则的效果值得一眼看出，因为它决定的正是下一次
+ * 工具调用会不会被拦下。列表项上的 data-effect 由 app.js 写上。 */
+#cfg-rules-list .provider-item[data-effect="deny"] .provider-name { color: var(--dsw-alias-state-error-primary); }
+#cfg-rules-list .provider-item[data-effect="allow"] .provider-name { color: var(--dsw-alias-state-success-primary); }
 
 /* 「（可选）」是标签上的注记，不是它名字的一部分。 */
 .field-optional { color: var(--dsw-alias-label-tertiary); font-weight: 400; }
