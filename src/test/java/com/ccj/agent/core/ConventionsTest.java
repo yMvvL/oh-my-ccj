@@ -18,9 +18,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>一条只有审查者才能执行的约定，就是一条会走样的约定，而这一条已经走样了：这棵树把它自己的词
  * 按英式拼写（{@code normalise}、{@code summarise}、{@code serialise}），却有少数几处漂成了美式 ——
- * {@code ToolSummary.summarize}、"failed to serialize JSON"，以及同一类里的
- * {@code Config.normalizeLanguage}，它紧挨着 {@code Config.normaliseReasoning}。这些对没特意去
- * 找它们的读者都是不可见的。
+ * {@code ToolSummary.summarize} 和 "failed to serialize JSON"。这些对没特意去找它们的读者都是
+ * 不可见的。
  *
  * <p>被检查的是源码树，而不是发布出去的产品，而且只查本仓库自己拥有的那些词。平台的拼写是被
  * 引用而不是被翻译：{@code Path.normalize}、{@code overscroll-behavior} 和

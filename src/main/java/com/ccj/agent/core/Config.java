@@ -37,7 +37,6 @@ public record Config(
     Boolean autoApprove,
     Integer outputLimitBytes,
     String systemPrompt,
-    String language,
     String reasoning,
     Integer maxContextTokens,
     String settingsFor,
@@ -70,7 +69,6 @@ public record Config(
         autoApprove,
         outputLimitBytes,
         systemPrompt,
-        null,
         reasoning,
         null,
         null,
@@ -105,7 +103,6 @@ public record Config(
         autoApprove,
         outputLimitBytes,
         systemPrompt,
-        null,
         reasoning,
         maxContextTokens,
         null,
@@ -166,7 +163,6 @@ public record Config(
         pick(autoApprove, higher.autoApprove),
         pick(outputLimitBytes, higher.outputLimitBytes),
         pick(systemPrompt, higher.systemPrompt),
-        pick(language, higher.language),
         pick(reasoning, higher.reasoning),
         pick(maxContextTokens, higher.maxContextTokens),
         pick(settingsFor, higher.settingsFor),
@@ -251,27 +247,6 @@ public record Config(
         && !settingsFor.strip().equalsIgnoreCase(provider.strip());
   }
 
-  /** 同一份配置，换一种思考语言；null 表示「让模型自己决定」。 */
-  public Config language(String value) {
-    return new Config(
-        provider,
-        model,
-        baseUrl,
-        apiKey,
-        apiKeyEnv,
-        temperature,
-        maxTokens,
-        autoApprove,
-        outputLimitBytes,
-        systemPrompt,
-        value,
-        reasoning,
-        maxContextTokens,
-        settingsFor,
-        remembered,
-        vision);
-  }
-
   /**
    * 这份配置在其扁平字段里持有的配对；什么都没持有时为 null。
    *
@@ -293,7 +268,7 @@ public record Config(
   public Config forgetProviderSettings() {
     return new Config(
         provider, model, null, null, null, temperature, maxTokens, autoApprove, outputLimitBytes,
-        systemPrompt, language, reasoning, maxContextTokens, null, remembered, vision);
+        systemPrompt, reasoning, maxContextTokens, null, remembered, vision);
   }
 
   /**
@@ -309,7 +284,7 @@ public record Config(
     }
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
-        outputLimitBytes, systemPrompt, language, reasoning, maxContextTokens, settingsFor,
+        outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor,
         remembered, vision.withoutApiKey());
   }
 
@@ -323,7 +298,7 @@ public record Config(
     }
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
-        outputLimitBytes, systemPrompt, language, reasoning, maxContextTokens, settingsFor,
+        outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor,
         remembered, null);
   }
 
@@ -340,7 +315,6 @@ public record Config(
         autoApprove,
         outputLimitBytes,
         systemPrompt,
-        language,
         reasoning,
         maxContextTokens,
         provider,
@@ -388,7 +362,6 @@ public record Config(
         autoApprove,
         outputLimitBytes,
         systemPrompt,
-        language,
         reasoning,
         maxContextTokens,
         settingsFor,
@@ -440,7 +413,6 @@ public record Config(
             autoApprove,
             outputLimitBytes,
             systemPrompt,
-            language,
             reasoning,
             maxContextTokens,
             provider,
@@ -491,14 +463,14 @@ public record Config(
   private Config withApiKey(String key) {
     return new Config(
         provider, model, baseUrl, key, apiKeyEnv, temperature, maxTokens, autoApprove,
-        outputLimitBytes, systemPrompt, language, reasoning, maxContextTokens, settingsFor,
+        outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor,
         remembered, vision);
   }
 
   private Config withRemembered(Map<String, ProviderSettings> next) {
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
-        outputLimitBytes, systemPrompt, language, reasoning, maxContextTokens, settingsFor, next,
+        outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor, next,
         vision);
   }
 
@@ -523,23 +495,11 @@ public record Config(
         autoApprove != null && autoApprove,
         outputLimitBytes == null ? DEFAULT_OUTPUT_LIMIT_BYTES : outputLimitBytes,
         systemPrompt,
-        normalizeLanguage(language),
         normaliseReasoning(reasoning),
         maxContextTokens,
         settingsFor,
         remembered,
         vision);
-  }
-
-  /**
-   * 提示词要求的语言。空白与 {@code auto} 都表示「什么都不说」；其他任何值都按原样保留，因为语言清单是提示词
-   * 该提供的，而一个这个构建从没听说过的语言，仍然是一个模型能遵从的名字。
-   */
-  public static String normalizeLanguage(String language) {
-    if (language == null || language.isBlank() || Prompts.AUTO.equalsIgnoreCase(language.strip())) {
-      return null;
-    }
-    return language.strip();
   }
 
   /**
@@ -625,7 +585,6 @@ public record Config(
         bool(root, "autoApprove"),
         integer(root, "outputLimitBytes"),
         text(root, "systemPrompt"),
-        text(root, "language"),
         text(root, "reasoning"),
         integer(root, "maxContextTokens"),
         text(root, "settingsFor"),
@@ -693,7 +652,6 @@ public record Config(
         parseBoolean(env.get("CCJ_AUTO_APPROVE")),
         parseInteger(env.get("CCJ_OUTPUT_LIMIT_BYTES")),
         env.get("CCJ_SYSTEM_PROMPT"),
-        env.get("CCJ_LANGUAGE"),
         env.get("CCJ_REASONING"),
         parseInteger(env.get("CCJ_MAX_CONTEXT_TOKENS")),
         null,
@@ -775,9 +733,10 @@ public record Config(
     writeVision(root, managed.vision());
     // 步数上限已经没了，而一个 ccj 不再读取的键会宣传一个毫无作用的设置，所以旧文件在重写时顺手清理掉。
     root.remove("maxSteps");
+    // 思考语言也是：它现在由 CCJ.md 或 --system 里的提示词决定，而一个留在文件里的名字，谁也不会再读。
+    root.remove("language");
     putNumber(root, "temperature", managed.temperature());
     putNumber(root, "maxTokens", managed.maxTokens());
-    putText(root, "language", managed.language());
     putText(root, "reasoning", managed.reasoning());
     putNumber(root, "maxContextTokens", managed.maxContextTokens());
 

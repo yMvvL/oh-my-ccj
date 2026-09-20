@@ -906,14 +906,6 @@ public final class AgentHub implements AutoCloseable {
       node.put("maxTokens", active.maxTokens());
     }
     node.put("configFile", settings.configFile().toString());
-    // 提示要求使用的语言，以及表单给出的列表。`auto` 是「没有选择」，所以清空的字段报出来的就是它。
-    node.put("language", active.language() == null ? Prompts.AUTO : active.language());
-    ArrayNode languages = node.putArray("languages");
-    Prompts.languageChoices().forEach(choice -> {
-      ObjectNode entry = languages.addObject();
-      entry.put("value", choice[0]);
-      entry.put("label", choice[1]);
-    });
     ArrayNode providers = node.putArray("providers");
     Set<String> names = new LinkedHashSet<>();
     if (settings.modelCatalog() != null) {
@@ -1043,7 +1035,6 @@ public final class AgentHub implements AutoCloseable {
     if (temperature != null && (temperature < 0 || temperature > 2)) {
       throw new IllegalArgumentException("temperature 必须在 0 与 2 之间");
     }
-    String language = text(posted, "language");
     // vision 块逐字段处理：表单提交它所持有的东西，而它留空的字段意味着「保持原样」——和上面那个密钥
     // 字段遵循同一条规则。清掉密钥和关掉这个功能没法用空字符串表达（空字段是「不变」），所以它们是显式的
     // 旗标，由 `applyConfig` 在合并之后应用。
@@ -1082,7 +1073,6 @@ public final class AgentHub implements AutoCloseable {
         null, // autoApprove
         null, // outputLimitBytes
         null, // systemPrompt
-        language,
         reasoning,
         null, // maxContextTokens
         null, // settingsFor
@@ -1670,7 +1660,7 @@ public final class AgentHub implements AutoCloseable {
             active.model(),
             // 项目自己的 CCJ.md 是从这个对话的工作目录读取的，也就是它回合启动时定下的那个：规则文件
             // 属于工具实际将运行的那个目录，而不是构建请求时屏幕上碰巧是什么。
-            Prompts.system(active.systemPrompt(), active.language(), conversation.cwd()),
+            Prompts.system(active.systemPrompt(), conversation.cwd()),
             active.temperature(),
             active.maxTokens(),
             active.reasoning(),

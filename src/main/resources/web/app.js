@@ -194,7 +194,6 @@
     cfgApiKeyEnv: $('cfg-apikeyenv'),
     cfgApiKeyEnvHint: $('cfg-apikeyenv-hint'),
     cfgTemperature: $('cfg-temperature'),
-    cfgLanguage: $('cfg-language'),
     cfgVisionBaseUrl: $('cfg-vision-baseurl'),
     cfgVisionModel: $('cfg-vision-model'),
     cfgVisionApiKey: $('cfg-vision-apikey'),
@@ -4216,7 +4215,6 @@
       (storedIsOurs ? str(cfg.apiKeyEnv) : str(info && info.apiKeyEnv)) || 'OPENAI_API_KEY';
     dom.cfgTemperature.value =
       cfg.temperature === null || cfg.temperature === undefined ? '' : str(cfg.temperature);
-    fillLanguageOptions(cfg);
 
     const source = str(cfg.apiKeySource);
     dom.cfgApiKey.value = '';
@@ -4256,33 +4254,6 @@
     clearProviderFormErrors();
     providerNote('');
     setProviderFormOpen(false);
-  }
-
-  /* 服务器提供的语言，最前面是 "auto"：这个列表属于服务器，因为它附加到提示词里的那句话
-   * 是服务器的，而一个自己编列表的页面会提供一些没人据以行动的选项。只在列表变化时才
-   * 重建，所以打开「设置」永远不会重置用户正在做的选择。 */
-  function fillLanguageOptions(cfg) {
-    const offered = Array.isArray(cfg.languages) ? cfg.languages : [];
-    const wanted = str(cfg.language) || 'auto';
-    const signature = wanted + '|' + offered.map(function (item) { return str(item.value); }).join(',');
-    if (dom.cfgLanguage.dataset.signature !== signature) {
-      dom.cfgLanguage.textContent = '';
-      const auto = document.createElement('option');
-      auto.value = 'auto';
-      auto.textContent = '自动——由模型决定';
-      dom.cfgLanguage.appendChild(auto);
-      offered.forEach(function (item) {
-        const value = str(item.value);
-        if (!value || value === 'auto') { return; }
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = str(item.label) || value;
-        dom.cfgLanguage.appendChild(option);
-      });
-      dom.cfgLanguage.dataset.signature = signature;
-    }
-    dom.cfgLanguage.value = wanted;
-    if (dom.cfgLanguage.value !== wanted) { dom.cfgLanguage.value = 'auto'; }
   }
 
   /* 描述图片的模型，它与上面的提供方分开配置：有自己的端点、密钥和预算。密钥遵循这个页面
@@ -4331,8 +4302,7 @@
       model: chosen.model,
       baseUrl: dom.cfgBaseUrl.value.trim(),
       apiKeyEnv: dom.cfgApiKeyEnv.value.trim() || 'OPENAI_API_KEY',
-      reasoning: chosen.reasoning || 'default',
-      language: dom.cfgLanguage.value || 'auto'
+      reasoning: chosen.reasoning || 'default'
     };
     const clearing = dom.cfgClearKey.checked;
     if (clearing) {

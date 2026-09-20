@@ -75,13 +75,14 @@ class ConfigTest {
   @Test
   void aRemovedFieldIsNotBroughtBackBySaving() throws IOException {
     Path file = tmp.resolve("config.json");
-    Files.writeString(file, "{\"provider\":\"openai\",\"maxSteps\":25}");
+    Files.writeString(file, "{\"provider\":\"openai\",\"maxSteps\":25,\"language\":\"English\"}");
 
     Config.writeInto(file, Config.empty().merge(new Config(null, "gpt-4o-mini", null, null, null,
         null, null, null, null, null, null)));
 
     String written = Files.readString(file);
     assertFalse(written.contains("maxSteps"), written);
+    assertFalse(written.contains("language"), written);
     assertEquals("gpt-4o-mini", Config.fromFile(file).model());
   }
 

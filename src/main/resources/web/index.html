@@ -358,25 +358,16 @@
           <span class="field-hint" id="cfg-apikeyenv-hint" hidden></span>
         </div>
 
-        <div class="field-row">
-          <div class="field">
-            <label for="cfg-temperature">温度</label>
-            <input type="number" id="cfg-temperature" min="0" max="2" step="any" placeholder="默认">
-          </div>
-          <div class="field">
-            <label for="cfg-language">思考语言</label>
-            <select id="cfg-language"></select>
-            <span class="field-hint" id="cfg-language-hint">无论你用什么语言写，代理都用这种语言
-              回答。它也会让模型用这种语言思考，这在有些模型上有效、有些上无效——回答一定
-              会跟着变，推理过程不一定。</span>
-          </div>
+        <div class="field">
+          <label for="cfg-temperature">温度</label>
+          <input type="number" id="cfg-temperature" min="0" max="2" step="any" placeholder="默认">
         </div>
 
         <h3 class="settings-subhead" id="cfg-vision-title">图片</h3>
         <p class="field-hint" id="cfg-vision-hint">
-          每个回合可以有一张图片，由这个模型来描述，描述内容成为你的消息——主模型永远
-          收不到图片。它有自己的端点、密钥和模型，因为读截图和写代码是不同的选择，而
-          一张涉及隐私的照片正适合交给本地模型。端点或模型留空即关闭图片功能：那时图片
+          一次可以带一张图片，由这个模型来描述，描述会和你的下一句话拼成一条消息发出
+          ——主模型永远收不到图片。它有自己的端点、密钥和模型，因为读截图和写代码是不
+          同的选择，而一张涉及隐私的照片正适合交给本地模型。端点或模型留空即关闭图片功能：那时图片
           按钮会拒绝并说明该设置什么。这里的内容不归 <em>测试连接</em> 测试——按图片
           按钮才试得到。
         </p>

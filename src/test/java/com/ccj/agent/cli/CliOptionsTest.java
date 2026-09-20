@@ -43,7 +43,6 @@ class CliOptionsTest {
               "--host", "127.0.0.1",
               "--web-token", "t",
               "--wallpapers", "none",
-              "--language", "English",
               "--max-tokens", "10",
               "--temperature", "0.5",
               "--reasoning", "high",
@@ -61,7 +60,6 @@ class CliOptionsTest {
     assertEquals("w", all.workspace());
     assertEquals(1234, all.port());
     assertEquals("t", all.webToken());
-    assertEquals("English", all.language());
     assertEquals(10, all.maxTokens());
     assertEquals(100, all.maxContextTokens());
     assertEquals("http://x", all.visionBaseUrl());
@@ -226,9 +224,7 @@ class CliOptionsTest {
                   "--temperature",
                   "0.2",
                   "--system",
-                  "be brief",
-                  "--language",
-                  "Simplified Chinese"
+                  "be brief"
                 })
             .overrides();
 
@@ -236,7 +232,6 @@ class CliOptionsTest {
     assertEquals("claude-x", overrides.model());
     assertEquals(0.2, overrides.temperature());
     assertEquals("be brief", overrides.systemPrompt());
-    assertEquals("Simplified Chinese", overrides.language());
     assertNull(overrides.baseUrl());
     assertNull(overrides.apiKey());
     assertNull(overrides.apiKeyEnv());

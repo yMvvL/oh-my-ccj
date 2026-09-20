@@ -1248,7 +1248,7 @@ class WebApiTest {
     restartFromConfigFile();
 
     JsonNode saved = postJson("/api/config", "{\"provider\":\"openai\",\"model\":\"typed-model\","
-        + "\"apiKeyEnv\":\"OPENAI_API_KEY\",\"language\":\"auto\"}");
+        + "\"apiKeyEnv\":\"OPENAI_API_KEY\"}");
 
     assertEquals("typed-model", saved.path("model").asText(), saved.toString());
     assertEquals(
@@ -2152,51 +2152,6 @@ class WebApiTest {
     HttpResponse<String> bad = post("/api/config", "{\"reasoning\":\"turbo\"}");
     assertEquals(400, bad.statusCode(), bad.body());
     assertTrue(bad.body().contains("low, high, max"), bad.body());
-  }
-
-  @Test
-  void theThinkingLanguageIsOfferedSavedAndPutInThePrompt() throws Exception {
-    JsonNode fresh = json("/api/config");
-    assertEquals("auto", fresh.path("language").asText(), "不做选择就意味着提示里什么都不提");
-    List<String> offered = languages(fresh);
-    assertTrue(offered.contains("Simplified Chinese"), offered.toString());
-    assertEquals(offered.get(0), "Simplified Chinese", "这个列表就是表单显示它们的顺序");
-
-    // POST 用状态载荷作答，所以表单自己的值要从 GET 读回来——这也正是这项设置必须挺过来的那次
-    // 往返。
-    postJson("/api/config", "{\"language\":\"Simplified Chinese\"}");
-    assertEquals("Simplified Chinese", json("/api/config").path("language").asText());
-
-    // 这项设置的意义：交给模型的提示会按名字要求它，连思考流也一样。检查的是循环真正发出的那个
-    // 请求。
-    provider.reply(Message.Assistant.text("好的"));
-    try (Sse sse = watch()) {
-      post("/api/message", "{\"text\":\"say hi\"}");
-      sse.await("done", 5000);
-    }
-    // 提示里点名这门语言用的是它自己的名字——简体中文，而不是 "Simplified Chinese"——这样那句话
-    // 读起来是关于一门语言的指令，而不是表单上的一个标签。
-    var sent = lastBuilt.requests().get(lastBuilt.requests().size() - 1);
-    assertTrue(sent.system().contains("think in 简体中文"), sent.system());
-    assertTrue(
-        sent.system().contains("always reason and reply in 简体中文"),
-        "作答与思考是在同一句话里被要求的：" + sent.system());
-
-    // 清回 auto 会把那句话移掉，而不是留下一句过时的。
-    postJson("/api/config", "{\"language\":\"auto\"}");
-    assertEquals("auto", json("/api/config").path("language").asText());
-    assertFalse(
-        com.ccj.agent.core.Prompts.DEFAULT_SYSTEM.contains("always reason and reply"),
-        "auto 不给提示加任何东西");
-  }
-
-  @Test
-  void aLanguageTheBuildDoesNotListIsStillKept() throws Exception {
-    // 这个列表是方便，不是闸门：模型能听从一个这个构建从未听说过的名字，而拒绝它就等于让表单来
-    // 决定一个人被允许用什么语言思考。
-    postJson("/api/config", "{\"language\":\"Klingon\"}");
-
-    assertEquals("Klingon", json("/api/config").path("language").asText());
   }
 
   @Test
@@ -3499,12 +3454,6 @@ class WebApiTest {
       }
     }
     throw new AssertionError("没有任何条目匹配 " + array);
-  }
-
-  private static List<String> languages(JsonNode config) {
-    List<String> values = new ArrayList<>();
-    config.path("languages").forEach(entry -> values.add(entry.path("value").asText()));
-    return values;
   }
 
   private static List<String> levels(JsonNode config) {

@@ -246,10 +246,9 @@ public final class Cli {
       AgentOptions agentOptions =
           new AgentOptions(
               options.demo() ? "demo" : config.model(),
-              // 语言是提示词的一部分，而不是一个独立字段：它就是一段只要一件事的话，而模型会
-              // 在它读每一条其他规则的地方读到它。工作目录也一并传入，这样项目自己的 CCJ.md
-              // 就能从那里读到——规则应该待在它们所描述的代码旁边。
-              Prompts.system(config.systemPrompt(), config.language(), cwd),
+              // 工作目录一并传入，这样项目自己的 CCJ.md 就能从那里读到——规则应该待在它们所
+              // 描述的代码旁边。
+              Prompts.system(config.systemPrompt(), cwd),
               config.temperature(),
               config.maxTokens(),
               config.reasoning(),
@@ -513,7 +512,7 @@ public final class Cli {
   private static Config demoConfig() {
     return new Config(
         "demo", "demo", null, null, null, null, null, null, null, null, null, null, null, null,
-        null, null);
+        null);
   }
 
   /** 本次运行启动时所在的目录：{@code -C} 优先，否则用进程目录。 */

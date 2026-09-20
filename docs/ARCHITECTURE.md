@@ -156,9 +156,8 @@ listener is what keeps the UI honest.
 | Streaming frames | `choices[0].delta.*` | `content_block_start/delta/stop`, `message_delta` |
 | Thinking | `reasoning_content` deltas, shown and then dropped | `thinking` blocks with a signature, shown *and* handed back on the next request |
 
-The system prompt is one string built in `Prompts.system` from three parts, in this order: the
-working directory's `CCJ.md`, the configured (or built-in) rules, and the thinking-language
-instruction. The project's file leads because it is the specific statement about this work; the
+The system prompt is one string built in `Prompts.system` from two parts, in this order: the
+working directory's `CCJ.md`, and the configured (or built-in) rules. The project's file leads because it is the specific statement about this work; the
 built-in rules follow rather than being replaced, since "inspect before you change" is how this agent
 works rather than a preference a project can switch off by existing. The file is read from **one
 directory only** — `ProjectPrompt` does not walk upwards, so what prompt a run uses is answerable by

@@ -35,7 +35,6 @@ public record CliOptions(
     String config,
     String home,
     String system,
-    String language,
     String cwd,
     String workspace,
     boolean demo,
@@ -72,7 +71,6 @@ public record CliOptions(
         yolo ? Boolean.TRUE : null,
         null,
         system,
-        language,
         reasoning,
         maxContextTokens,
         null,
@@ -117,7 +115,6 @@ public record CliOptions(
     String config = null;
     String home = null;
     String system = null;
-    String language = null;
     String cwd = null;
     String workspace = null;
     boolean demo = false;
@@ -282,10 +279,6 @@ public record CliOptions(
           system = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
-        case "--language" -> {
-          language = take(args, i, name, inline);
-          i += inline == null ? 2 : 1;
-        }
         case "--workspace" -> {
           workspace = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
@@ -326,7 +319,6 @@ public record CliOptions(
         config,
         home,
         system,
-        language,
         cwd,
         workspace,
         demo,
@@ -370,8 +362,6 @@ public record CliOptions(
                                    发出之前被丢弃
               --reasoning <level>  模型该思考多少：low、high 或 max
               --system <text>      本次运行的系统提示词
-              --language <name>    无论用户用什么语言书写，都用这种语言思考和回答
-                                   （"auto" 交给模型决定）；见「设置」里的列表
 
     视觉（图片先由这个模型描述，然后才进入对话）:
               --vision-base-url <url>    视觉模型的端点

@@ -281,12 +281,12 @@ public final class SubAgentRunner {
    */
   private String compose(SubAgentRole role, String systemPrompt, Path workDir) {
     StringBuilder out = new StringBuilder();
-    // 走 Prompts.system，而不是把传入的提示词直接用上：项目自己的 CCJ.md 和语言规则也是这个代理运行时
-    // 的一部分，一个因为工作被委派就丢掉它们的子代理，会表现得更差。调用方传的是对话「已配置」的提示词；
-    // 摆放规则在这里施加，好让它们只有一个所在之处。
+    // 走 Prompts.system，而不是把传入的提示词直接用上：项目自己的 CCJ.md 也是这个代理运行时的一部分，
+    // 一个因为工作被委派就丢掉它的子代理，会表现得更差。调用方传的是对话「已配置」的提示词；摆放规则在
+    // 这里施加，好让它们只有一个所在之处。
     // 工作目录用的是子代理实际会使用的那个，所以规则文件是从工具运行的地方读的，而不是从主对话碰巧所在的
     // 地方读的。
-    String base = Prompts.system(systemPrompt, null, workDir);
+    String base = Prompts.system(systemPrompt, workDir);
     out.append(base).append("\n\n");
     out.append("You are a sub-agent: another agent delegated this task to you and will read only your"
         + " report, not your work. Nobody else can see what you read or run.\n");
