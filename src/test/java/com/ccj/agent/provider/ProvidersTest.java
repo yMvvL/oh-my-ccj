@@ -35,6 +35,42 @@ class ProvidersTest {
   }
 
   @Test
+  void theTwoNewProtocolsAreReachableByTheirOwnNamesAndByKind() throws Exception {
+    // 两条路都通向同一个实现类，而它们各自往哪里发请求，是这份接线唯一真正要证明的事：名字说的是哪家，
+    // kind 说的才是哪种线路。
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
+      Config named =
+          new Config("openai-responses", "gpt-x", server.url(), "k", null, null, null, null, null,
+                  null, null)
+              .resolved();
+      Provider responses = Providers.create(named, Map.of());
+      responses.complete(ping("gpt-x"), event -> {});
+      assertEquals("/responses", server.path(0), "名字选中了 Responses 那条线路");
+      responses.close();
+    }
+
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: {}\n\n"))) {
+      ProviderStore store = ProviderStore.open(tmp);
+      store.save(
+          new ProviderDefinition(
+              "g", ProviderDefinition.GEMINI, server.url(), "G_KEY", List.of("gemini-x")));
+      Config config =
+          new Config("g", "gemini-x", null, null, null, null, null, null, null, null, null)
+              .resolved();
+
+      Provider gemini = Providers.create(config, Map.of("G_KEY", "k"), store);
+      gemini.complete(ping("gemini-x"), event -> {});
+
+      assertEquals(
+          "/v1beta/models/gemini-x:streamGenerateContent",
+          server.path(0),
+          "gemini 类型的定义说的是它自己的那个 API");
+      assertEquals("k", server.header(0, "x-goog-api-key"));
+      gemini.close();
+    }
+  }
+
+  @Test
   void fallsBackToDefaultsForUnsetProviderAndBaseUrl() {
     Config partial =
         new Config(null, "gpt-x", null, "k", null, null, null, null, null, null, null).resolved();
@@ -57,10 +93,13 @@ class ProvidersTest {
     IllegalArgumentException failure =
         assertThrows(
             IllegalArgumentException.class,
-            () -> Providers.create(config("gemini", "g", "k"), Map.of()));
+            () -> Providers.create(config("nonesuch", "m", "k"), Map.of()));
 
-    assertTrue(failure.getMessage().contains("gemini"), failure.getMessage());
-    assertTrue(failure.getMessage().contains("anthropic"), failure.getMessage());
+    assertTrue(failure.getMessage().contains("nonesuch"), failure.getMessage());
+    // 报错要给出真正可用的那几项，而不是一句「不支持」——名单会变，所以它得来自代码而不是这段话。
+    for (String name : Providers.supported()) {
+      assertTrue(failure.getMessage().contains(name), failure.getMessage());
+    }
   }
 
   @Test

@@ -15,6 +15,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -98,6 +99,9 @@ class SubAgentRunnerTest {
     }
   }
 
+  /** 主对话自己的设置：模型 {@code m}，没有点名的档位。子代理跟随它，除非某个角色被钉到了别处。 */
+  private static final AgentOptions MAIN = new AgentOptions("m", null, null, null, null, null);
+
   private SubAgentRunner runner(Provider provider, BooleanSupplierLike cancelled) {
     return runner(provider, cancelled, null);
   }
@@ -113,10 +117,21 @@ class SubAgentRunnerTest {
       BooleanSupplierLike cancelled,
       java.time.Duration deadline,
       Approver approver) {
+    return runner(provider, cancelled, deadline, approver, MAIN, Map.of());
+  }
+
+  private SubAgentRunner runner(
+      Provider provider,
+      BooleanSupplierLike cancelled,
+      java.time.Duration deadline,
+      Approver approver,
+      AgentOptions options,
+      Map<String, SubAgentChoice> pinned) {
     return new SubAgentRunner(
         provider,
         Tools.standard(),
-        new AgentOptions("m", null, null, null, null, null),
+        options,
+        pinned,
         project,
         cancelled == null ? () -> false : cancelled,
         32 * 1024,
@@ -193,6 +208,57 @@ class SubAgentRunnerTest {
   }
 
   @Test
+  void aPinnedRoleAsksForItsOwnModelWhileTheOthersFollowTheConversation() {
+    // 按角色指定模型的意义就在这一句：explore 用一个便宜的模型去读文件，verify 仍然用主对话那个。
+    // 断言落在 Request.model() 上，因为那正是模型真正看到的、也是提供方真正去调的。
+    Map<String, SubAgentChoice> pinned = Map.of("explore", new SubAgentChoice("cheap-model", null));
+
+    ScriptedProvider cheap = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nread it");
+    runner(cheap, null, null, null, MAIN, pinned)
+        .run(SubAgentRole.of("explore").get(), "look around", null);
+    assertEquals("cheap-model", cheap.requests().get(0).model(), "被钉住的角色用它自己的模型");
+
+    ScriptedProvider following = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nchecked");
+    runner(following, null, null, null, MAIN, pinned)
+        .run(SubAgentRole.of("verify").get(), "check it", null);
+    assertEquals("m", following.requests().get(0).model(), "没点名的角色仍然用主对话的模型");
+  }
+
+  @Test
+  void aPinnedEffortChangesOnlyThatRole() {
+    // 档位与模型一样是那一条设置的两半，而且只对点了名的角色生效：explore 想少一点，verify 仍然全神贯注。
+    AgentOptions main = new AgentOptions("m", null, null, null, "high", null);
+    Map<String, SubAgentChoice> pinned = Map.of("explore", new SubAgentChoice(null, "low"));
+
+    ScriptedProvider cheap = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nread it");
+    runner(cheap, null, null, null, main, pinned)
+        .run(SubAgentRole.of("explore").get(), "look around", null);
+    assertEquals("low", cheap.requests().get(0).reasoning(), "被钉住的档位跟着它自己的角色走");
+
+    ScriptedProvider following = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nchecked");
+    runner(following, null, null, null, main, pinned)
+        .run(SubAgentRole.of("verify").get(), "check it", null);
+    assertEquals("high", following.requests().get(0).reasoning(), "其余的仍然是主对话的档位");
+  }
+
+  @Test
+  void aPinnedRoleKeepsTheRestOfTheConversationsSettings() {
+    // 钉住的是模型这一栏，不是另一个提供方：温度、token 上限、上下文预算和审批者都还跟着那段对话。
+    AgentOptions main = new AgentOptions("m", null, 0.3, 4096, "high", 8192);
+
+    ScriptedProvider provider = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nok");
+    Map<String, SubAgentChoice> pinned =
+        Map.of("explore", new SubAgentChoice("cheap-model", "low"));
+    runner(provider, null, null, null, main, pinned)
+        .run(SubAgentRole.of("explore").get(), "look around", null);
+
+    Provider.Request request = provider.requests().get(0);
+    assertEquals("cheap-model", request.model(), "只有模型换了");
+    assertEquals(0.3, request.temperature().doubleValue(), "温度仍然是主对话的");
+    assertEquals(4096, request.maxTokens().intValue(), "上限仍然是主对话的");
+  }
+
+  @Test
   void theSubAgentsTokensReachTheConversationThatPaid() {
     // 阅读保持私密；账单不是。子代理的模型调用，是同一个账号上的同一个模型，所以一份不带花费就
     // 回来的报告，会让用量面板低报实际花掉的东西 —— 而一个悄悄出错的数字比没有数字更糟。
@@ -206,6 +272,60 @@ class SubAgentRunnerTest {
     assertEquals(30, report.usage().outputTokens());
     assertEquals(100, report.usage().cachedInputTokens());
     assertEquals(1, report.usage().userTurns(), "任务文本就是一个用户回合");
+  }
+
+  @Test
+  void theReportSaysWhatTheRunSpent() {
+    // 转录只说某个任务跑过，不说它花了多少。一行账，数字取自这次运行真正记下的用量，而不是另算一遍。
+    ScriptedProvider provider =
+        new ScriptedProvider().text("STATUS: done\nFINDINGS:\nok", 120, 30, 100);
+
+    SubAgentReport report =
+        runner(provider, null).run(SubAgentRole.of("explore").get(), "look around", null);
+    String rendered = report.render(".");
+
+    assertTrue(
+        rendered.contains(
+            "USAGE: "
+                + report.usage().inputTokens() + " in / "
+                + report.usage().outputTokens() + " out / "
+                + report.usage().cachedInputTokens() + " cached / "
+                + report.usage().modelTurns() + " model turns"),
+        rendered);
+  }
+
+  @Test
+  void aRunThatReportedNothingGetsNoSpendingLine() {
+    // 提供一个数字都没有时报出来的运行，它的报告不该凭空多出一行零：那是编出来的账，比没有这一行更糟。
+    ScriptedProvider provider = new ScriptedProvider().text("STATUS: done\nFINDINGS:\nok");
+
+    SubAgentReport report =
+        runner(provider, null).run(SubAgentRole.of("explore").get(), "look around", null);
+
+    assertFalse(report.render(".").contains("USAGE:"), report.render("."));
+  }
+
+  @Test
+  void theSpendingLineNamesThePinnedModelAndStaysQuietAboutTheMainOne() {
+    // 读报告的就是主模型，所以点它自己的名等于什么都没说；点一个没人选过的名字，才让它知道这一行账是哪个
+    // 模型跑出来的。
+    Map<String, SubAgentChoice> pinned = Map.of("explore", new SubAgentChoice("cheap-model", null));
+    ScriptedProvider cheap =
+        new ScriptedProvider().text("STATUS: done\nFINDINGS:\nok", 20, 4, 0);
+    ScriptedProvider following =
+        new ScriptedProvider().text("STATUS: done\nFINDINGS:\nok", 20, 4, 0);
+
+    String pinnedRendered =
+        runner(cheap, null, null, null, MAIN, pinned)
+            .run(SubAgentRole.of("explore").get(), "look around", null)
+            .render(".");
+    String followingRendered =
+        runner(following, null, null, null, MAIN, pinned)
+            .run(SubAgentRole.of("verify").get(), "check it", null)
+            .render(".");
+
+    assertTrue(pinnedRendered.contains(", model cheap-model"), pinnedRendered);
+    assertFalse(followingRendered.contains("cheap-model"), followingRendered);
   }
 
   @Test
@@ -382,6 +502,48 @@ class SubAgentRunnerTest {
     assertTrue(second.requests().isEmpty(), "而且从未问过模型");
     release.countDown();
     first.join(10_000);
+  }
+
+  @Test
+  void aSubAgentThatNeverStopsIsCutOffAtItsDeadline() throws Exception {
+    // 截止时间存在的理由就是这个场景：一次越过它十分钟还在干活的运行。排队那一半有测试
+    // （aQueuedWriterGivesUpRatherThanRunningPastItsDeadline）；这一半此前只在它产生的那条消息上有
+    // 断言 —— 一句手写的字符串喂给 SubAgentReport.failed，从未真的让截止时间到期，也没经过
+    // SubAgentRunner、AgentLoop 或 Deadline 任何一环。
+    //
+    // 桩必须做到两件事：正常时永不返回（否则测不到切断），被中断时立刻退出（否则一个坏掉的实现会把整个
+    // 构建挂住，而不是让它失败）。`Thread.sleep` 两件都满足。
+    java.util.concurrent.atomic.AtomicInteger modelCalls =
+        new java.util.concurrent.atomic.AtomicInteger();
+    Provider endless =
+        new Provider() {
+          @Override
+          public String name() {
+            return "endless";
+          }
+
+          @Override
+          public Message.Assistant complete(Request request, Consumer<Event> listener)
+              throws InterruptedException {
+            modelCalls.incrementAndGet();
+            while (true) {
+              Thread.sleep(25);
+            }
+          }
+        };
+
+    long start = System.currentTimeMillis();
+    SubAgentReport report =
+        runner(endless, null, Duration.ofMillis(700)).run(SubAgentRole.of("explore").get(), "keep going", null);
+    long took = System.currentTimeMillis() - start;
+
+    assertEquals("failed", report.status(), report.render("."));
+    // 报告必须说出**为什么**，因为主代理唯一能读到的就是这一行 —— 而这正是那份手写字符串的用例一直
+    // 假装在检查的东西。
+    assertTrue(report.summary().contains("700 毫秒") || report.summary().contains("秒"), report.summary());
+    assertTrue(report.summary().contains("截止时间"), report.summary());
+    assertTrue(modelCalls.get() >= 1, "它确实在干活：" + modelCalls.get());
+    assertTrue(took < 10_000, "切断发生在截止时间，而不是等到别的东西结束：" + took + "ms");
   }
 
   @Test

@@ -22,8 +22,17 @@ final class PostEditCheck {
 
   private final Checks checks;
 
-  PostEditCheck(Checks checks) {
+  /** 跑检查命令的那个程序：配置里的那个，或者没有配置时这个平台的默认。 */
+  private final String shell;
+
+  /**
+   * @param shell 跑检查命令的程序（`config.json` 的 `"shell"`）；null 或空白表示按平台默认。检查和
+   *     `bash` 工具用同一个程序，因为它们跑的是同一类命令，而一个能跑 `bash` 却跑不了检查的安装，只会
+   *     让人以为坏掉的是检查本身。见 {@link ProcessRunner#resolve}
+   */
+  PostEditCheck(Checks checks, String shell) {
     this.checks = checks == null ? Checks.none() : checks;
+    this.shell = ProcessRunner.resolve(shell);
   }
 
   /**
@@ -59,6 +68,7 @@ final class PostEditCheck {
     try {
       result =
           ProcessRunner.run(
+              shell,
               check.command(),
               ctx.cwd(),
               check.timeoutSeconds(),

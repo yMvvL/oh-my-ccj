@@ -241,6 +241,37 @@ class OpenAiProviderTest {
   }
 
   @Test
+  void aGatewayThatRepeatsTheSameUsageEveryChunkIsCountedOnce() throws Exception {
+    // 契约把 usage 放在最后一帧，但线上不遵守契约的网关不少：它们在每个增量里重复一遍**累计**用量。此前
+    // 每个 chunk 都直接转发一次，于是同一笔钱按 chunk 数被记进账本——而账本正是花费上限的依据。
+    String stream =
+        """
+        data: {"choices":[{"delta":{"content":"a"}}],"usage":{"prompt_tokens":100,"completion_tokens":1}}
+
+        data: {"choices":[{"delta":{"content":"b"}}],"usage":{"prompt_tokens":100,"completion_tokens":2}}
+
+        data: {"choices":[{"delta":{"content":"c"}}],"usage":{"prompt_tokens":100,"completion_tokens":3}}
+
+        data: [DONE]
+
+        """;
+    try (FakeServer server = FakeServer.start(FakeServer.Reply.sse(stream))) {
+      OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");
+      List<Provider.Event> events = new ArrayList<>();
+
+      provider.complete(request(), events::add);
+
+      List<Provider.Event.Usage> usages =
+          events.stream().filter(Provider.Event.Usage.class::isInstance).map(Provider.Event.Usage.class::cast).toList();
+      assertEquals(1, usages.size(), "重复上报的用量只能算一次：" + events);
+      // 累计值里最后那个才完整，所以取最后看到的那个，而不是第一个。
+      assertEquals(100, usages.get(0).inputTokens());
+      assertEquals(3, usages.get(0).outputTokens());
+      provider.close();
+    }
+  }
+
+  @Test
   void omitsToolsAndSamplingFieldsThatWereNotRequested() throws Exception {
     try (FakeServer server = FakeServer.start(FakeServer.Reply.sse("data: [DONE]\n\n"))) {
       OpenAiProvider provider = new OpenAiProvider(server.url(), "sk-test");

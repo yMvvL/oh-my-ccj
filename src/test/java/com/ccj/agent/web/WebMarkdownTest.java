@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -26,7 +25,6 @@ import org.junit.jupiter.api.Test;
 class WebMarkdownTest {
 
   private static final Path SCRIPT = Path.of("src", "test", "js", "markdown.test.mjs");
-  private static final Path APP = Path.of("src", "main", "resources", "web", "app.js");
 
   @Test
   void theRendererScriptPasses() throws IOException, InterruptedException {
@@ -53,8 +51,7 @@ class WebMarkdownTest {
 
   @Test
   void theAnswerIsRenderedAsMarkdown() {
-    String script = appSource();
-    if (script == null) { return; }
+    String script = WebSessionRowTest.appSourceOrSkip();
 
     // 流式答案走 markdown 那条路，而循环在什么都没流式传输时发的那份兜底也走同一条——否则一个
     // 没有任何增量的回合，就会成为屏幕上唯一一个以纯文本渲染的答案。
@@ -66,8 +63,7 @@ class WebMarkdownTest {
 
   @Test
   void theRendererBuildsNodesAndNeverHtmlSource() {
-    String script = appSource();
-    if (script == null) { return; }
+    String script = WebSessionRowTest.appSourceOrSkip();
     int from = script.indexOf("---- markdown: parse");
     int to = script.indexOf("---- transcript");
     assertTrue(from > 0 && to > from, "markdown 这一段必须由它的横幅界定出来");
@@ -82,13 +78,6 @@ class WebMarkdownTest {
     assertTrue(renderer.contains("mdSafeUrl"), "链接目标必须被过滤");
   }
 
-  private static String appSource() {
-    try {
-      return Files.exists(APP) ? Files.readString(APP) : null;
-    } catch (IOException err) {
-      return null;
-    }
-  }
 
   private static String findNode() {
     for (String candidate : List.of("node", "nodejs")) {

@@ -4030,6 +4030,15 @@
     });
   }
 
+  // 一个协议默认读哪个环境变量。服务器那边有自己的答案（Config.defaultKeyEnv），但表单要在还没有任何
+  // 提供方被选中时先填一格，而它填的必须是那个答案——一条读错变量的提示会把用户引到一个永远不会被发送的
+  // 密钥上，而那是这里最难发现的一类错。
+  function defaultKeyEnvFor(kind) {
+    if (kind === 'anthropic') { return 'ANTHROPIC_API_KEY'; }
+    if (kind === 'gemini') { return 'GEMINI_API_KEY'; }
+    return 'OPENAI_API_KEY';
+  }
+
   function settingsProviderChanged(name) {
     renderProviderHint();
     renderModelHint();
@@ -4038,8 +4047,7 @@
     if (str(info.baseUrl)) { dom.cfgBaseUrl.value = str(info.baseUrl); }
     // 定义里指定了变量时就用它：一个从 MYRELAY_KEY 读密钥的中转服务，不该被要求去读
     // OPENAI_API_KEY，那是另一个提供方的密钥。
-    dom.cfgApiKeyEnv.value = str(info.apiKeyEnv)
-      || (str(info.kind) === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY');
+    dom.cfgApiKeyEnv.value = str(info.apiKeyEnv) || defaultKeyEnvFor(str(info.kind));
     // 密钥是按提供方保存的，所以这一个有没有密钥是服务器回答的问题（只按名字，永远不涉及
     // 密钥本身）：这里说「已保存」和服务器说「会发送」是同一个事实，而一个对不会被发送的
     // 密钥说「已保存」的表单，正是把错误的密钥记下来的方式。
@@ -5273,6 +5281,15 @@
     const open = dom.cfgProviderForm.hidden;
     setProviderFormOpen(open);
     if (open) { dom.cfgNewName.focus(); }
+  });
+  // 换协议时把密钥变量那一格跟着换掉——但只在这一格仍然是某个默认值、或者还空着的时候。用户自己敲进去
+  // 的变量名不该被一次下拉框的改动抹掉，而一个不会被发送的密钥在表单上看起来和别的一模一样。
+  dom.cfgNewKind.addEventListener('change', function () {
+    const current = str(dom.cfgNewApiKeyEnv.value).trim();
+    if (current === '' || current === defaultKeyEnvFor('openai') || current === defaultKeyEnvFor('anthropic')
+        || current === defaultKeyEnvFor('gemini')) {
+      dom.cfgNewApiKeyEnv.value = defaultKeyEnvFor(dom.cfgNewKind.value);
+    }
   });
   dom.cfgProviderForm.addEventListener('submit', function (event) {
     event.preventDefault();

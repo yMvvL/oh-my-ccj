@@ -18,8 +18,18 @@ public final class Providers {
   private static final List<String> OPENAI_NAMES =
       List.of("openai", "openai-compatible", "deepseek", "groq", "ollama", "custom");
   private static final List<String> ANTHROPIC_NAMES = List.of("anthropic");
+  /**
+   * 讲另外两种协议的两家，各自按自己的名字就能选中。
+   *
+   * <p>它们同时也可以作为一个自定义定义的 {@code kind}——那种情况下名字由用户起，端点和密钥变量由表单
+   * 填。两条路都通向同一个实现类，因为「哪家厂商」与「哪种线路」在这里是两件事：前者是名字，后者是 kind。
+   */
+  private static final List<String> RESPONSES_NAMES = List.of(ResponsesProvider.NAME);
+  private static final List<String> GEMINI_NAMES = List.of(GeminiProvider.NAME);
   private static final List<String> SUPPORTED =
-      Stream.concat(OPENAI_NAMES.stream(), ANTHROPIC_NAMES.stream()).toList();
+      Stream.of(OPENAI_NAMES, ANTHROPIC_NAMES, RESPONSES_NAMES, GEMINI_NAMES)
+          .flatMap(List::stream)
+          .toList();
 
   private Providers() {}
 
@@ -117,12 +127,10 @@ public final class Providers {
       // 自定义提供方的端点来自它的定义：只有定义知道哪个地址服务于哪个提供方。存下的 base URL 只有在专门
       // 为这个提供方填过时才会被采纳（--base-url 参数、CCJ_BASE_URL，或就是这张表单）。
       String baseUrl = effectiveBaseUrl(resolved, store, name);
-      return ProviderDefinition.ANTHROPIC.equals(custom.kind())
-          ? new AnthropicProvider(baseUrl, apiKey)
-          : new OpenAiProvider(baseUrl, apiKey);
+      return byKind(custom.kind(), baseUrl, apiKey);
     }
 
-    if (!OPENAI_NAMES.contains(name) && !ANTHROPIC_NAMES.contains(name)) {
+    if (!SUPPORTED.contains(name)) {
       throw new IllegalArgumentException(
           "未知的提供方 '"
               + name
@@ -136,9 +144,39 @@ public final class Providers {
                           store.list().stream().map(ProviderDefinition::name).toList())));
     }
     String baseUrl = resolveBaseUrl(resolved, name);
-    return name.equals(AnthropicProvider.NAME)
-        ? new AnthropicProvider(baseUrl, apiKey)
-        : new OpenAiProvider(baseUrl, apiKey);
+    return byKind(kindOfName(name), baseUrl, apiKey);
+  }
+
+  /**
+   * 一种协议对应的实现类。
+   *
+   * <p>只有这里知道哪个 kind 是哪个类，所以加一种协议是一次改动加一次测试，而不是在三个地方各找一遍。
+   */
+  private static Provider byKind(String kind, String baseUrl, String apiKey) {
+    if (ProviderDefinition.ANTHROPIC.equals(kind)) {
+      return new AnthropicProvider(baseUrl, apiKey);
+    }
+    if (ProviderDefinition.OPENAI_RESPONSES.equals(kind)) {
+      return new ResponsesProvider(baseUrl, apiKey);
+    }
+    if (ProviderDefinition.GEMINI.equals(kind)) {
+      return new GeminiProvider(baseUrl, apiKey);
+    }
+    return new OpenAiProvider(baseUrl, apiKey);
+  }
+
+  /** 内置名字说的是哪家厂商，也就说的是哪种线路。 */
+  private static String kindOfName(String name) {
+    if (ANTHROPIC_NAMES.contains(name)) {
+      return ProviderDefinition.ANTHROPIC;
+    }
+    if (RESPONSES_NAMES.contains(name)) {
+      return ProviderDefinition.OPENAI_RESPONSES;
+    }
+    if (GEMINI_NAMES.contains(name)) {
+      return ProviderDefinition.GEMINI;
+    }
+    return ProviderDefinition.OPENAI;
   }
 
   /** 自定义提供方自带密钥变量；内置的有自己的。 */

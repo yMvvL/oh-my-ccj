@@ -56,13 +56,47 @@ public final class OpenAiProvider implements Provider {
 
   @Override
   public Message.Assistant complete(Request request, Consumer<Event> listener) throws Exception {
-    Consumer<Event> sink = listener == null ? event -> {} : listener;
-    HttpResponse<Stream<String>> response =
-        Transport.send(http, buildRequest(request), sink);
+    Consumer<Event> downstream = listener == null ? event -> {} : listener;
+    // 用量扣到最后再交出去，而且只交一次。契约把 usage 放在最后一帧，但线上不遵守契约的网关不少——每一个
+    // 增量都重复一遍累计用量的那种，会让同一笔钱被记上几十遍；而「最后一帧」这个位置也让重试先发生完。
+    UsageOnce sink = new UsageOnce(downstream);
+    HttpResponse<Stream<String>> response = Transport.send(http, buildRequest(request), sink);
     try (Stream<String> lines = response.body()) {
-      return consume(response, lines, sink);
+      Message.Assistant answer = consume(response, lines, sink);
+      sink.flush();
+      return answer;
     } catch (UncheckedIOException e) {
       throw new Exception("流式读取响应时连接断开：" + e.getCause(), e);
+    }
+  }
+
+  /**
+   * 挡在提供方和调用方之间：usage 被扣住，流结束时才放行一次，取最后看到的那个值。
+   *
+   * <p>取最后而不是第一个：重复上报的那种网关发的是**累计**值，所以后面的比前面的更完整。
+   */
+  private static final class UsageOnce implements Consumer<Event> {
+    private final Consumer<Event> downstream;
+    private Event.Usage pending;
+
+    UsageOnce(Consumer<Event> downstream) {
+      this.downstream = downstream;
+    }
+
+    @Override
+    public void accept(Event event) {
+      if (event instanceof Event.Usage usage) {
+        pending = usage;
+        return;
+      }
+      downstream.accept(event);
+    }
+
+    void flush() {
+      if (pending != null) {
+        downstream.accept(pending);
+        pending = null;
+      }
     }
   }
 

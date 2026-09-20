@@ -265,6 +265,13 @@ public final class AgentLoop {
       // 所以这个线路层的信号只是告知性的。
       case Provider.Event.ToolCallStart ignored -> {}
       case Provider.Event.Usage u -> {
+        // 账本记在这里，而不是记在每个前端里：会话是循环写的，而提供方报的数字是它自己说的。两个前端各记
+        // 一遍就是两个会分叉的总额——而此前终端**一个 token 都没记过**，于是 `--max-total-tokens` 在 REPL
+        // 里永远不触发，花的钱也永远不会出现在任何一个数字里。
+        session.totals(
+            session
+                .totals()
+                .plus(u.inputTokens(), u.outputTokens(), u.cachedInputTokens(), 0, 0, 0, 0, 0));
         listener.onUsage(u.inputTokens(), u.outputTokens(), u.cachedInputTokens());
         listener.onNotice(usageNotice(u));
       }

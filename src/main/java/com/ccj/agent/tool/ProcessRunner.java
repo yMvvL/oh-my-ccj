@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -20,17 +22,79 @@ import java.util.concurrent.TimeUnit;
  */
 final class ProcessRunner {
 
-  private static final String SHELL = "/bin/bash";
+  /** 没有配置 shell 时，POSIX 机器上跑命令的那个程序。 */
+  public static final String POSIX_DEFAULT = "/bin/bash";
+
+  /** {@code COMSPEC} 没设时 Windows 上跑命令的那个程序；每一台 Windows 都有它。 */
+  private static final String WINDOWS_FALLBACK = "cmd.exe";
+
   private static final long CANCEL_POLL_MILLIS = 150;
   private static final int PUMP_JOIN_MILLIS = 2000;
 
   private ProcessRunner() {}
 
   /**
+   * 用哪个程序跑命令：配置里写了就用那个（两端空白去掉），没写就交给这个平台。
+   *
+   * <p>它是一个静态入口，而不是某处字段的默认值，因为「没配置」这件事有不止一个调用方要按同样的方式
+   * 回答——`bash` 工具与编辑后检查——而两份各自写出来的平台判断早晚会漂成两种。
+   *
+   * @param shell 配置里的那个程序，null 或空白表示没配置
+   */
+  static String resolve(String shell) {
+    if (shell != null && !shell.isBlank()) {
+      return shell.strip();
+    }
+    return platformDefault(System.getProperty("os.name"), System.getenv("COMSPEC"));
+  }
+
+  /**
+   * 平台默认的那一半。
+   *
+   * <p>它带参数、而不是自己去读环境，是为了能被测到：这台机器和 CI 上都没有 Windows，而「Windows 上没
+   * 配置时用 {@code COMSPEC}」是一条否则永远不会被跑到、也就永远不知道自己坏了的判断。{@code osName}
+   * 看的是开头而不是相等，因为取值长这样：`Windows 11`、`Windows Server 2022`。
+   */
+  static String platformDefault(String osName, String comspec) {
+    if (osName == null || !osName.toLowerCase(Locale.ROOT).startsWith("windows")) {
+      return POSIX_DEFAULT;
+    }
+    return comspec == null || comspec.isBlank() ? WINDOWS_FALLBACK : comspec.strip();
+  }
+
+  /**
+   * 一条命令怎么交给这个 shell：程序本身，后面是让它执行一个字符串所需要的那些参数。
+   *
+   * <p>只有三种形状可以猜。`cmd` 用 `/c`。PowerShell 用 `-NoProfile -Command`——`-NoProfile` 是因为一
+   * 台机器的启动脚本不是这条命令的一部分，而它每次调用都要付一遍。bash、sh、zsh 这类用 `-lc`，这是本
+   * 工具一直以来的做法，`-l` 让用户 PATH 上的东西照常可见。**其余的一律按 `-lc` 处理**：那是对一个没
+   * 见过的 shell 唯一还能做的猜测，而一个不认它的 shell 会报「无法识别的选项」这种足够具体的错误，
+   * 改一下配置就绕过去了。
+   *
+   * <p>判的是文件名——路径最后一段、大小写无关、去掉 `.exe`——因为 Windows 上的配置写的会是
+   * `C:\Windows\system32\cmd.exe` 这样的完整路径。
+   */
+  static List<String> argv(String shell, String command) {
+    return switch (executableName(shell)) {
+      case "cmd" -> List.of(shell, "/c", command);
+      case "powershell", "pwsh" -> List.of(shell, "-NoProfile", "-Command", command);
+      default -> List.of(shell, "-lc", command);
+    };
+  }
+
+  /** 路径最后一段，小写，去掉 `.exe`：`C:\Windows\System32\CMD.EXE` 和 `cmd` 是同一个程序。 */
+  private static String executableName(String shell) {
+    int separator = Math.max(shell.lastIndexOf('/'), shell.lastIndexOf('\\'));
+    String name = shell.substring(separator + 1).toLowerCase(Locale.ROOT);
+    return name.endsWith(".exe") ? name.substring(0, name.length() - 4) : name;
+  }
+
+  /**
    * 一条结束的命令留下的东西。
    *
    * @param exitCode shell 的状态码；它从未自行退出时为 -1
-   * @param finished 截止时间或取消终结了它时为 false，这正是它被 kill 的原因
+   * @param finished 截止时间或取消终结了它时为 false，这正是它被 kill 的原因；进程根本没起来时也为
+   *     true——没有任何东西在跑，也就没有任何东西被终结
    * @param cancelled 拥有 {@code ctx} 的那次运行要求停止时为 true
    * @param output 合并后的 stdout 与 stderr，受上下文的输出上限限制
    * @param millis 它跑了多久，给想说明这一点的调用方用
@@ -45,24 +109,36 @@ final class ProcessRunner {
   }
 
   /**
-   * 在 {@code cwd} 里通过 {@code /bin/bash -lc} 运行 {@code command}。
+   * 在 {@code cwd} 里通过 {@code shell} 运行 {@code command}；参数形状由 {@link #argv} 决定。
+   *
+   * <p>{@code shell} 为 null 时按平台默认（见 {@link #resolve}）。调用方通常已经在构造时把它定下来
+   * 了，因为工具描述和错误消息都要报出那个程序是谁，而在这里再解析一次是让「没配置」这个答案不在任何
+   * 路径上漏掉。
    *
    * <p>{@code outputLimitBytes} 是调用方给的，不是上下文给的：一次 `bash` 调用把整个回合的预算都花在模型
    * 的命令上，而每次编辑之后运行的检查只花几 KB，因为它的输出会进入一份用户此后每个回合都要付费的结果。
    */
   static Result run(
-      String command, Path cwd, int timeoutSeconds, int outputLimitBytes, ToolContext ctx)
+      String shell,
+      String command,
+      Path cwd,
+      int timeoutSeconds,
+      int outputLimitBytes,
+      ToolContext ctx)
       throws InterruptedException {
+    String program = resolve(shell);
     long started = System.nanoTime();
     Process process;
     try {
       process =
-          new ProcessBuilder(SHELL, "-lc", command)
+          new ProcessBuilder(argv(program, command))
               .directory(cwd.toFile())
               .redirectErrorStream(true)
               .start();
     } catch (IOException e) {
-      return new Result(-1, false, ctx.isCancelled(), "无法启动 " + SHELL + ": " + e.getMessage(), 0);
+      // 什么都没起来，所以这里没有东西在等：这不是超时，而把它说成超时，会把读它的人送到错误的下一步
+      // 去——等一个从来不会开跑的进程。
+      return new Result(-1, true, ctx.isCancelled(), cannotStart(program, e), 0);
     }
     try {
       // 没有人会对着这个进程打字：代理没有终端可以交给它。留着管道开着，会让每条读取 stdin 的命令——
@@ -97,6 +173,21 @@ final class ProcessRunner {
     long millis = (System.nanoTime() - started) / 1_000_000;
     int exit = finished ? process.exitValue() : -1;
     return new Result(exit, finished, ctx.isCancelled(), capture.render(limit), millis);
+  }
+
+  /**
+   * 起不来的原因，外加三种换一个程序的办法。
+   *
+   * <p>只说「无法启动」是在报告一件读它的人无法行动的事：那个程序来自配置，所以这条消息必须点名那个
+   * 路径和它的三个设置点——配置文件、命令行、环境变量——否则下一步只能靠猜。
+   */
+  private static String cannotStart(String shell, IOException e) {
+    return "无法启动 "
+        + shell
+        + ": "
+        + e.getMessage()
+        + "\n  换一个跑命令的程序：config.json 里的 \"shell\"，或者 --shell <文件>，"
+        + "或者环境变量 CCJ_SHELL";
   }
 
   /**

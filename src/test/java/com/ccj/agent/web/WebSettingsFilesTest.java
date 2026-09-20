@@ -349,6 +349,23 @@ class WebSettingsFilesTest {
     assertTrue(script.contains("deleteControl(actions, '删除'"), "规则与检查的删除要用同一个手势");
   }
 
+  @Test
+  void theProtocolPickerOffersEveryProtocolAndSuggestsItsKeyVariable() throws IOException {
+    String page = Files.readString(Path.of("src", "main", "resources", "web", "index.html"));
+    String script = Files.readString(Path.of("src", "main", "resources", "web", "app.js"));
+
+    // 协议下拉是手写的 HTML，而「有哪些协议」是 ProviderDefinition.KINDS 说的事实：多一种协议要同时改两处，
+    // 所以这里把两边钉在一起——漏掉一处就是用户在设置面板里根本看不见那个协议。
+    for (String kind : com.ccj.agent.core.ProviderDefinition.KINDS) {
+      assertTrue(
+          page.contains("value=\"" + kind + "\""), "协议下拉缺少 " + kind + "：" + page);
+    }
+    // 每个协议默认读哪个环境变量：填错的那一格会把用户引到一个永远不会被发送的密钥上。
+    assertTrue(script.contains("function defaultKeyEnvFor("), "密钥变量的默认值要有名字");
+    assertTrue(script.contains("return 'GEMINI_API_KEY'"), script);
+    assertTrue(script.contains("dom.cfgNewKind.addEventListener('change'"), "换协议要跟着换那一格");
+  }
+
   // --------------------------------------------------------------- HTTP 与脚本
 
   private HttpResponse<String> get(String path) throws Exception {

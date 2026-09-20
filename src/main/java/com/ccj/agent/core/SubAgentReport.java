@@ -63,6 +63,7 @@ public final class SubAgentReport {
   private final List<Artifact> artifacts;
   private final UsageTotals usage;
   private final String directory;
+  private final String model;
 
   private SubAgentReport(
       String status,
@@ -70,13 +71,15 @@ public final class SubAgentReport {
       String findings,
       List<Artifact> artifacts,
       UsageTotals usage,
-      String directory) {
+      String directory,
+      String model) {
     this.status = status;
     this.summary = summary;
     this.findings = findings;
     this.artifacts = List.copyOf(artifacts);
     this.usage = usage == null ? UsageTotals.empty() : usage;
     this.directory = directory == null ? "" : directory;
+    this.model = model;
   }
 
   /**
@@ -91,14 +94,31 @@ public final class SubAgentReport {
 
   /** 同一份报告，附上这次运行的花销。 */
   public SubAgentReport withUsage(UsageTotals spent) {
-    return new SubAgentReport(status, summary, findings, artifacts, spent, directory);
+    return new SubAgentReport(status, summary, findings, artifacts, spent, directory, model);
+  }
+
+  /**
+   * 同一份报告，点名它是在哪个模型上跑出来的。
+   *
+   * <p>只有被钉到主对话以外某个模型上的角色才需要它：读报告的人就是主模型，所以当两者是同一个时点名等于
+   * 什么都没说，而一个没人选过的名字正是它需要被告知的事。空白与缺席同义。
+   */
+  public SubAgentReport withModel(String ranOn) {
+    return new SubAgentReport(
+        status,
+        summary,
+        findings,
+        artifacts,
+        usage,
+        directory,
+        ranOn == null || ranOn.isBlank() ? null : ranOn);
   }
 
   /**
    * 所报告的路径相对于哪个目录。
    *
-   * <p>由产出这份报告的那次运行设置，因为那些路径只有挨着它才有意义：会写入的角色在自己的暂存目录里工作，
-   * 而一份把项目说成所在地的报告会把主代理引到文件并不在的地方。
+   * <p>由产出这份报告的那次运行设置，因为那些路径只有挨着它才有意义：子代理在会话自己的工作目录里干活，而
+   * 一份把别处说成所在地的报告，会把主代理引到文件并不在的地方。
    */
   public String directory() {
     return directory;
@@ -106,7 +126,7 @@ public final class SubAgentReport {
 
   /** 同一份报告，说明它的路径相对于哪里。 */
   public SubAgentReport in(String where) {
-    return new SubAgentReport(status, summary, findings, artifacts, usage, where);
+    return new SubAgentReport(status, summary, findings, artifacts, usage, where, model);
   }
 
   public String status() {
@@ -191,7 +211,7 @@ public final class SubAgentReport {
     if (findings.isEmpty() && !summary.isEmpty() && !summary.equals(firstLine(body))) {
       findings = summary;
     }
-    return new SubAgentReport(status, summary, findings, artifacts, null, null);
+    return new SubAgentReport(status, summary, findings, artifacts, null, null, null);
   }
 
   /** 标题行在冒号之后携带的内容，也就是该分节的第一行正文。 */
@@ -323,6 +343,12 @@ public final class SubAgentReport {
     if (!summary.isEmpty()) {
       out.append("SUMMARY: ").append(summary).append('\n');
     }
+    // 转录只说某个任务跑过，不说它花了多少。这一行就是要让读到它的人知道账单：一次读了三十个文件才回来一
+    // 句话的运行，和一个来回就完事的运行，花的不是同一笔钱。提供方一个数字都没报时不写它——凭空造一行账，
+    // 比没有这一行更糟。
+    if (spentAnything()) {
+      out.append("USAGE: ").append(spendingLine()).append('\n');
+    }
     if (!artifacts.isEmpty()) {
       out.append("FILES (in ").append(where).append("):\n");
       for (Artifact artifact : artifacts) {
@@ -344,14 +370,44 @@ public final class SubAgentReport {
     return text;
   }
 
+  /**
+   * 提供方报过数字时为 true。
+   *
+   * <p>不看 {@link UsageTotals#isEmpty()}：一次委派的任务文本本身就算一个用户回合，所以每一份来自运行的报告
+   * 在那层意义上都「不空」，而这里要问的是另一件事——有没有真的花掉 token。
+   */
+  private boolean spentAnything() {
+    return usage.inputTokens() > 0 || usage.outputTokens() > 0 || usage.cachedInputTokens() > 0;
+  }
+
+  /**
+   * 这一行账本身：进去的、出来的、命中缓存的，加上问了模型几次。
+   *
+   * <p>用和 STATUS/FILES 一样的光秃标签与短字段，因为读它的是模型：一句话读起来没问题的散文，在这里会挤掉
+   * 报告里本可以有的发现。模型回合数跟 token 并排，因为「花了多少」有两半——一次反复问了二十遍的运行，和
+   * 一次问一遍就完事的运行，账单不像但都会疼。
+   */
+  private String spendingLine() {
+    StringBuilder line = new StringBuilder();
+    line.append(usage.inputTokens()).append(" in / ")
+        .append(usage.outputTokens()).append(" out / ")
+        .append(usage.cachedInputTokens()).append(" cached / ")
+        .append(usage.modelTurns()).append(" model turns");
+    if (model != null) {
+      line.append(", model ").append(model);
+    }
+    return line.toString();
+  }
+
   /** 为一次从未产出报告的运行准备的报告：被取消、超时，或模型拒绝。 */
   public static SubAgentReport failed(String reason) {
-    return new SubAgentReport("failed", reason == null ? "" : reason, "", List.of(), null, null);
+    return new SubAgentReport(
+        "failed", reason == null ? "" : reason, "", List.of(), null, null, null);
   }
 
   /** 跑完了，但什么都没写、也没说出任何可用内容的运行。 */
   public static SubAgentReport empty() {
     return new SubAgentReport(
-        "done", "（子代理没有产出报告）", "", List.of(), null, null);
+        "done", "（子代理没有产出报告）", "", List.of(), null, null, null);
   }
 }

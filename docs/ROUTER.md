@@ -19,7 +19,45 @@ curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d
 
 之后这个提供方就可以在设置面板里选择，`ccj --provider router --model …` 在终端里能用，模型列表也会在模型字段里提供。定义住在 `~/.oh-my-ccj/providers.json`；`kind: "anthropic"` 可供偏好 messages API 的路由器使用。密钥从具名的环境变量读取，所以没有任何机密被写下来。
 
+偏好 Responses API 的路由器同样如此，换一个内建名字就行——它请求 `<baseUrl>/responses`，收的是 `response.*` 那一族事件：
+
+```bash
+curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d '{
+  "name": "router",
+  "kind": "openai-responses",
+  "baseUrl": "http://localhost:9090/v1",
+  "apiKeyEnv": "ROUTER_KEY",
+  "models": ["gpt-5.5"]
+}'
+```
+
+它对每个请求都显式带上 `"store": false`：这个端点的默认值会把整段会话留在对方那里 30 天，而 ccj 的会话文件在本地。
+
 **对一个只做代理转发的路由器来说，这就是全部集成。** 没有代理代码，没有 UI 代码。
+
+### 用 Gemini 有两条路
+
+Google 自己就带这一层兼容：`https://generativelanguage.googleapis.com/v1beta/openai` 讲 OpenAI 的
+chat-completions，所以「把 Gemini 挂进来」不需要任何新协议：
+
+```bash
+curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d '{
+  "name": "gemini",
+  "kind": "openai",
+  "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+  "apiKeyEnv": "GEMINI_API_KEY",
+  "models": ["gemini-2.5-flash", "gemini-2.5-pro"]
+}'
+```
+
+`baseUrl` 里不带 `/chat/completions`——`ProviderDefinition.normaliseBaseUrl` 会剥掉那个后缀，提供方再自己
+追加一次。
+
+原生那条路也在代码里：`GeminiProvider` 打的是
+`POST /v1beta/models/{model}:streamGenerateContent?alt=sse`，密钥放 `x-goog-api-key` 头（另一种写法是同一
+个 URL 上的 `?key=`）。它存在的理由是兼容层不转发的原生字段（`systemInstruction`、`thinkingConfig`、
+带 `thought` 标志的 part）。它**还没有**接到 `Providers` 与 `ProviderDefinition` 上，所以今天没有任何
+`kind` 值能选中它。而 `?alt=sse` 与密钥头部这两条只在 proto 和公开文档里核过，**没有**对着真实端点跑过。
 
 ## 2. 动态目录需要一个接口
 

@@ -2,9 +2,29 @@
 
 [![build](https://github.com/ArchCCJ/oh-my-ccj/actions/workflows/build.yml/badge.svg)](https://github.com/ArchCCJ/oh-my-ccj/actions/workflows/build.yml)
 
+**A coding agent in plain Java 21, written from scratch.** No agent framework, no HTTP client library,
+no CLI library: the transport is `java.net.http`, the web UI and every test double ride on
+`com.sun.net.httpserver`. Exactly one runtime dependency (Jackson), no build step for the page it
+serves, and a test suite that runs offline. It streams from the model, lets it call eight tools that
+touch your filesystem, and asks you before anything runs.
+
+**Status: a personal tool, not a product.** Built for one person and used daily. There is no support,
+no release cadence, and no backwards-compatibility promise — the version number is decoration until
+there is a release to point at. Everything below, and the UI itself, is in Chinese; that is the
+language the project is written in. If you want to see what it is before reading any of it:
+
+```
+./mvnw -DskipTests package && ./ccj --demo     # no API key, no network
+```
+
+Requires JDK 21+ on Linux or macOS. MIT licensed ([LICENSE](LICENSE)). It is deliberately *not* a
+sandbox: the approval prompt is the only guard, and `--yolo` removes it.
+
+---
+
 从零开始用纯 Java 21 写成的编码代理运行时。没有代理框架，没有 HTTP 客户端库，没有 CLI 库——传输用
-`java.net.http`，Web UI 和测试替身用 `com.sun.net.httpserver`——20.6k 行 Java 加一个 8.8k 行的原生
-页面，旁边还有 16.5k 行测试。
+`java.net.http`，Web UI 和测试替身用 `com.sun.net.httpserver`——21.6k 行 Java 加一个 8.8k 行的原生
+页面，旁边还有 19.4k 行测试（含 1.7k 行在真 node 里跑的页面用例）。
 
 `ccj` 与模型流式地对话，让模型调用能触碰你文件系统的工具，把结果回喂给它，如此重复直到模型给出回答。
 它是每个编码代理都围绕的那个循环的一个小巧、可读的实现。
@@ -80,18 +100,21 @@ Added the check on line 42 and the suite passes.
 
 ### 运行环境
 
-**Linux 和 macOS，需要 JDK 21+。** 启动器（`./mvnw`）自带 Maven，所以不必安装 Maven——但需要一个 POSIX
-shell，这是一项真正的依赖，而不是顺带的前提：
+**Linux 和 macOS，需要 JDK 21+。** 启动器（`./mvnw`）自带 Maven，所以不必安装 Maven——但需要一个 shell，
+这是一项真正的依赖，而不是顺带的前提：
 
 | 需要 | 原因 |
 |---|---|
-| `/bin/bash` | `bash` 工具通过它执行命令，整个设计就是围绕这个工具搭起来的。 |
+| 一个 shell | `bash` 工具和编辑后检查通过它执行命令。用哪个程序是可配置的：`config.json` 里的 `"shell"`、`--shell <文件>`，或环境变量 `CCJ_SHELL`；不配置时 POSIX 上是 `/bin/bash`，Windows 上是 `%COMSPEC%`（没有它时 `cmd.exe`）。 |
 | POSIX shell 工具 | 启动器（`ccj`）用到 `readlink`；各工具期望 `grep`、`find` 之类按惯常方式工作。 |
 | JDK 21+ | `./mvnw` 和 `java -jar` 都需要它。 |
 
-不支持 Windows。Java 本身能在上面跑，但 shell 工具将无物可跑：`cmd.exe` 或 PowerShell 路径是另一个工具，
-引号规则不同，不是改个配置的事。**WSL 可用**，在 Windows 上这是使用本项目的正路——在 WSL 里，上面每一条
-都成立。
+**Windows 上跑命令的机制已经就位，但没有被验证过。** 写死的 `/bin/bash` 没有了：`--shell` 可以指向任何
+程序，`bash` 工具与编辑后检查用的是同一个，仓库根下还有一个不依赖 bash 的启动器 `ccj.cmd`。可是维护者的
+机器和 CI 上都没有 Windows（CI 只跑 `ubuntu-latest` 和 `macos-latest`），所以「一个回合在 Windows 上跑
+起来」是这些机制要达成的目标，而不是一次被观察到的运行——`cmd.exe` 收 `/c`、PowerShell 收
+`-NoProfile -Command` 这类形状是照着文档写下的，没人试过。**WSL 仍然是唯一有人跑过的那条路**：在 WSL 里，
+上面每一条都成立。
 
 其它什么也不需要：不需要 Maven，不需要 Node（Node 缺席时浏览器用例会被跳过，并且*报告*为跳过——CI 会装上
 它，所以不可能悄悄蒙混过去），不需要 API 密钥（`--demo` 跑的是本地替身模型）。
@@ -112,6 +135,27 @@ cd ~/some/other/project && ccj -p "explain this repo"
 存放在 `~/.oh-my-ccj` 下，跨项目共享（`--home` 可以把它们隔离开）。密钥放在环境里或配置文件里——`ccj`
 是个小程序，不是服务。
 
+Windows 上是仓库根下同一个文件的 `ccj.cmd`：把它所在的目录放进 `PATH`，敲 `ccj` 就行（`PATHEXT` 让
+`.cmd` 不必写出来），它用 `%~dp0` 找到仓库根，所以从任何位置调用都对。它与 `ccj` 只差一处——只看
+`target\ccj.jar` 在不在，不看源码新旧，因为 `find -newer` 在 CMD 里没有对应物（要它重建，先删掉那个 jar）。
+见 [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md)。
+
+### 想要一个自带运行时的包？
+
+默认不发安装包，就是那个 2.9 MB 的 jar：任何 JDK 21+ 都能跑，不需要构建工具，拷到哪台机器都行。如果要的
+是「连运行时一起带走」的东西，`jpackage`（JDK 自带）一行就够：
+
+```bash
+jpackage --type app-image --name ccj --input target --main-jar ccj.jar \
+  --main-class com.ccj.agent.cli.Main --dest dist \
+  --add-modules java.net.http,jdk.httpserver,java.desktop
+```
+
+在一台 Linux 上实测：产物 98 MB（里面是一份 `jlink` 出来的运行时），`dist/ccj/bin/ccj --version` 与一个
+真实的 `--demo` 回合都跑得通。**没有**做成 `deb`/`rpm`/`msi`/`dmg` 那样的安装包，因为那需要目标平台自己的
+工具链（`dpkg-deb`、`rpmbuild`、WiX、Xcode），而 `jpackage` **不能跨平台构建**——为三个平台出包要在三台
+机器上各跑一次，这个项目没有那三台机器。
+
 ### 不用 API 密钥也能试
 
 ```bash
@@ -126,6 +170,11 @@ ccj --demo -p "read pom.xml"      # one-shot
 方式。
 
 ## Web UI
+
+![ccj 的网页界面：左侧工作区、中间转录里的一张工具卡片、右侧用量面板](docs/images/web-ui.png)
+
+*上面这一张是 `./ccj --demo` 里真的跑了一个回合之后截的：`read pom.xml` 是一次真实工具调用，右边的用量
+面板是真的账本。*
 
 ```bash
 ccj                       # the default: serve on 127.0.0.1 and on this machine's tailnet address,
@@ -145,7 +194,7 @@ ccj --repl                # the terminal front end instead
 ```
 $ ccj
 oh-my-ccj 0.1.0 — web UI: http://127.0.0.1:6767/
-                          also on http://100.72.92.41:6767/?token=…
+                          also on http://100.64.0.1:6767/?token=…
   the first address is this machine (no token needed there); the others are the tailnet, and ask for
   the token in the URL
 ```
@@ -177,7 +226,7 @@ oh-my-ccj 0.1.0 — web UI: http://127.0.0.1:6767/
 
 ```bash
 ccj                    # this machine at http://127.0.0.1:6767/
-                       # and the phone at http://100.72.92.41:6767/?token=…
+                       # and the phone at http://100.64.0.1:6767/?token=…
 ```
 
 在手机上打开第二个 URL 一次；token 进入 HttpOnly cookie，之后的书签就什么都不用带了。token 首次使用时
@@ -192,14 +241,14 @@ Tailscale 只是**最省事**的那条路，不是必需的那条：局域网、
 有两件事让它成为*你的*，而不只是「在某个网络上」：
 
 - **绑定的是地址，不是每个接口。** `ss -ltn | grep 6767` 会显示两个监听：`127.0.0.1:6767` 和
-  `100.72.92.41:6767`。手机用的是 tailnet 那个，它也是唯一能从本机之外够到的。`--host tailscale`
-  只服务 tailnet 地址（那样本机也得用它，或者用 MagicDNS 名字 `archymwl.taile88351.ts.net`）。
+  `100.64.0.1:6767`。手机用的是 tailnet 那个，它也是唯一能从本机之外够到的。`--host tailscale`
+  只服务 tailnet 地址（那样本机也得用它，或者用 MagicDNS 名字 `<机器名>.<你的 tailnet>.ts.net`）。
 - **一个 tailnet 不等于一台设备。** 其中的每台设备都能连上那个端口；挡住其它设备的是 token。如果还想
   把它钉死到一台设备，就在 tailnet 的访问规则里加上：
 
   ```json
-  { "acls": [ { "action": "accept", "src": ["ffdancer"], "dst": ["archymwl:6767"] },
-              { "action": "accept", "src": ["archymwl"], "dst": ["archymwl:6767"] } ] }
+  { "acls": [ { "action": "accept", "src": ["friends-phone"], "dst": ["this-machine:6767"] },
+              { "action": "accept", "src": ["this-machine"], "dst": ["this-machine:6767"] } ] }
   ```
 
   （Tailscale 的默认规则本来就允许 tailnet 内的一切——上面这一对才是把它*收窄*的东西。
@@ -276,9 +325,16 @@ loopback，不绑任何别的东西。`--host <addr>` 仍然接受任意地址�
                                发出之前被丢弃
           --max-total-tokens <n>
                                花费上限：这条会话累计用掉的 token（输入加输出）超过它，就不再
-                               开始新回合；不设置表示不设上限
+                               开始新的回合；不设置表示不设上限
           --reasoning <level>  模型该思考多少：low、high 或 max
           --system <text>      本次运行的系统提示词
+
+子代理（用 --subagents 打开委派之后）:
+          --subagent-model <角色>=<模型>
+                               让一个角色用它自己的模型：explore 可以用便宜的那个，build 用强的那个
+                               （角色是 explore、verify、build；可以重复给出）
+          --subagent-reasoning <角色>=<档位>
+                               让一个角色用它自己的思考档位：low、high 或 max（可以重复给出）
 
 视觉（图片先由这个模型描述，然后才进入对话）:
           --vision-base-url <url>    视觉模型的端点
@@ -312,6 +368,7 @@ Web:
           --config <file>      配置文件（默认：<home>/config.json）
           --home <dir>         应用主目录（默认：~/.oh-my-ccj）
       -C, --cwd <dir>          工具解析相对路径时依据的工作目录
+          --shell <file>       跑命令与编辑后检查的那个程序（默认：/bin/bash）
           --tools              打印可用的工具后退出
           --yolo               批准每一个工具调用，别名 --auto-approve
       -h, --help               打印这份帮助
@@ -367,8 +424,8 @@ Anthropic 默认 `ANTHROPIC_API_KEY`）；把它留在环境里就意味着它�
 |---|---|---|
 | `read` | `path`, `offset?`, `limit?` | 行带编号，可用 `offset` 续读，拒绝二进制文件 |
 | `write` | `path`, `content` | 创建父目录，报告字节数；审批时显示覆盖预览 |
-| `edit` | `path`, `old_string`, `new_string`, `replace_all?` — 或 `edits: [{old_string, new_string, replace_all?}]` | 精确匹配；有歧义就报错并给出匹配数，失败的 hunk 会带着该文件中预期位置附近的行一起返回。`edits` 形式会**一起**改动同一个文件里的多处：一次审批、一次写入，而且除非每个 hunk 都匹配，否则什么都不写（与另一块重叠的 hunk，或匹配不上的 hunk，都会拒绝整个改动）。审批显示的是整份文件的一份差异 |
-| `bash` | `command`, `cwd?`, `timeout_seconds?` | `/bin/bash -lc`，stderr 合并，报告退出码，输出用 head+tail 封顶 |
+| `edit` | `path`, `old_string?`, `new_string?`, `replace_all?`, `edits?` | 要么给 `old_string` 与 `new_string`，要么给 `edits`——schema 因此没有把其中一个标成必填。精确匹配；有歧义就报错并给出匹配数，失败的 hunk 会带着该文件中预期位置附近的行一起返回。`edits: [{old_string, new_string, replace_all?}]` 会**一起**改动同一个文件里的多处：一次审批、一次写入，而且除非每个 hunk 都匹配，否则什么都不写（与另一块重叠的 hunk，或匹配不上的 hunk，都会拒绝整个改动）。审批显示的是整份文件的一份差异 |
+| `bash` | `command`, `cwd?`, `timeout_seconds?` | 用配置里的那个 shell 跑（默认 `/bin/bash -lc`；`cmd.exe` 收到 `/c`），stderr 合并，报告退出码，输出用 head+tail 封顶 |
 | `glob` | `pattern`, `path?` | 相对路径的 glob，含 `**`，最新的在前，跳过 `target/`、`.git/`、`node_modules/`、`.idea/` |
 | `grep` | `pattern`, `path?`, `glob?`, `ignore_case?`, `max_results?` | Java 正则，跳过二进制文件和超过 2 MiB 的文件 |
 | `fetch` | `url`, `max_bytes?`, `as?` | 第一个离开本机的工具：只允许 `http`/`https`（其它 scheme 在被拨号之前就按名字拒绝），只允许文本内容类型，读取的正文默认封顶 200 KB、最多 1 MiB，重定向手工跟随，所以每一跳都做 scheme 检查。它像其它工具一样请求审批，URL 就是规则匹配的对象——`{"tool": "fetch", "command": "https://docs.example.com/*"}`。可选参数 `as` **只接受 `"text"`**：指定时把响应体的 HTML 剥成文本（去标签与注释、去 `script`/`style` 的内容、块级标签换行、连续空白压成一个、解开常见实体），并在结果开头先说明它剥过标记、而且这是一次**由调用方要求的猜测**；别的取值当场拒绝，不传则按原样返回、行为一字不变。它不是浏览器：没有 JavaScript、没有 cookie、没有认证、没有 POST |
@@ -396,10 +453,16 @@ curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d
 ccj --provider myrelay --model deepseek-v4-flash
 ```
 
-`kind` 是线上协议——任何讲 `/chat/completions` 的都算 `openai`，messages API 算 `anthropic`。定义存放
-在 `~/.oh-my-ccj/providers.json`，存储前会先校验，并可以在设置面板里管理。UI 读的目录来自
+`kind` 是**线上协议**，共四种：讲 `/chat/completions` 的都算 `openai`（默认），messages API 是
+`anthropic`，OpenAI 的 Responses API 是 `openai-responses`，Google 的
+`:streamGenerateContent` 是 `gemini`。名字由你起，协议是另一件事——`{"name":"my-gemini","kind":"gemini"}`
+与 `{"name":"gemini","kind":"gemini"}` 说的是同一个实现类。四种协议也都可以直接用它们自己的名字作为
+`--provider`（`openai-responses`、`gemini`）。
+
+定义存放在 `~/.oh-my-ccj/providers.json`，存储前会先校验，并可以在设置面板里管理。UI 读的目录来自
 `ModelCatalog` 接口，而不是直接来自配置，所以一个清楚自己模型列表的网关可以自己作答——见
-[docs/ROUTER.md](docs/ROUTER.md)。
+[docs/ROUTER.md](docs/ROUTER.md)。`gemini` 没有默认模型：型号名换得太快，猜一个就是把一次配置错误变成一次
+莫名其妙的 404。
 
 ## 工作区
 
@@ -475,19 +538,21 @@ mvn -DskipTests package                   # fat jar
 
 | 包 | 类 | 测试数 | 覆盖 |
 |---|---|---|---|
-| `core` | 15 | 169 | 循环、工具调用与只读重叠、中止、上下文预算与 token 估算、压缩与恢复、审批规则与它们的拒绝、子代理与它的账本、配置的合并与遮蔽、提示词（项目自己的 `CCJ.md` 领起） |
-| `web` | 15 | 188 | HTTP 路由、SSE 与重连、审批熬过会话切换、按会话拒绝、并行对话、token 闸门与 `Host` 守卫、跨源、检查点退回、图片流程、设置表单，以及八个在 node 下跑的页面用例 |
-| `tool` | 10 | 94 | 匹配与截断、超时与取消、拒绝路径、`edit` 的多块与失败邻域、`fetch` 的 scheme 与体积、`restart` 及它的拒绝 |
-| `provider` | 7 | 85 | SSE 解析、两种线上映射、重试、自定义提供方、effort 档位、视觉客户端、模型目录 |
+| `core` | 15 | 179 | 循环、工具调用与只读重叠、中止、上下文预算与 token 估算、压缩与恢复、审批规则与它们的拒绝、子代理与它的账本、配置的合并与遮蔽、提示词（项目自己的 `CCJ.md` 领起） |
+| `web` | 16 | 190 | HTTP 路由、SSE 与重连、审批熬过会话切换、按会话拒绝、并行对话、token 闸门与 `Host` 守卫、跨源、检查点退回、图片流程、设置表单、**账本等于账本之外的**、以及九个在 node 下跑的页面用例（其中一个是真浏览器） |
+| `tool` | 11 | 106 | 匹配与截断、超时与取消、拒绝路径、`edit` 的多块与失败邻域、`fetch` 的 scheme 与体积、`restart` 及它的拒绝、**可配置的 shell 与它的参数形状** |
+| `provider` | 9 | 112 | SSE 解析、**四种线上映射**（chat-completions、messages、Responses、Gemini）、重试、自定义提供方、effort 档位、视觉客户端、模型目录 |
 | `session` | 6 | 76 | 编解码往返（含 thinking）、追加与重开、列表缓存、世代文件、附件与检查点 |
-| `e2e` | 1 | 28 | CLI → HTTP → 工具 → 磁盘：推理、预算、工具在哪个目录运行、`CCJ.md` 到达请求、重启落在同一个对话 |
+| `e2e` | 1 | 29 | CLI → HTTP → 工具 → 磁盘：推理、预算、工具在哪个目录运行、`CCJ.md` 到达请求、重启落在同一个对话 |
 | `cli` | 2 | 18 | 参数解析、模式选择、端口建议 |
 | `workspace` | 1 | 11 | 注册表规则、持久化、隔离、给选中的文件夹命名 |
 | `mcp` | 1 | 10 | stdio 握手、工具注册、审批、关闭 |
 | `demo` | 1 | 8 | 没有模型时的工具路由、工具调用、错误路径 |
+| `docs` | 1 | 2 | README 的用法一段逐字等于 `--help`；工具表的名字、顺序与参数与每个工具的 schema 一致 |
 
-合计 **687 个测试，59 个类**。这张表按包从 surefire 报告里数出来，而不是手写的清单——手写过的那一版
-漂到了实际数字的一半左右。让它从代码生成是 [ROADMAP](docs/ROADMAP.md) 的 3.3。
+合计 **742 个测试，64 个类**。这张表按包从 surefire 报告里数出来，而不是手写的清单——手写过的那一版
+漂到了实际数字的一半左右。用法表与工具表现在由 `docs` 包里的那个测试守着（3.3 用的是「机器比对」而不是
+「生成」）。
 
 上面的数字来自维护者环境里的最后一次运行。CI 在 Linux 和 macOS 上实际跑的是 `./mvnw -B -ntp verify`
 ——见 [.github/workflows/build.yml](.github/workflows/build.yml)。工作要往哪去，见

@@ -94,8 +94,7 @@ class WebSessionRowTest {
 
   @Test
   void theRowIsBuiltFromTheTitleTheServerSends() {
-    String script = appSource();
-    if (script == null) { return; }
+    String script = appSourceOrSkip();
 
     // 这一行读的是 `title`（回退到 CLI 也在用的那个更短的 `preview`），
     // 而 AgentHub 把两者都放进了载荷。只要有一半被改名，侧边栏就会悄悄退回
@@ -107,8 +106,7 @@ class WebSessionRowTest {
 
   @Test
   void aFinishedTurnReReadsTheSessionOrder() {
-    String script = appSource();
-    if (script == null) { return; }
+    String script = appSourceOrSkip();
 
     // 服务器按修改时间给会话排序，而一个回合会写当前会话的文件——所以页面
     // 持有的那个列表在回合结束的瞬间就过时了，刚用过的对话必须升到最上面。
@@ -121,11 +119,19 @@ class WebSessionRowTest {
     assertTrue(script.contains("request('/api/sessions?workspace='"), script);
   }
 
-  private static String appSource() {
+  /**
+   * 发布出去的页面脚本。
+   *
+   * <p>读不到的时候**中止**这条用例，而不是返回 {@code null} 让调用方提前 {@code return}——那个写法
+   * 在 JUnit 眼里是一个绿色的测试。这个包已经为「缺少 node」钉过一次同一条规矩（见
+   * {@code aCaseFileThatCannotBeRunIsSkippedRatherThanPassed}）：跑不了的测试绝不允许看起来像跑过。
+   * 缺的是运行时还是文件，形状是同一件事。
+   */
+  static String appSourceOrSkip() {
     try {
-      return Files.exists(APP) ? Files.readString(APP) : null;
+      return Files.readString(APP);
     } catch (IOException err) {
-      return null;
+      throw new org.opentest4j.TestAbortedException("读不到页面源码：" + APP, err);
     }
   }
 

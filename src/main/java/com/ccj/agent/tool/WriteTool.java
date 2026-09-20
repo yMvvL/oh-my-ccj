@@ -35,7 +35,16 @@ public final class WriteTool implements Tool {
   }
 
   public WriteTool(com.ccj.agent.core.Checks checks, CheckpointStore checkpoints) {
-    this.check = new PostEditCheck(checks);
+    this(checks, checkpoints, null);
+  }
+
+  /**
+   * 同上，另外指明用哪个程序跑编辑后检查。
+   *
+   * @param shell 检查命令用哪个程序跑；null 或空白表示按平台默认，见 {@link ProcessRunner#resolve}
+   */
+  public WriteTool(com.ccj.agent.core.Checks checks, CheckpointStore checkpoints, String shell) {
+    this.check = new PostEditCheck(checks, shell);
     this.checkpoints = checkpoints == null ? CheckpointStore.none() : checkpoints;
   }
 

@@ -59,6 +59,16 @@
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <!-- 版本写下来，而不是靠 Maven 的默认绑定。wrapper 固定了 Maven，所以默认值在实践中是稳定的，
+             但读者核对不了「就是它编译的」——而 release 只有从这里才看得出来（见上面的 properties）。
+             这个数字就是本 wrapper（Maven 3.9.16）自己会绑定的那个：写下来是为了让读者能核对，不是
+             为了换一个版本。 -->
+        <version>3.15.0</version>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.2</version>
         <configuration>

@@ -3,7 +3,6 @@ package com.ccj.agent.web;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
@@ -27,10 +26,7 @@ class WebComposerPictureTest {
 
   @Test
   void theFrontEndStillHasExactlyOnePlaceThatUploadsAPicture() {
-    String script = appSource();
-    if (script == null) {
-      return;
-    }
+    String script = WebSessionRowTest.appSourceOrSkip();
 
     // 一个上传函数，四个调用点：相机、相册、粘贴、拖放。发布出去的脚本里多出第二个上传函数，就是
     // 图片流程开始分叉的地方——而分叉的那一次，照片在用户还没写下想让它做什么之前就被送出去了。
@@ -45,12 +41,4 @@ class WebComposerPictureTest {
         "没有第二个上传函数");
   }
 
-  private static String appSource() {
-    try {
-      Path path = Path.of("src", "main", "resources", "web", "app.js");
-      return Files.exists(path) ? Files.readString(path) : null;
-    } catch (IOException err) {
-      return null;
-    }
-  }
 }

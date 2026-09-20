@@ -96,6 +96,38 @@ public enum SubAgentRole {
     return java.util.Optional.empty();
   }
 
+  /**
+   * 角色名，按它们在这里被声明的顺序。
+   *
+   * <p>配置里那张按角色填的表也用这个顺序：一张每次运行都换顺序的设置表，读起来像每次都在讲一个新故事。
+   */
+  public static java.util.List<String> wireNames() {
+    java.util.List<String> out = new java.util.ArrayList<>();
+    for (SubAgentRole role : values()) {
+      out.add(role.wireName);
+    }
+    return out;
+  }
+
+  /**
+   * 一个名字是哪个角色，规范化成小写；不是任何角色时返回 null。
+   *
+   * <p>配置里写的 {@code EXPLORE} 与模型在工具参数里写的 {@code explore} 是同一个角色，所以只存在一处
+   * 判断「这个名字算不算数」的地方——第二个地方迟早会与第一个不一致。
+   */
+  public static String canonical(String name) {
+    if (name == null) {
+      return null;
+    }
+    String lowered = name.strip().toLowerCase();
+    for (SubAgentRole role : values()) {
+      if (role.wireName.equals(lowered)) {
+        return lowered;
+      }
+    }
+    return null;
+  }
+
   /** 提供给「要了别的东西」的模型的名字列表。 */
   public static String names() {
     StringBuilder out = new StringBuilder();

@@ -26,14 +26,35 @@ public final class Tools {
     return standard(checks, com.ccj.agent.session.CheckpointStore.none());
   }
 
-  /** 同一套工具，另外提供一个存放文件先前内容的地方，以便退回一个回合。 */
+  /**
+   * 同一套工具，另外提供一个存放文件先前内容的地方，以便退回一个回合。
+   *
+   * <p>不指明 shell，也就是按平台默认，见 {@link #standard(Checks, com.ccj.agent.session.CheckpointStore,
+   * String)}。
+   */
   public static ToolRegistry standard(
       Checks checks, com.ccj.agent.session.CheckpointStore checkpoints) {
+    return standard(checks, checkpoints, null);
+  }
+
+  /**
+   * 同一套工具，另外指明用哪个程序跑命令。
+   *
+   * <p>它是一个参数，而不是让工具自己去读配置：`tool/` 不认识配置文件，也不知道那个值从哪个 flag 或
+   * 环境变量来——那是 {@code Cli} 的事。而 null 一路传到底、由 {@link ProcessRunner#resolve} 按平台给出
+   * 默认值，所以「没配置时跑的是什么」只有一处说法，两处会跑命令的地方（`bash` 工具与编辑后检查）也
+   * 不可能各拿到一个。
+   *
+   * @param shell 跑命令的程序；null 或空白表示按平台默认（POSIX 上是 {@code /bin/bash}，Windows 上是
+   *     {@code COMSPEC}）
+   */
+  public static ToolRegistry standard(
+      Checks checks, com.ccj.agent.session.CheckpointStore checkpoints, String shell) {
     return ToolRegistry.of(
         new ReadTool(),
-        new WriteTool(checks, checkpoints),
-        new EditTool(checks, checkpoints),
-        new BashTool(),
+        new WriteTool(checks, checkpoints, shell),
+        new EditTool(checks, checkpoints, shell),
+        new BashTool(shell),
         new GlobTool(),
         new GrepTool(),
         new FetchTool(),

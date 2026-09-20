@@ -27,8 +27,7 @@ class WebWorkspaceAddTest {
 
   @Test
   void theClickIsWiredToTheChooserAndTheRequestCarriesNoName() {
-    String script = appSource();
-    if (script == null) { return; }
+    String script = WebSessionRowTest.appSourceOrSkip();
 
     // 跟随 markdown 那批用例的做法：发布出去的脚本必须在那个触发器上跟选择器对话、并且提交一个
     // 路径，因为服务器正是据此推出名字的。
@@ -51,9 +50,6 @@ class WebWorkspaceAddTest {
     }
   }
 
-  private static String appSource() {
-    return read(Path.of("src", "main", "resources", "web", "app.js"));
-  }
 
   private static String pageSource() {
     return read(Path.of("src", "main", "resources", "web", "index.html"));

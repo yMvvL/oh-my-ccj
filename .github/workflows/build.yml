@@ -37,10 +37,14 @@ jobs:
       # 浏览器用例（src/test/js/*.mjs）在 node 下运行，并被接进 JUnit 套件。没有 node 时它们被报告
       # 为*跳过*而不是通过，所以一次没有 node 的构建会显示绿灯却一点页面都没测——这里装上运行时，就是
       # 为了让这件事不会在 CI 里静默发生。
+      #
+      # 22 是那条真浏览器冒烟（WebBrowserSmokeTest）的地板：它用 node 自带的 WebSocket 说 CDP，而那
+      # 个全局对象要 22.4 才有。按 20 装的话，那个用例会在两个平台上都记成*跳过*——一台机器跳过一次
+      # 冒烟是它该做的事，而每一台机器都跳过一次冒烟，就只是一次没人测过页面。
       - name: 设置 Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       # 走 wrapper 而不是裸的 `mvn`：wrapper 钉住 Maven 版本，所以这里的构建和贡献者拿到的是同一个
       # 构建。

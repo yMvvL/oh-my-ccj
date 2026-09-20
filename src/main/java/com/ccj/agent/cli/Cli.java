@@ -189,7 +189,9 @@ public final class Cli {
       // 配置文件在构建工具之前读取，因为编辑类工具会带上这个文件声明的编辑后检查。Checks.from()
       // 持有的是路径而不是解析后的列表：会话运行期间新增的检查，在下一次编辑时就会生效，而不必等
       // 到重启。
-      tools = Tools.standard(Checks.from(configFile), checkpoints);
+      // shell 也从配置来：它就是「这台机器上跑命令的那个程序」，与 bash 工具和编辑后检查共用同一个
+      // 答案。它在启动时读一次——设置表单不管它，改它和改绑定地址一样，是下一次启动的事。
+      tools = Tools.standard(Checks.from(configFile), checkpoints, config.shell());
       // 用户自己的服务器，如果有的话。起不来的服务器是警告而不是拒绝：一个坏掉的条目不能拦住
       // 代理，但也不能一声不吭——缺失的能力和没人提过的能力，从这里看是一模一样的。
       McpTools mcp = McpTools.discover(paths.home().resolve("mcp.json"));
@@ -987,7 +989,24 @@ public final class Cli {
                     null,
                     null,
                     agentOptions.reasoning()),
-                event -> {});
+                // 与网页端同一条规矩：摘要是一次真的模型请求，它的 token 属于这条账本——否则
+                // `--max-total-tokens` 在每一次压缩上都少算一笔，而那是用户已经付掉的。
+                event -> {
+                  if (event instanceof Provider.Event.Usage usage) {
+                    session.totals(
+                        session
+                            .totals()
+                            .plus(
+                                usage.inputTokens(),
+                                usage.outputTokens(),
+                                usage.cachedInputTokens(),
+                                0,
+                                0,
+                                0,
+                                0,
+                                0));
+                  }
+                });
         String summary = reply.text() == null ? "" : reply.text().strip();
         if (summary.isEmpty()) {
           err.println("error: 模型返回了空摘要；没有任何内容被改动");

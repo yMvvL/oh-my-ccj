@@ -170,6 +170,55 @@ class SubAgentReportTest {
   }
 
   @Test
+  void theRenderedReportSaysWhatTheRunSpent() {
+    // 报告是模型读的，所以这一行和 STATUS、FILES 一样是光秃标签加短字段；它留在标题块里，因为被截断的应该
+    // 是发现，不是账单。
+    SubAgentReport report =
+        SubAgentReport.parse(
+                "STATUS: done\nSUMMARY: Found the parser."
+                    + "\nFINDINGS:\nThe bug is at Parser.java:142.")
+            .withUsage(new UsageTotals(120, 30, 100, 1, 2, 0, 0, 0, true));
+
+    String rendered = report.render("/tmp/work");
+
+    assertTrue(rendered.contains("USAGE: 120 in / 30 out / 100 cached / 2 model turns"), rendered);
+    assertTrue(
+        rendered.indexOf("USAGE:") < rendered.indexOf("Parser.java:142"),
+        "它留在标题块里，在发现之前：" + rendered);
+  }
+
+  @Test
+  void aPinnedModelIsNamedInTheSpendingLine() {
+    SubAgentReport pinned =
+        SubAgentReport.parse("STATUS: done\nFINDINGS:\nfound it")
+            .withUsage(new UsageTotals(10, 2, 0, 1, 1, 0, 0, 0, true))
+            .withModel("cheap-model");
+    // 空白与缺席同义：没人点名的运行，不该因为一个空串被点上一个名字。
+    SubAgentReport unnamed =
+        SubAgentReport.parse("STATUS: done\nFINDINGS:\nfound it")
+            .withUsage(new UsageTotals(10, 2, 0, 1, 1, 0, 0, 0, true))
+            .withModel("  ");
+
+    assertTrue(
+        pinned.render("/tmp/work").contains(", model cheap-model"), pinned.render("/tmp/work"));
+    assertFalse(unnamed.render("/tmp/work").contains(", model"), unnamed.render("/tmp/work"));
+  }
+
+  @Test
+  void aRunWithNoReportedNumbersGetsNoSpendingLine() {
+    // 没有数字就没有账：凭空写一行零比不写更糟。任务文本本身算一个用户回合，所以「不空」并不等于「花过
+    // 钱」——这一行问的是后者。
+    SubAgentReport spentNothing =
+        SubAgentReport.parse("STATUS: done\nFINDINGS:\nok")
+            .withUsage(new UsageTotals(0, 0, 0, 1, 0, 0, 0, 0, false));
+    SubAgentReport neverRan = SubAgentReport.failed("被停止了");
+
+    assertFalse(
+        spentNothing.render("/tmp/work").contains("USAGE:"), spentNothing.render("/tmp/work"));
+    assertFalse(neverRan.render("/tmp/work").contains("USAGE:"), neverRan.render("/tmp/work"));
+  }
+
+  @Test
   void aFailedRunCarriesItsReason() {
     SubAgentReport report = SubAgentReport.failed("the sub-agent ran past its 10 minute deadline");
 

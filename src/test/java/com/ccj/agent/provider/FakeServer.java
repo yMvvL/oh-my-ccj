@@ -59,6 +59,7 @@ final class FakeServer implements AutoCloseable {
   private final HttpServer server;
   private final List<String> bodies = new CopyOnWriteArrayList<>();
   private final List<String> paths = new CopyOnWriteArrayList<>();
+  private final List<String> queries = new CopyOnWriteArrayList<>();
   private final List<Map<String, List<String>>> headers = new CopyOnWriteArrayList<>();
   private final AtomicInteger requests = new AtomicInteger();
   private volatile IntFunction<Reply> responder;
@@ -104,6 +105,11 @@ final class FakeServer implements AutoCloseable {
     return paths.get(index);
   }
 
+  /** 请求行里 {@code ?} 之后的部分；没有查询串时为 null。 */
+  String query(int index) {
+    return queries.get(index);
+  }
+
   String header(int index, String name) {
     List<String> values = headers.get(index).get(name);
     return values == null || values.isEmpty() ? null : values.get(0);
@@ -118,6 +124,7 @@ final class FakeServer implements AutoCloseable {
     int index = requests.getAndIncrement();
     bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
     paths.add(exchange.getRequestURI().getPath());
+    queries.add(exchange.getRequestURI().getQuery());
     Map<String, List<String>> copy = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     exchange.getRequestHeaders().forEach((name, values) -> copy.put(name, List.copyOf(values)));
     headers.add(copy);

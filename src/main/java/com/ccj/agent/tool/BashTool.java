@@ -11,6 +11,10 @@ import java.nio.file.Path;
 /**
  * Shell 命令执行器。
  *
+ * <p>用哪个程序跑命令来自配置（{@code config.json} 的 {@code "shell"}、{@code --shell}、{@code CCJ_SHELL}），
+ * 没配置时按平台默认——POSIX 上是 {@code /bin/bash}。写死一个的话，一台只是换了 shell 的机器上，这个工具
+ * 会看起来根本没装好。
+ *
  * <p>输出两端都有限：一条话多到打印出几个 GB 的命令不能耗光代理的堆，所以只保留配置预算的前 60% 与后
  * 40%，并报告被省略的字节数。stderr 合并进 stdout，因此人在终端里看到的交错顺序正是模型读到的内容。
  * 具体机制——关闭的 stdin、有界的捕获、截止时间，以及能杀到整棵进程树的 kill——都在 {@link ProcessRunner}
@@ -21,6 +25,21 @@ public final class BashTool implements Tool {
   private static final int DEFAULT_TIMEOUT_SECONDS = 120;
   private static final int MAX_TIMEOUT_SECONDS = 600;
 
+  /** 这个会话跑命令的程序：配置里的那个，或者没有配置时这个平台的默认。 */
+  private final String shell;
+
+  /** 按平台默认的程序跑命令。对这个平台来说就是 {@link ProcessRunner#POSIX_DEFAULT}。 */
+  public BashTool() {
+    this(null);
+  }
+
+  /**
+   * @param shell 跑命令的程序；null 或空白表示按平台默认，见 {@link ProcessRunner#resolve}
+   */
+  public BashTool(String shell) {
+    this.shell = ProcessRunner.resolve(shell);
+  }
+
   @Override
   public String name() {
     return "bash";
@@ -28,7 +47,7 @@ public final class BashTool implements Tool {
 
   @Override
   public String description() {
-    return "Run a command with /bin/bash -lc, with stderr merged into stdout, and return the exit "
+    return "Run a command with " + shell + ", with stderr merged into stdout, and return the exit "
         + "code and output. Prefer the read/write/edit/glob/grep tools for file work.";
   }
 
@@ -85,7 +104,8 @@ public final class BashTool implements Tool {
       return ToolResult.error(refusal);
     }
 
-    ProcessRunner.Result result = ProcessRunner.run(command, directory, timeout, ctx.outputLimitBytes(), ctx);
+    ProcessRunner.Result result =
+        ProcessRunner.run(shell, command, directory, timeout, ctx.outputLimitBytes(), ctx);
     if (!result.finished()) {
       return ToolResult.error(
           "exit code -1 ("

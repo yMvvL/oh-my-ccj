@@ -1,7 +1,10 @@
 package com.ccj.agent.cli;
 
 import com.ccj.agent.core.Config;
+import com.ccj.agent.core.SubAgentChoice;
+import com.ccj.agent.core.SubAgentRole;
 import com.ccj.agent.core.VisionConfig;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -47,6 +50,9 @@ public record CliOptions(
     String webToken,
     boolean subAgents,
     String wallpapers,
+    String shell,
+    Map<String, String> subAgentModels,
+    Map<String, String> subAgentReasonings,
     boolean help,
     boolean version) {
 
@@ -77,7 +83,28 @@ public record CliOptions(
         null,
         Map.of(),
         vision(),
-        maxTotalTokens);
+        maxTotalTokens,
+        shell,
+        subAgentChoices());
+  }
+
+  /**
+   * 两张按角色填的表合成配置要的那一块，一个都没给时为一条空 map。
+   *
+   * <p>命令行上用两个可重复的 flag（{@code --subagent-model}、{@code --subagent-reasoning}），而配置里
+   * 是一块按角色分的对象：一次运行里同时说「explore 用便宜模型」和「explore 想少一点」，在命令行上不该需要
+   * 把同一个角色写两遍 JSON。
+   */
+  public Map<String, SubAgentChoice> subAgentChoices() {
+    Map<String, SubAgentChoice> out = new LinkedHashMap<>();
+    for (String role : SubAgentRole.wireNames()) {
+      String model = subAgentModels.get(role);
+      String effort = subAgentReasonings.get(role);
+      if (model != null || effort != null) {
+        out.put(role, new SubAgentChoice(model, effort));
+      }
+    }
+    return out;
   }
 
   /**
@@ -129,6 +156,9 @@ public record CliOptions(
     String webToken = null;
     boolean subAgents = false;
     String wallpapers = null;
+    String shell = null;
+    Map<String, String> subAgentModels = new LinkedHashMap<>();
+    Map<String, String> subAgentReasonings = new LinkedHashMap<>();
     boolean open = false;
     boolean help = false;
     boolean version = false;
@@ -294,6 +324,26 @@ public record CliOptions(
           cwd = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
+        case "--shell" -> {
+          shell = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
+        case "--subagent-model" -> {
+          String pair = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+          subAgentModels.put(roleIn(name, pair), valueIn(name, pair));
+        }
+        case "--subagent-reasoning" -> {
+          String pair = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+          String role = roleIn(name, pair);
+          String effort = valueIn(name, pair).toLowerCase();
+          if (!Config.REASONING_LEVELS.contains(effort)) {
+            throw new UsageException(
+                name + " 的档位必须是 " + String.join("、", Config.REASONING_LEVELS) + " 之一，而不是 " + effort);
+          }
+          subAgentReasonings.put(role, effort);
+        }
         default -> throw new UsageException(unexpected(arg));
       }
     }
@@ -338,6 +388,9 @@ public record CliOptions(
         webToken,
         subAgents,
         wallpapers,
+        shell,
+        subAgentModels,
+        subAgentReasonings,
         help,
         version);
   }
@@ -374,6 +427,13 @@ public record CliOptions(
               --reasoning <level>  模型该思考多少：low、high 或 max
               --system <text>      本次运行的系统提示词
 
+    子代理（用 --subagents 打开委派之后）:
+              --subagent-model <角色>=<模型>
+                                   让一个角色用它自己的模型：explore 可以用便宜的那个，build 用强的那个
+                                   （角色是 explore、verify、build；可以重复给出）
+              --subagent-reasoning <角色>=<档位>
+                                   让一个角色用它自己的思考档位：low、high 或 max（可以重复给出）
+
     视觉（图片先由这个模型描述，然后才进入对话）:
               --vision-base-url <url>    视觉模型的端点
               --vision-model <name>      该端点上的模型标识符
@@ -406,6 +466,7 @@ public record CliOptions(
               --config <file>      配置文件（默认：<home>/config.json）
               --home <dir>         应用主目录（默认：~/.oh-my-ccj）
           -C, --cwd <dir>          工具解析相对路径时依据的工作目录
+              --shell <file>       跑命令与编辑后检查的那个程序（默认：/bin/bash）
               --tools              打印可用的工具后退出
               --yolo               批准每一个工具调用，别名 --auto-approve
           -h, --help               打印这份帮助
@@ -414,6 +475,38 @@ public record CliOptions(
         web UI 是默认前端；--repl 提供终端前端。在 REPL 里输入 /help 查看命令。模型设置位于
         web UI 中，可以在运行时于那里更改。
         """;
+  }
+
+  /**
+   * {@code --subagent-model explore=gpt-4o-mini} 里的角色名。
+   *
+   * <p>当场拒绝一个不存在的角色，而不是留着它：一个钉不到任何东西上的设置，是最像「已经配好了」的那种坏配置。
+   */
+  private static String roleIn(String flag, String pair) {
+    int at = pair.indexOf('=');
+    if (at < 0) {
+      throw new UsageException(flag + " 需要一个 角色=值 的形式，例如 explore=gpt-4o-mini");
+    }
+    String role = SubAgentRole.canonical(pair.substring(0, at));
+    if (role == null) {
+      throw new UsageException(
+          flag + " 里的 '" + pair.substring(0, at).strip() + "' 不是一个子代理角色；已知的是 " + SubAgentRole.names());
+    }
+    return role;
+  }
+
+  /** 同一个 {@code 角色=值} 里等号右边那一半。 */
+  private static String valueIn(String flag, String pair) {
+    int at = pair.indexOf('=');
+    if (at < 0) {
+      throw new UsageException(flag + " 需要一个 角色=值 的形式，例如 explore=gpt-4o-mini");
+    }
+    String value = pair.substring(at + 1).strip();
+    if (value.isEmpty()) {
+      throw new UsageException(
+          flag + " 里 " + pair.substring(0, at).strip() + " 的值是空的：要么给它一个值，要么别写这一条");
+    }
+    return value;
   }
 
   private static String take(String[] args, int index, String name, String inline) {

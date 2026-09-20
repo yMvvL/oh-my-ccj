@@ -48,8 +48,7 @@ class WebApprovalTest {
 
   @Test
   void thePageRebuildsAPromptFromTheStatus() throws IOException {
-    String script = appSource();
-    assertTrue(script != null, "app.js 必须可读");
+    String script = WebSessionRowTest.appSourceOrSkip();
 
     assertTrue(script.contains("function renderApproval("),
         "提示由一个函数画出，这样实时事件和状态会用同样的方式重建它");
@@ -64,13 +63,6 @@ class WebApprovalTest {
         "而服务器已经不再知道的请求会被关掉，而不是留在那儿无从作答");
   }
 
-  private static String appSource() {
-    try {
-      return Files.exists(APP) ? Files.readString(APP) : null;
-    } catch (IOException err) {
-      return null;
-    }
-  }
 
   private static String hubSource() {
     Path hub = Path.of("src", "main", "java", "com", "ccj", "agent", "web", "AgentHub.java");

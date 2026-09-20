@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -49,6 +50,14 @@ public final class SubAgentRunner {
       new java.util.concurrent.locks.ReentrantLock(true);
 
   /**
+   * 一个什么都没点名的角色。
+   *
+   * <p>用它而不是 {@code null}，是因为「跟随主对话」不是一处特殊情形，而是这块配置的默认：两样都缺席就
+   * 意味着主对话的模型加主对话的档位，读起来与一条空设置完全一样。
+   */
+  private static final SubAgentChoice FOLLOW_MAIN = new SubAgentChoice(null, null);
+
+  /**
    * 没有写入运行持有锁时为 true。
    *
    * <p>给测试用：锁是刻意进程范围的——它守的是一棵目录树，不是一个对象——而一个测量排队的测试必须知道，
@@ -61,6 +70,14 @@ public final class SubAgentRunner {
   private final Provider provider;
   private final ToolRegistry tools;
   private final AgentOptions options;
+  /**
+   * 每个角色被钉到的模型与档位，键是小写的角色名（和 {@link SubAgentRole#wireName()} 同一个写法，配置在
+   * 收下时就把它规范成了小写）。
+   *
+   * <p>不在表里的角色跟随主对话。这正是这块配置的定位：一次收窄，而不是一次分叉——被点名的角色换了模型，
+   * 换不掉的是钥匙、端点和审批者，因为一次委派不是另一个提供方。
+   */
+  private final Map<String, SubAgentChoice> subAgents;
   private final Path cwd;
   private final Duration deadline;
   private final BooleanSupplier cancelled;
@@ -82,8 +99,36 @@ public final class SubAgentRunner {
    * @param tools <em>完整</em>的注册表——每个角色在这里被挑出它获准使用的子集，所以调用方不会不小心把写入
    *     工具交给一个校验者
    * @param options 模型设置，从主对话复制，好让子代理以相同的温度和推理努力运行，而不是某个没人选过的默认值
+   * @param subAgents 角色到它自己的模型与档位的表；没点名的角色跟随主对话，这也是不关心这件事的调用方
+   *     所用的那个重载的默认
    * @param cwd 会话工作目录：相对路径据此解析，{@code insideCwd} 也据此判断
    * @param cancelled 由主回合回答，所以中止它也会中止这个
+   */
+  public SubAgentRunner(
+      Provider provider,
+      ToolRegistry tools,
+      AgentOptions options,
+      Map<String, SubAgentChoice> subAgents,
+      Path cwd,
+      BooleanSupplier cancelled,
+      int outputLimitBytes,
+      Approver approver) {
+    this(
+        provider,
+        tools,
+        options,
+        subAgents,
+        cwd,
+        cancelled,
+        outputLimitBytes,
+        DEFAULT_DEADLINE,
+        approver);
+  }
+
+  /**
+   * 没有角色被钉到别处的运行的构造器。
+   *
+   * <p>每一个角色都跟随主对话——不是「没有模型」，而是主对话那一个。想要按角色收窄的调用方用上面那个。
    */
   public SubAgentRunner(
       Provider provider,
@@ -93,7 +138,16 @@ public final class SubAgentRunner {
       BooleanSupplier cancelled,
       int outputLimitBytes,
       Approver approver) {
-    this(provider, tools, options, cwd, cancelled, outputLimitBytes, DEFAULT_DEADLINE, approver);
+    this(
+        provider,
+        tools,
+        options,
+        Map.of(),
+        cwd,
+        cancelled,
+        outputLimitBytes,
+        DEFAULT_DEADLINE,
+        approver);
   }
 
   public SubAgentRunner(
@@ -105,9 +159,23 @@ public final class SubAgentRunner {
       int outputLimitBytes,
       Duration deadline,
       Approver approver) {
+    this(provider, tools, options, Map.of(), cwd, cancelled, outputLimitBytes, deadline, approver);
+  }
+
+  public SubAgentRunner(
+      Provider provider,
+      ToolRegistry tools,
+      AgentOptions options,
+      Map<String, SubAgentChoice> subAgents,
+      Path cwd,
+      BooleanSupplier cancelled,
+      int outputLimitBytes,
+      Duration deadline,
+      Approver approver) {
     this.provider = provider;
     this.tools = tools;
     this.options = options;
+    this.subAgents = subAgents == null ? Map.of() : Map.copyOf(subAgents);
     this.cwd = cwd == null ? Path.of("").toAbsolutePath() : cwd.toAbsolutePath().normalize();
     this.cancelled = cancelled == null ? () -> false : cancelled;
     this.outputLimitBytes = outputLimitBytes;
@@ -115,6 +183,27 @@ public final class SubAgentRunner {
     // 只在没有给出审批器时才用 ALWAYS，那正是没有用户可问的调用方想要的：一个测试，或者一个已经开着自动
     // 批准的运行。每个前端都会传对话自己的审批器。
     this.approver = approver == null ? Approver.ALWAYS : approver;
+  }
+
+  /**
+   * 这个角色被钉到的模型与档位。
+   *
+   * <p>没有那样一条就是 {@link #FOLLOW_MAIN}：跟随主对话是默认，而 {@code subAgents} 里一条什么都没点
+   * 的条目根本到不了这里——它在被读进来的时候就被丢掉了（见 {@link Config}）。
+   */
+  private SubAgentChoice pinnedFor(SubAgentRole role) {
+    SubAgentChoice choice = subAgents.get(role.wireName());
+    return choice == null ? FOLLOW_MAIN : choice;
+  }
+
+  /**
+   * 被钉住的那个值，空白与缺席一样当作没钉。
+   *
+   * <p>逐字段决定，因为钉住的是这一栏而已：角色点了模型，它的档位仍然跟随主对话，反之亦然。而它的温度、
+   * token 上限、上下文预算和审批者从来不经过这里——一次委派不是另一个提供方。
+   */
+  private static String orFollow(String pinned, String follow) {
+    return pinned == null || pinned.isBlank() ? follow : pinned;
   }
 
   /**
@@ -141,14 +230,21 @@ public final class SubAgentRunner {
     ToolRegistry subset = registryFor(role);
     ToolContext context = new ToolContext(workDir, approver, outputLimitBytes, this::stopped);
     MemorySession session = new MemorySession("sub-" + role.wireName());
+    // 被点名的角色走它自己的模型与档位，其余的跟随主对话。钉住的只有这两栏：温度、token 上限、上下文预算
+    // 和审批者仍然来自那段对话，因为一次委派不是另一个提供方，也没有第二份登录。
+    SubAgentChoice pinned = pinnedFor(role);
+    String model = orFollow(pinned.model(), options.model());
     AgentOptions subOptions =
         new AgentOptions(
-            options.model(),
+            model,
             compose(role, systemPrompt, workDir),
             options.temperature(),
             options.maxTokens(),
-            options.reasoning(),
+            orFollow(pinned.reasoning(), options.reasoning()),
             options.maxContextTokens());
+    // 报告只在这条运行用的不是主对话那个模型时才点名它：读报告的就是主模型，点它自己的名等于什么都没说，
+    // 而点一个没人选过的名字，才是别人以为出了别的事的那种信息。
+    String pinnedElsewhere = model == null || model.equals(options.model()) ? null : model;
     // 一个只计数的监听器：子代理的散文被刻意不转发——没人该读到自己没要过的转录——但它花了多少，是委派
     // 工作的那段对话必须能报告的事实。藏起它读的东西是特性；藏起花销就成了一个静静漏掉一半花费的 token
     // 计数。
@@ -178,8 +274,8 @@ public final class SubAgentRunner {
         cancelWatch.stop();
         return SubAgentReport.failed(
             "子代理为另一个写入任务等了 "
-                + deadline.toSeconds()
-                + " 秒，最终放弃，而不是越过自己的截止时间继续跑");
+                + human(deadline)
+                + "，最终放弃，而不是越过自己的截止时间继续跑");
       }
       // 排队期间被取消：锁现在拿到了，但跑的理由已经没了。放在干活之前检查，因为 loop.run() 会清掉它否则
       // 能看到的那个中止标志。
@@ -206,10 +302,7 @@ public final class SubAgentRunner {
         return SubAgentReport.failed("子代理还没完成就被停止了");
       }
       if (expiry.expired()) {
-        return SubAgentReport.failed(
-            "子代理跑过了它的 "
-                + deadline.toMinutes()
-                + " 分钟截止时间，已被停止");
+        return SubAgentReport.failed("子代理跑过了它的 " + human(deadline) + " 截止时间，已被停止");
       }
       if (result.aborted()) {
         return SubAgentReport.failed("子代理还没完成就被停止了");
@@ -217,14 +310,17 @@ public final class SubAgentRunner {
       // 报告取自会话而不是 Result.finalText：一次写完报告又说了别的话的运行，它的报告在更早的助手回合里，
       // 而它最后说的那句不一定就是它想交出来的东西。
       SubAgentReport report = SubAgentReport.parse(lastProse(session, result.finalText()));
-      return report.withUsage(tally.totals()).in(workDir.toString());
+      return report.withUsage(tally.totals()).in(workDir.toString()).withModel(pinnedElsewhere);
     } catch (RuntimeException e) {
       // 工具里的 bug，或者一个抛了异常的提供方：告诉主代理，而不是把它弄死。中断会以 AgentException
       // 的身份到这里——循环把它包起来，并自己清掉标志——所以被中止的子代理读起来就是失败的子代理，而从主
       // 代理的角度看它确实是。
       String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-      // 一次失败了的运行仍然花了它花的那些，所以计数也跟着失败一起走。
-      return SubAgentReport.failed("子代理失败：" + message).withUsage(tally.totals());
+      // 一次失败了的运行仍然花了它花的那些，所以计数也跟着失败一起走——钉出去的那个模型的失败，和被点名的
+      // 那个模型一样值得看清。
+      return SubAgentReport.failed("子代理失败：" + message)
+          .withUsage(tally.totals())
+          .withModel(pinnedElsewhere);
     } finally {
       // 不关闭：循环没有任何要释放的东西，而会话按构造就在内存里——正是这一点让子代理读过的内容不进任何
       // 文件、不进任何列表。
@@ -234,6 +330,23 @@ public final class SubAgentRunner {
         WRITE_LOCK.unlock();
       }
     }
+  }
+
+  /**
+   * 把一个截止时间说成人话。
+   *
+   * <p>{@code Duration.toMinutes()} 会把 90 秒说成「1 分钟」，把 45 秒说成「0 分钟」——而报告是主代理
+   * 唯一能读到这条上限的地方，一句「跑过了它的 0 分钟截止时间」会让人以为护栏坏了。
+   */
+  static String human(java.time.Duration deadline) {
+    long seconds = deadline.toSeconds();
+    if (seconds < 60) {
+      return seconds + " 秒";
+    }
+    if (seconds % 60 == 0) {
+      return (seconds / 60) + " 分钟";
+    }
+    return (seconds / 60) + " 分 " + (seconds % 60) + " 秒";
   }
 
   /**

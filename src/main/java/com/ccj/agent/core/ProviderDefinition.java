@@ -9,7 +9,8 @@ import java.util.List;
  * URL 和一种协议。
  *
  * @param kind 说哪种线路协议；{@code openai} 涵盖所有讲 {@code /chat/completions} 的，
- *     {@code anthropic} 指 messages API
+ *     {@code anthropic} 指 messages API，{@code openai-responses} 指 OpenAI 的 Responses API，
+ *     {@code gemini} 指 Google 的 {@code :streamGenerateContent}
  * @param models 设置表单里可选的模型；空列表就是「自己把模型名打进去」
  */
 public record ProviderDefinition(
@@ -17,10 +18,12 @@ public record ProviderDefinition(
 
   public static final String OPENAI = "openai";
   public static final String ANTHROPIC = "anthropic";
+  public static final String OPENAI_RESPONSES = "openai-responses";
+  public static final String GEMINI = "gemini";
 
   /** 提供方自己会追加的端点路径，base URL 里不能重复带上。 */
   private static final List<String> ENDPOINT_SUFFIXES =
-      List.of("/chat/completions", "/v1/messages", "/messages");
+      List.of("/chat/completions", "/responses", "/v1/messages", "/messages");
 
   /**
    * 提供方名称是标识符，仅此而已——它从来不是目录——所以保留严格字符集，不像工作区名称那样取文件夹自己
@@ -65,8 +68,11 @@ public record ProviderDefinition(
   }
 
   /** 只有两种协议，所以其他任何值都是值得尽早报出的笔误。 */
+  /** 已知的协议，按设置面板里希望出现的顺序。 */
+  public static final List<String> KINDS = List.of(OPENAI, ANTHROPIC, OPENAI_RESPONSES, GEMINI);
+
   public static boolean validKind(String kind) {
-    return OPENAI.equals(kind) || ANTHROPIC.equals(kind);
+    return kind != null && KINDS.contains(kind.strip().toLowerCase());
   }
 
   public ProviderDefinition requireValid() {
@@ -78,7 +84,8 @@ public record ProviderDefinition(
           "提供方名称必须为 1-40 个字符，只能包含字母、数字、点、连字符或下划线");
     }
     if (!validKind(kind)) {
-      throw new IllegalArgumentException("未知的提供方类型 '" + kind + "'；请使用 openai 或 anthropic");
+      throw new IllegalArgumentException(
+          "未知的提供方类型 '" + kind + "'；请使用 " + String.join("、", KINDS));
     }
     if (baseUrl.isBlank()) {
       throw new IllegalArgumentException("提供方 '" + name + "' 需要 base URL");

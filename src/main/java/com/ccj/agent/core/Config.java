@@ -26,6 +26,13 @@ import java.util.Map;
  * 所针对的那个提供方，它们才有意义，而 {@code settingsFor} 记录的正是这件事。见
  * {@link #settingsBelongTo}。
  *
+ * <p>{@code shell} 是跑 {@code bash} 与编辑后检查的那个程序，null 表示按平台默认（POSIX 上是
+ * {@code /bin/bash}）。它是可配置的，因为「这台机器上能跑命令的那个东西」在不同的机器上是不同的程序，而一个
+ * 把 {@code /bin/bash} 写死在里面、又在别处看起来能装的工具，是在浪费别人的一个下午。
+ *
+ * <p>{@code subAgents} 把一个角色钉到它自己的模型和思考档位上（见 {@link SubAgentChoice}）；map 里没有的
+ * 角色跟随主对话。它是一次收窄：委派仍用同一把钥匙、同一个端点、同一个审批者。
+ *
  * <p>{@code maxTotalTokens} 是这条会话累计花掉多少 token 的上限，null 表示不设上限——它与
  * {@code maxContextTokens} 是两件事：后者管一次请求能带多少内容，前者管这条会话一共能花多少，越过之后
  * 就不再开始新回合。判定在 {@link SpendLimit} 里，因为这个类只负责「值是什么」，不负责「值意味着什么」。
@@ -46,7 +53,9 @@ public record Config(
     String settingsFor,
     Map<String, ProviderSettings> remembered,
     VisionConfig vision,
-    Integer maxTotalTokens) {
+    Integer maxTotalTokens,
+    String shell,
+    Map<String, SubAgentChoice> subAgents) {
 
   /**
    * 上下文预算出现之前的字段形态，这样不关心它的调用方就不必点它的名。
@@ -79,7 +88,9 @@ public record Config(
         null,
         Map.of(),
         null,
-        null);
+        null,
+        null,
+        Map.of());
   }
 
   /**
@@ -114,7 +125,9 @@ public record Config(
         null,
         Map.of(),
         null,
-        null);
+        null,
+        null,
+        Map.of());
   }
 
   /**
@@ -155,7 +168,53 @@ public record Config(
         settingsFor,
         remembered,
         vision,
-        null);
+        null,
+        null,
+        Map.of());
+  }
+
+  /**
+   * shell 与角色条目出现之前的字段形态，这样不关心它们的调用方就不必点它们的名。
+   *
+   * <p>配置测试与网页表单走这条路：它们按位置点名每一个它们管理的字段，为了让一个 String 别落进别的槽位
+   * 里；它们不管理的字段显式为「没设置」，包括 shell 与角色表。
+   */
+  public Config(
+      String provider,
+      String model,
+      String baseUrl,
+      String apiKey,
+      String apiKeyEnv,
+      Double temperature,
+      Integer maxTokens,
+      Boolean autoApprove,
+      Integer outputLimitBytes,
+      String systemPrompt,
+      String reasoning,
+      Integer maxContextTokens,
+      String settingsFor,
+      Map<String, ProviderSettings> remembered,
+      VisionConfig vision,
+      Integer maxTotalTokens) {
+    this(
+        provider,
+        model,
+        baseUrl,
+        apiKey,
+        apiKeyEnv,
+        temperature,
+        maxTokens,
+        autoApprove,
+        outputLimitBytes,
+        systemPrompt,
+        reasoning,
+        maxContextTokens,
+        settingsFor,
+        remembered,
+        vision,
+        maxTotalTokens,
+        null,
+        Map.of());
   }
 
   /**
@@ -174,6 +233,18 @@ public record Config(
           });
     }
     remembered = Map.copyOf(clean);
+    // 角色名按小写规范化，理由与提供方名相同：`EXPLORE` 和 `explore` 是同一个角色。什么都没点明的条目被
+    // 丢掉——那不是一条配置，而一个看起来设置了什么、实际什么都没说的条目比它不在那里更糟。
+    Map<String, SubAgentChoice> cleanedChoices = new LinkedHashMap<>();
+    if (subAgents != null) {
+      subAgents.forEach(
+          (role, choice) -> {
+            if (role != null && !role.isBlank() && choice != null && !choice.isEmpty()) {
+              cleanedChoices.put(role.strip().toLowerCase(), choice);
+            }
+          });
+    }
+    subAgents = Map.copyOf(cleanedChoices);
     if (vision != null && vision.isEmpty()) {
       vision = null;
     }
@@ -184,6 +255,8 @@ public record Config(
   public static final String ANTHROPIC_BASE_URL = "https://api.anthropic.com";
   public static final String OPENAI_KEY_ENV = "OPENAI_API_KEY";
   public static final String ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY";
+  public static final String GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
+  public static final String GEMINI_KEY_ENV = "GEMINI_API_KEY";
   public static final String DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
   public static final String DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5";
   public static final int DEFAULT_OUTPUT_LIMIT_BYTES = 32 * 1024;
@@ -192,7 +265,10 @@ public record Config(
   public static final List<String> REASONING_LEVELS = List.of("low", "high", "max");
 
   public static Config empty() {
-    return new Config(null, null, null, null, null, null, null, null, null, null, null, null);
+    return new Config(
+        null, null, null, null, null, null, null, null,
+        null, null, null, null, null, null, null, null,
+        null, Map.of());
   }
 
   /** 返回这份配置，其中 {@code higher} 指定了的每个字段都接管过来。 */
@@ -216,7 +292,9 @@ public record Config(
         pick(settingsFor, higher.settingsFor),
         mergeRemembered(remembered, higher.remembered),
         mergeVision(vision, higher.vision),
-        pick(maxTotalTokens, higher.maxTotalTokens));
+        pick(maxTotalTokens, higher.maxTotalTokens),
+        pick(shell, higher.shell),
+        mergeSubAgents(subAgents, higher.subAgents));
   }
 
   /**
@@ -258,6 +336,36 @@ public record Config(
     }
     Map<String, ProviderSettings> merged = new LinkedHashMap<>(lower);
     merged.putAll(higher);
+    return merged;
+  }
+
+  /**
+   * 两层的角色条目，逐角色合并。
+   *
+   * <p>和 {@code remembered} 一样，map 没法「挑选」，所以更高的一层若对某个角色只字未提，绝不能抹掉更低层
+   * 为它写的东西：{@code --subagent-model explore=x} 是一次关于 explore 的表态，不该顺手把文件里为 build
+   * 写的档位一起清掉。两层都点到的角色，由更高的一层逐字段胜出。
+   */
+  private static Map<String, SubAgentChoice> mergeSubAgents(
+      Map<String, SubAgentChoice> lower, Map<String, SubAgentChoice> higher) {
+    if (higher == null || higher.isEmpty()) {
+      return lower;
+    }
+    if (lower == null || lower.isEmpty()) {
+      return higher;
+    }
+    Map<String, SubAgentChoice> merged = new LinkedHashMap<>(lower);
+    higher.forEach(
+        (role, choice) -> {
+          SubAgentChoice held = merged.get(role);
+          merged.put(
+              role,
+              held == null
+                  ? choice
+                  : new SubAgentChoice(
+                      pick(held.model(), choice.model()),
+                      pick(held.reasoning(), choice.reasoning())));
+        });
     return merged;
   }
 
@@ -317,7 +425,9 @@ public record Config(
   public Config forgetProviderSettings() {
     return new Config(
         provider, model, null, null, null, temperature, maxTokens, autoApprove, outputLimitBytes,
-        systemPrompt, reasoning, maxContextTokens, null, remembered, vision, maxTotalTokens);
+        systemPrompt, reasoning, maxContextTokens, null, remembered, vision, maxTotalTokens,
+        shell,
+        subAgents);
   }
 
   /**
@@ -334,7 +444,9 @@ public record Config(
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
         outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor,
-        remembered, vision.withoutApiKey(), maxTotalTokens);
+        remembered, vision.withoutApiKey(), maxTotalTokens,
+        shell,
+        subAgents);
   }
 
   /**
@@ -348,7 +460,9 @@ public record Config(
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
         outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor,
-        remembered, null, maxTotalTokens);
+        remembered, null, maxTotalTokens,
+        shell,
+        subAgents);
   }
 
   /** 同一份配置，但把它的端点和凭据字段标记为属于 {@code provider}。 */
@@ -369,7 +483,9 @@ public record Config(
         provider,
         remembered,
         vision,
-        maxTotalTokens);
+        maxTotalTokens,
+        shell,
+        subAgents);
   }
 
   /** 为 {@code provider} 记住的配对，如果有的话。 */
@@ -417,7 +533,9 @@ public record Config(
         settingsFor,
         remembered,
         vision,
-        maxTotalTokens);
+        maxTotalTokens,
+        shell,
+        subAgents);
   }
 
   /** 忘掉为 {@code provider} 记住的东西。 */
@@ -469,7 +587,9 @@ public record Config(
             provider,
             next,
             vision,
-            maxTotalTokens)
+            maxTotalTokens,
+        shell,
+        subAgents)
         .resolved();
   }
 
@@ -516,14 +636,18 @@ public record Config(
     return new Config(
         provider, model, baseUrl, key, apiKeyEnv, temperature, maxTokens, autoApprove,
         outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor,
-        remembered, vision, maxTotalTokens);
+        remembered, vision, maxTotalTokens,
+        shell,
+        subAgents);
   }
 
   private Config withRemembered(Map<String, ProviderSettings> next) {
     return new Config(
         provider, model, baseUrl, apiKey, apiKeyEnv, temperature, maxTokens, autoApprove,
         outputLimitBytes, systemPrompt, reasoning, maxContextTokens, settingsFor, next,
-        vision, maxTotalTokens);
+        vision, maxTotalTokens,
+        shell,
+        subAgents);
   }
 
   /** 补上取决于所选提供方的默认值。 */
@@ -552,7 +676,9 @@ public record Config(
         settingsFor,
         remembered,
         vision,
-        maxTotalTokens);
+        maxTotalTokens,
+        shell,
+        subAgents);
   }
 
   /**
@@ -572,11 +698,24 @@ public record Config(
   }
 
   public static String defaultBaseUrl(String provider) {
-    return "anthropic".equals(provider) ? ANTHROPIC_BASE_URL : OPENAI_BASE_URL;
+    return switch (name(provider)) {
+      case "anthropic" -> ANTHROPIC_BASE_URL;
+      case "gemini" -> GEMINI_BASE_URL;
+      default -> OPENAI_BASE_URL;
+    };
   }
 
   public static String defaultKeyEnv(String provider) {
-    return "anthropic".equals(provider) ? ANTHROPIC_KEY_ENV : OPENAI_KEY_ENV;
+    return switch (name(provider)) {
+      case "anthropic" -> ANTHROPIC_KEY_ENV;
+      case "gemini" -> GEMINI_KEY_ENV;
+      default -> OPENAI_KEY_ENV;
+    };
+  }
+
+  /** 提供方名字规范化后的样子；null 与空白都当作没有名字。 */
+  private static String name(String provider) {
+    return provider == null ? "" : provider.strip().toLowerCase();
   }
 
   /** 没有配置模型时该用的模型；该提供方没有显然的默认值时返回 null。 */
@@ -584,9 +723,13 @@ public record Config(
     if (provider == null) {
       return null;
     }
-    return switch (provider.strip().toLowerCase()) {
-      case "openai" -> DEFAULT_OPENAI_MODEL;
+    return switch (name(provider)) {
+      // openai-responses 与 openai 是同一个端点、同一把钥匙、同一批模型名，只是线路不同，所以它不该
+      // 因为换个协议而失去默认模型。
+      case "openai", "openai-responses" -> DEFAULT_OPENAI_MODEL;
       case "anthropic" -> DEFAULT_ANTHROPIC_MODEL;
+      // Gemini 没有默认模型：它的型号名三个月换一轮，而那正是「猜一个」会变成一次莫名其妙 404 的地方。
+      case "gemini" -> null;
       default -> null;
     };
   }
@@ -643,7 +786,9 @@ public record Config(
         text(root, "settingsFor"),
         readRemembered(root),
         readVision(root),
-        integer(root, "maxTotalTokens"));
+        integer(root, "maxTotalTokens"),
+        text(root, "shell"),
+        readSubAgents(root));
   }
 
   /**
@@ -666,6 +811,74 @@ public record Config(
             text(node, "model"),
             integer(node, "maxTokens"));
     return vision.isEmpty() ? null : vision;
+  }
+
+  /**
+   * {@code subAgents} 块：角色名到它自己的模型与档位。
+   *
+   * <p>与 {@code vision} 同样的形状与同样的严格：不是对象的块、或不是对象的条目，都是值得报出来的笔误；
+   * 一个角色名不是三个已知角色之一同样是笔误——默默忽略它，等于让一条写错的配置看起来生效了。
+   */
+  private static Map<String, SubAgentChoice> readSubAgents(JsonNode root) {
+    JsonNode node = root.get("subAgents");
+    if (node == null || node.isNull()) {
+      return Map.of();
+    }
+    return parseSubAgents(node, "配置字段 'subAgents'");
+  }
+
+  /** {@code CCJ_SUBAGENT_<角色>_MODEL} 与 {@code CCJ_SUBAGENT_<角色>_REASONING}，按角色成块。 */
+  private static Map<String, SubAgentChoice> subAgentsFromEnv(Map<String, String> env) {
+    Map<String, SubAgentChoice> out = new LinkedHashMap<>();
+    for (String role : SubAgentRole.wireNames()) {
+      String key = role.toUpperCase();
+      out.put(role, new SubAgentChoice(env.get("CCJ_SUBAGENT_" + key + "_MODEL"), env.get("CCJ_SUBAGENT_" + key + "_REASONING")));
+    }
+    return out;
+  }
+
+  /**
+   * 一个 {@code subAgents} 块，来自文件或来自一行 {@code --subagent-model explore=x} 那样的覆盖。
+   *
+   * <p>两个来源共用这一段，所以「哪些角色存在」和「档位有哪些」这两句判断在所有地方都是同一句——一个来源
+   * 接受、另一个来源拒绝的形状，是下一处会出错的形状。
+   */
+  static Map<String, SubAgentChoice> parseSubAgents(JsonNode node, String where) {
+    if (!node.isObject()) {
+      throw new IllegalArgumentException(where + " 必须是一个对象：角色名到它自己的设置");
+    }
+    Map<String, SubAgentChoice> out = new LinkedHashMap<>();
+    node.fields()
+        .forEachRemaining(
+            entry -> {
+              String role = SubAgentRole.canonical(entry.getKey());
+              if (role == null) {
+                throw new IllegalArgumentException(
+                    where
+                        + " 里的 '"
+                        + entry.getKey()
+                        + "' 不是一个子代理角色；已知的是 "
+                        + String.join("、", SubAgentRole.wireNames()));
+              }
+              JsonNode body = entry.getValue();
+              if (!body.isObject()) {
+                throw new IllegalArgumentException(
+                    where + " 里的 '" + entry.getKey() + "' 必须是一个对象：model 和/或 reasoning");
+              }
+              out.put(role, choiceOf(body, where + " 里的 '" + entry.getKey() + "'"));
+            });
+    return out;
+  }
+
+  /** 一个角色的 model 与 reasoning，逐字段校验。 */
+  static SubAgentChoice choiceOf(JsonNode body, String where) {
+    String reasoning = text(body, "reasoning");
+    if (reasoning != null && !REASONING_LEVELS.contains(reasoning.strip().toLowerCase())) {
+      throw new IllegalArgumentException(
+          where + " 的 'reasoning' 必须是 " + String.join("、", REASONING_LEVELS) + " 之一，而不是 " + reasoning);
+    }
+    String model = text(body, "model");
+    return new SubAgentChoice(model, reasoning == null ? null : reasoning.strip().toLowerCase());
   }
 
   /** {@code remembered} map：提供方名到为它填写的端点与凭据。 */
@@ -711,7 +924,9 @@ public record Config(
         null,
         Map.of(),
         readEnvVision(env),
-        parseInteger(env.get("CCJ_MAX_TOTAL_TOKENS")));
+        parseInteger(env.get("CCJ_MAX_TOTAL_TOKENS")),
+        env.get("CCJ_SHELL"),
+        subAgentsFromEnv(env));
   }
 
   /**
@@ -795,6 +1010,8 @@ public record Config(
     putText(root, "reasoning", managed.reasoning());
     putNumber(root, "maxContextTokens", managed.maxContextTokens());
     putNumber(root, "maxTotalTokens", managed.maxTotalTokens());
+    putText(root, "shell", managed.shell());
+    writeSubAgents(root, managed.subAgents());
 
     try {
       Path parent = file.toAbsolutePath().getParent();
@@ -903,6 +1120,42 @@ public record Config(
     }
   }
 
+  /** {@code subAgents} 块，键按角色名写出；空 map 意味着这个键被移走，而不是留下一个空对象。 */
+  private static void writeSubAgents(JsonNode root, Map<String, SubAgentChoice> subAgents) {
+    if (root instanceof ObjectNode object) {
+      object.remove("subAgents");
+      if (subAgents != null && !subAgents.isEmpty()) {
+        ObjectNode block = object.putObject("subAgents");
+        subAgents.forEach(
+            (role, choice) -> {
+              ObjectNode entry = block.putObject(role);
+              if (choice.model() != null) {
+                entry.put("model", choice.model());
+              }
+              if (choice.reasoning() != null) {
+                entry.put("reasoning", choice.reasoning());
+              }
+            });
+      }
+    }
+  }
+
+  /** 角色条目的可读形式，一个都没有时为一句「都不」。 */
+  private String describeSubAgents() {
+    if (subAgents == null || subAgents.isEmpty()) {
+      return "（都跟随主对话）";
+    }
+    List<String> parts = new java.util.ArrayList<>();
+    for (String role : SubAgentRole.wireNames()) {
+      SubAgentChoice choice = subAgents.get(role);
+      if (choice != null) {
+        parts.add(role + "=" + (choice.model() == null ? "（主模型）" : choice.model())
+            + (choice.reasoning() == null ? "" : "(" + choice.reasoning() + ")"));
+      }
+    }
+    return String.join(" ", parts);
+  }
+
   /** 脱敏后的视图，可以安全打印。 */
   public Map<String, String> describe(Map<String, String> env) {
     Map<String, String> out = new LinkedHashMap<>();
@@ -924,6 +1177,8 @@ public record Config(
     out.put(
         "maxTotalTokens", maxTotalTokens == null ? "（无上限）" : String.valueOf(maxTotalTokens));
     out.put("vision", describeVision(env));
+    out.put("shell", shell == null ? "（平台默认）" : shell);
+    out.put("subAgents", describeSubAgents());
     return out;
   }
 

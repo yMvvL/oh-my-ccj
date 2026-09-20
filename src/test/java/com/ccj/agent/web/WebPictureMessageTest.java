@@ -3,7 +3,6 @@ package com.ccj.agent.web;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
@@ -27,10 +26,7 @@ class WebPictureMessageTest {
 
   @Test
   void theRendererOnlyLaysTheTextOutAndNeverRewritesIt() {
-    String script = appSource();
-    if (script == null) {
-      return;
-    }
+    String script = WebSessionRowTest.appSourceOrSkip();
 
     // 会话文件、重放与压缩靠的都是那段文本，所以渲染层只允许**读**它：`[picture ` 在这里是一个
     // 被查找的模式，而不是被拼接出去的字符串。把这条区别钉住，是因为「渲染时补上标记」正是那段
@@ -46,12 +42,4 @@ class WebPictureMessageTest {
         "而它从不被拼接出去");
   }
 
-  private static String appSource() {
-    try {
-      Path path = Path.of("src", "main", "resources", "web", "app.js");
-      return Files.exists(path) ? Files.readString(path) : null;
-    } catch (IOException err) {
-      return null;
-    }
-  }
 }

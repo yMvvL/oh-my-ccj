@@ -19,7 +19,7 @@
 - **一个运行时依赖：** `jackson-databind`。第二个依赖是一个要在提交信息里论证的决定，不是图方便。测试只用 JUnit 5。
 - **前端没有构建步骤。** `web/app.js` 是一个经典脚本，没有模块、没有打包器、没有 npm 依赖。它就按写好的样子从 jar 里发出。
 - **测试是离线的。** 没有网络、没有 API 密钥、没有实时模型。一个需要其中任何一样的测试就是一个无法在 CI 里运行的测试，也就意味着它不是测试。
-- **支持的平台：** Linux 和 macOS。Windows 经 WSL。`BashTool` 硬编码了 `/bin/bash`；在它变成可配置之前不要声称支持 Windows。
+- **支持的平台：** Linux 和 macOS，CI 两个平台都跑。Windows 的**机制**已就位（跑命令的那个程序可配置，`ccj.cmd` 是一个批处理启动器），但它**没有被任何人验证过**——所以文档里写「未验证」，不写「支持」。见 [ROADMAP](ROADMAP.md) 4.6。
 
 ## 代码
 
@@ -130,6 +130,7 @@
 | 命名、注释、拼写 | `mvn test`：`core/ConventionsTest` 扫描 `src/main/java` 里本仓库不用的美式拼写，失败时报出文件和行号 |
 | 页面绝不用字符串构建 HTML | `WebMarkdownTest`，跑在横幅之间的随包发布 `app.js` 上 |
 | 浏览器用例跑随包发布的源码 | `src/test/js/*.test.mjs`，由 `Web*Test` 通过 node 运行，node 不在时报告为 *skipped* |
+| 页面在真的浏览器里真的能跑完一个回合 | `WebBrowserSmokeTest`，跑 `src/test/js/browser-smoke.mjs`：headless Chrome 通过 CDP 驱动发布出去的页面，端到端走一个回合；没有能用的浏览器、或 node 没有全局 `WebSocket`（需要 22.4 或更新）时报告为 *skipped* |
 | 审批是唯一的护栏 | `SECURITY.md` 这么说，而那些移除护栏的测试在护栏消失时会失败 |
 | 文档与代码相符 | 评审，以及 [CHANGELOG.md](CHANGELOG.md) 和 [ROADMAP.md](ROADMAP.md) 里点名版本的条目——一行不再相符的 README 行就是 bug |
 

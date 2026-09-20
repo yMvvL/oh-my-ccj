@@ -22,8 +22,8 @@ class TailnetTest {
   @Test
   void theFirstTailnetAddressInTheOutputWins() {
     assertEquals(
-        "100.72.92.41",
-        Tailnet.parse("100.72.92.41\n").map(InetAddress::getHostAddress).orElse(""));
+        "100.64.0.1",
+        Tailnet.parse("100.64.0.1\n").map(InetAddress::getHostAddress).orElse(""));
 
     // 一段横幅、一个空行，然后是 tailnet 地址：CLI 以前就打印过比一个地址更多的东西，而答案
     // 就是那行确实是个地址的行。

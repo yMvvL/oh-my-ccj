@@ -102,10 +102,19 @@ public final class ConfigModelCatalog implements ModelCatalog {
    * 否则就用提供方自带的那份列表。
    */
   /** 一个内置名字讲的协议。 */
+  /**
+   * 一个内置名字说的是哪种线路。
+   *
+   * <p>{@code openai-responses} 与 {@code gemini} 与它们的实现类同名，所以这里问的其实是「这个名字是不是
+   * 一个协议名」——用户自定义的名字永远不会走到这里，那些走的是定义里的 {@code kind}。
+   */
   private static String kindOf(String name) {
-    return ProviderDefinition.ANTHROPIC.equalsIgnoreCase(name)
-        ? ProviderDefinition.ANTHROPIC
-        : ProviderDefinition.OPENAI;
+    for (String kind : ProviderDefinition.KINDS) {
+      if (kind.equalsIgnoreCase(name)) {
+        return kind;
+      }
+    }
+    return ProviderDefinition.OPENAI;
   }
 
   private List<String> effective(String provider, List<String> fallback) {

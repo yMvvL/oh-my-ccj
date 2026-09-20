@@ -1373,6 +1373,94 @@ class WebApiTest {
   }
 
   @Test
+  void theLedgerEqualsWhatTheProvidersReportedAcrossADelegationAndACompaction() throws Exception {
+    // 路线图 1.3 的那条等号：一个用过子代理、并被压缩过一次的会话，面板的总数等于提供方逐回合数字之和。
+    // 每一次请求各报一笔不同的账，所以「子代理那一次没进账本」「压缩那次摘要请求没记账」「压缩把账本归零」
+    // 这三种错法各自落在不同的差值上，而不是凑成一个看起来对的数字。
+    //
+    // 「逐回合」在这里包括**压缩那一次摘要请求**：它是一次真的模型调用，用户为它付钱，所以它必须进账本
+    // ——否则花费上限会在每一次压缩上少算一笔，而那正是这条等号要防的那种错。
+    hub.setSubAgents(true);
+
+    long reportedInput = 0;
+    long reportedOutput = 0;
+    long reportedCached = 0;
+
+    // 八组往来：压缩留下最近 5 组，所以只有比这更长的对话才真的压得动。
+    for (int i = 0; i < 8; i++) {
+      reportedInput += 100 + i;
+      reportedOutput += 10 + i;
+      reportedCached += 20 + i;
+      provider
+          .usageFor(100 + i, 10 + i, 20 + i)
+          .reply(Message.Assistant.text("answer " + i + " " + "detail ".repeat(50)));
+      try (Sse sse = watch()) {
+        post("/api/message", "{\"text\":\"question " + i + " " + "context ".repeat(50) + "\"}");
+        sse.await("done", 5000);
+      }
+    }
+
+    // 一次委派：主代理要 task，子代理自己跑一轮，主代理收尾——三次请求，三笔账。
+    Message.Assistant delegate =
+        new Message.Assistant(
+            "",
+            List.of(
+                new Message.ToolCall(
+                    "call_task",
+                    "task",
+                    Json.write(
+                        Json.object()
+                            .put("role", "explore")
+                            .put("task", "find the one thing")))));
+    provider.usageFor(1000, 100, 400).reply(delegate);
+    provider.usageFor(2000, 200, 600).reply(Message.Assistant.text("it is in note.txt"));
+    provider.usageFor(3000, 300, 800).reply(Message.Assistant.text("delegated"));
+    reportedInput += 1000 + 2000 + 3000;
+    reportedOutput += 100 + 200 + 300;
+    reportedCached += 400 + 600 + 800;
+    try (Sse sse = watch()) {
+      post("/api/message", "{\"text\":\"find it\"}");
+      sse.await("done", 5000);
+    }
+
+    // 压缩：这一次请求动过模型、账也报了，所以它的 5000/500/1000 与其它每一次一样进 token 总额，另加
+    // compactions 那一格。它不进的是 steps 与 turns——压缩不是对话里的一步。
+    provider
+        .usageFor(5000, 500, 1000)
+        .reply(Message.Assistant.text("Goal: answer questions. Files: none. Open: nothing."));
+    reportedInput += 5000;
+    reportedOutput += 500;
+    reportedCached += 1000;
+    JsonNode compacted = postJson("/api/compact", "{}");
+
+    assertTrue(compacted.path("compacted").asBoolean(), "压缩真的发生了：" + compacted);
+    assertEquals(
+        12,
+        provider.requests().size(),
+        "八组往来 + 委派的三次 + 压缩的一次，全都在这个提供方上跑过");
+
+    JsonNode usage = json("/api/status").path("usage");
+    assertEquals(
+        reportedInput,
+        usage.path("inputTokens").asLong(),
+        "输入：提供方逐回合报的是 " + reportedInput + "，面板报的是 " + usage);
+    assertEquals(
+        reportedOutput,
+        usage.path("outputTokens").asLong(),
+        "输出：提供方逐回合报的是 " + reportedOutput + "，面板报的是 " + usage);
+    assertEquals(
+        reportedCached,
+        usage.path("cachedInputTokens").asLong(),
+        "缓存：提供方逐回合报的是 " + reportedCached + "，面板报的是 " + usage);
+    // 每一次模型请求都是一个模型回合：八组往来八次，委派那一回合里主代理两次、子代理自己一次。
+    assertEquals(11, usage.path("steps").asInt(), "模型回合：" + usage);
+    // 子代理的任务文本算一个用户回合（它做的是被当成工作加进父账本的那件事），所以是 8 + 1 + 1。
+    assertEquals(10, usage.path("turns").asInt(), "用户回合：" + usage);
+    // 而被压缩过一次的会话仍然只有一本连着的账：那些被摘要掉的回合曾在账本里，现在依然在，只算一遍。
+    assertEquals(1, usage.path("compactions").asInt(), "压缩只记一次：" + usage);
+  }
+
+  @Test
   void historyReplaysTheConversationAsRenderEvents() throws Exception {
     Files.writeString(cwd.resolve("note.txt"), "on disk\n");
     provider.reply(call("read", "path", "note.txt"));
@@ -2290,7 +2378,11 @@ class WebApiTest {
     assertTrue(availableBuiltIns(afterDelete).contains("groq"), "但它还能再加回来");
     assertFalse(providerNames(json("/api/models")).contains("groq"), "下次读取时仍然是没有的");
     assertFalse(providerStore.shown().contains("groq"), "显式列表里已经没它了");
-    assertEquals(6, providerStore.shown().size(), "其余的都还在：" + providerStore.shown());
+    // 数量不写死在这里：内置名单会变，而这条断言问的是「其余的都还在」，不是「一共几个」。
+    assertEquals(
+        com.ccj.agent.provider.Providers.supported().size() - 1,
+        providerStore.shown().size(),
+        "其余的每一个都还在：" + providerStore.shown());
 
     // 把一个内置提供方加回来就是一次普通的添加，不是一次恢复。
     HttpResponse<String> added =
@@ -2913,12 +3005,12 @@ class WebApiTest {
     // 服务了。那张图片本身没有任何特别之处；它只是用户从手机上试的第一件事。
     start("t0ken");
 
-    Raw ok = postByHand("100.72.92.41:6767", "http://100.72.92.41:6767", "/api/auto-approve",
+    Raw ok = postByHand("100.64.0.1:6767", "http://100.64.0.1:6767", "/api/auto-approve",
         "{\"enabled\":true}", "t0ken");
 
     assertEquals(200, ok.status(), ok.body());
     assertTrue(json("/api/status").path("autoApprove").asBoolean(), "这个改动真的发生了");
-    postByHand("100.72.92.41:6767", "http://100.72.92.41:6767", "/api/auto-approve",
+    postByHand("100.64.0.1:6767", "http://100.64.0.1:6767", "/api/auto-approve",
         "{\"enabled\":false}", "t0ken");
   }
 
@@ -2928,7 +3020,7 @@ class WebApiTest {
     // 请求所瞄准的主机。
     start("t0ken");
 
-    Raw refused = postByHand("100.72.92.41:6767", "https://evil.example", "/api/auto-approve",
+    Raw refused = postByHand("100.64.0.1:6767", "https://evil.example", "/api/auto-approve",
         "{\"enabled\":true}", "t0ken");
 
     assertEquals(403, refused.status(), refused.body());
@@ -3693,6 +3785,8 @@ class WebApiTest {
     private final List<Provider.Request> requests = new CopyOnWriteArrayList<>();
     private volatile CountDownLatch gate;
     private int[] usage;
+    /** 每次请求各自的一笔账，按请求到达的顺序取用；空了就回落到 {@link #usage}。 */
+    private final Deque<int[]> queuedUsage = new ArrayDeque<>();
     /** 下一个回合应当发出并携带的推理内容，不思考的回合为 null。 */
     private String reasoning;
 
@@ -3720,6 +3814,19 @@ class WebApiTest {
     MockProvider usage(int inputTokens, int outputTokens, Integer cachedInputTokens) {
       this.usage =
           new int[] {inputTokens, outputTokens, cachedInputTokens == null ? -1 : cachedInputTokens};
+      return this;
+    }
+
+    /**
+     * 接下来的一次请求报这笔账，一次一笔，按请求到达的顺序取用；排好的用完就回落到 {@link #usage}。
+     *
+     * <p>{@code usage} 说的是「此后每次都报同一笔」；这个说的是「各报各的」。当一次请求链上有好几个模型
+     * 请求时（委派里主代理、子代理、主代理；压缩再加一次），只有各报各的才看得出是哪一个被漏掉、
+     * 哪一个被记了两遍——同一个数字加两遍和加一遍分不出来。
+     */
+    MockProvider usageFor(int inputTokens, int outputTokens, Integer cachedInputTokens) {
+      queuedUsage.add(
+          new int[] {inputTokens, outputTokens, cachedInputTokens == null ? -1 : cachedInputTokens});
       return this;
     }
 
@@ -3770,8 +3877,10 @@ class WebApiTest {
       for (Message.ToolCall call : next.toolCalls()) {
         listener.accept(new Event.ToolCallStart(call.id(), call.name()));
       }
-      if (usage != null) {
-        listener.accept(new Event.Usage(usage[0], usage[1], usage[2] < 0 ? null : usage[2]));
+      int[] reported = queuedUsage.isEmpty() ? usage : queuedUsage.poll();
+      if (reported != null) {
+        listener.accept(
+            new Event.Usage(reported[0], reported[1], reported[2] < 0 ? null : reported[2]));
       }
       return next;
     }

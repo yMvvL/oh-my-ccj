@@ -1501,7 +1501,10 @@ public final class AgentHub implements AutoCloseable {
                   null,
                   null,
                   active.reasoning()),
-              event -> {});
+              // 摘要也是**一次真的模型请求**，而用户为它付钱：把它丢掉，就是让用量面板与花费上限同时少算
+              // 一笔（每次压缩都少算一笔）。这里只记 token，不记步数与回合——压缩不是对话里的一步，那两格
+              // 由 plusCompaction() 表达。
+              event -> accountForSummary(conversation, event));
     } catch (Exception e) {
       throw new IllegalStateException("无法摘要这个对话：" + message(e));
     }
@@ -1510,6 +1513,13 @@ public final class AgentHub implements AutoCloseable {
       throw new IllegalStateException("模型返回了空摘要；什么都没有改动");
     }
     return install(conversation, before, summary, beforeTokens);
+  }
+
+  /** 摘要那一次请求的 token，记进这条会话的账本；别的都被忽略。 */
+  private static void accountForSummary(Conversation conversation, Provider.Event event) {
+    if (event instanceof Provider.Event.Usage u) {
+      conversation.add(u.inputTokens(), u.outputTokens(), u.cachedInputTokens(), 0, 0, 0, 0, 0);
+    }
   }
 
   /**
@@ -1779,6 +1789,8 @@ public final class AgentHub implements AutoCloseable {
             current,
             tools,
             options,
+            // 角色表来自当前生效的配置：把 explore 钉到便宜模型是一次运行的选择，不是一次会话的选择。
+            active.subAgents(),
             conversation.cwd(),
             conversation::aborting,
             active.outputLimitBytes(),
@@ -1800,7 +1812,11 @@ public final class AgentHub implements AutoCloseable {
                 conversation.add(
                     (int) Math.min(Integer.MAX_VALUE, spent.inputTokens()),
                     (int) Math.min(Integer.MAX_VALUE, spent.outputTokens()),
-                    (int) Math.min(Integer.MAX_VALUE, spent.cachedInputTokens()),
+                    // 「这个提供方从不报缓存」必须原样传下去：把它写成一个 0，会让整个对话的命中率从
+                    // 「未上报」变成「0.0%」——只要跑过一次子代理就够了。
+                    spent.cacheReported()
+                        ? (int) Math.min(Integer.MAX_VALUE, spent.cachedInputTokens())
+                        : null,
                     spent.userTurns(),
                     spent.modelTurns(),
                     spent.toolCalls(),
@@ -2490,7 +2506,8 @@ public final class AgentHub implements AutoCloseable {
 
     @Override
     public void onUsage(int inputTokens, int outputTokens, Integer cachedInputTokens) {
-      conversation.add(inputTokens, outputTokens, cachedInputTokens, 0, 0, 0, 0, 0);
+      // token 由循环本身记进会话账本（它是唯一知道会话的那个东西，也是终端唯一有的那个东西）；这里只负责
+      // 让页面立刻看到新数字。再加一次就是同一笔钱记两遍。
       publishUsage(conversation.id());
     }
 

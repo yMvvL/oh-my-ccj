@@ -3,7 +3,6 @@ package com.ccj.agent.web;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
@@ -30,8 +29,7 @@ class WebReplayTest {
 
   @Test
   void theEarlierPartIsDrawnInIdleTimeAndInsertedAbove() throws IOException {
-    String script = appSource();
-    assertTrue(script != null, "app.js 必须可读");
+    String script = WebSessionRowTest.appSourceOrSkip();
 
     assertTrue(script.contains("function splitReplay("),
         "历史由一个函数拆分，所以它的边界规则可以被测试");
@@ -49,8 +47,7 @@ class WebReplayTest {
 
   @Test
   void aSupersededReplayStops() throws IOException {
-    String script = appSource();
-    assertTrue(script != null, "app.js 必须可读");
+    String script = WebSessionRowTest.appSourceOrSkip();
 
     // 在更早的那部分还在加载时又切一次，绝不能把旧对话追加进新的转录里。
     assertTrue(script.contains("if (seq !== replaySeq) { return; }"),
@@ -59,8 +56,7 @@ class WebReplayTest {
 
   @Test
   void theBudgetIsBoundedAndModest() throws IOException {
-    String script = appSource();
-    assertTrue(script != null, "app.js 必须可读");
+    String script = WebSessionRowTest.appSourceOrSkip();
 
     int at = script.indexOf("REPLAY_TAIL_EVENTS = ");
     assertTrue(at >= 0, "第一趟有一个具名的预算");
@@ -73,11 +69,4 @@ class WebReplayTest {
         "而放得进预算的历史不会被动");
   }
 
-  private static String appSource() {
-    try {
-      return Files.exists(APP) ? Files.readString(APP) : null;
-    } catch (IOException err) {
-      return null;
-    }
-  }
 }

@@ -101,6 +101,16 @@ class CliEndToEndTest {
     return all;
   }
 
+  /**
+   * 一条会话里的消息行，去掉账本行。
+   *
+   * <p>账本行（{@code "type":"usage"}）记的是提供方报了多少 token，而这几条断言问的是「对话里发生了什么」。
+   * 把两者混进同一个行数里，会让任何一次记账改动看起来都像对话本身出了问题——而记账确实会变。
+   */
+  private static List<String> messageLines(List<String> lines) {
+    return lines.stream().filter(line -> !line.contains("\"type\":\"usage\"")).toList();
+  }
+
   private List<Path> sessionFiles() throws IOException {
     Path sessions = home.resolve("sessions");
     if (!Files.isDirectory(sessions)) {
@@ -150,6 +160,42 @@ class CliEndToEndTest {
         "没有点名文件的标题：一个已知位置上的唯一文件没有什么需要消歧的，而标题会在每次请求上"
             + " 白花提示词： "
             + sent.substring(0, 600));
+  }
+
+  @Test
+  void aTerminalTurnRecordsWhatTheProviderReportedAndTheCapReadsIt() throws IOException {
+    // 终端此前**一个 token 都不记**：账本只在网页那条路上被写，所以 `--max-total-tokens` 在 REPL 与 -p
+    // 里永远不触发，而一条终端会话的文件里除了压缩次数什么都没有。提供方报的数字现在由循环本身记账——
+    // 它是唯一知道会话的那个东西，也是两个前端都有的那个东西。
+    //
+    // 这一条同时钉住两端：文件里的数字来自提供方（11/7），而紧接着的那个回合因为 18 > 5 被拒绝、且模型
+    // 没有被问第二次。
+    writeConfig("openai", server.openAiBaseUrl(), true);
+    server.enqueue(MockModelServer.openAiText("first"));
+    server.enqueue(MockModelServer.openAiText("second"));
+
+    Run run =
+        runCliWithStdin(
+            "hello\nagain\n",
+            "--repl",
+            "--max-total-tokens",
+            "5",
+            "--home",
+            home.toString(),
+            "--config",
+            home.resolve("config.json").toString(),
+            "-C",
+            workspace.toString());
+
+    assertEquals(0, run.exitCode(), run.err());
+    Path file = sessionFiles().get(0);
+    String text = Files.readString(file);
+    assertTrue(text.contains("\"input_tokens\":11"), "提供方报的输入 token 要进账本：" + text);
+    assertTrue(text.contains("\"output_tokens\":7"), "输出同理：" + text);
+    assertTrue(
+        run.err().contains("本会话已用 18 token，超过花费上限 5"),
+        "上限读的是同一条账本：" + run.err());
+    assertEquals(1, server.recorded().size(), "被拒绝的回合没有问模型");
   }
 
   @Test
@@ -378,7 +424,7 @@ class CliEndToEndTest {
     List<Path> sessions = sessionFiles();
     assertEquals(1, sessions.size(), "会话必须被持久化： " + sessions);
     List<String> lines = Files.readAllLines(sessions.get(0));
-    assertEquals(4, lines.size(), "user、assistant(工具调用)、tool result、assistant\n" + lines);
+    assertEquals(4, messageLines(lines).size(), "user、assistant(工具调用)、tool result、assistant\n" + lines);
   }
 
   @Test
@@ -468,7 +514,7 @@ class CliEndToEndTest {
         "第二次请求必须携带被裁剪过的历史： " + wire.substring(0, Math.min(400, wire.length())));
     assertTrue(run.out().contains("上下文："), "并在转录里说明这一点： " + run.out());
     List<String> lines = Files.readAllLines(sessionFiles().get(0));
-    assertEquals(4, lines.size(), "会话文件保留完整的对话：\n" + lines);
+    assertEquals(4, messageLines(lines).size(), "会话文件保留完整的对话：\n" + lines);
   }
 
   @Test
@@ -506,7 +552,7 @@ class CliEndToEndTest {
     // 文件保留它的字节：修复属于请求，不属于记录。这次运行只追加它自己的两条消息，别无其他——不会
     // 有合成的结果被写进历史。
     List<String> lines = Files.readAllLines(sessions.resolve(id + ".jsonl"));
-    assertEquals(4, lines.size(), "只追加了新回合：\n" + lines);
+    assertEquals(4, messageLines(lines).size(), "只追加了新回合：\n" + lines);
     assertTrue(
         lines.get(1).contains("\"tool_calls\""),
         "被中断的回合仍与记录时一模一样：\n" + lines);
@@ -555,7 +601,7 @@ class CliEndToEndTest {
         "转录说明了请求被做了什么处理： " + run.out());
     // 记录原封不动：修复只是关于「发送什么」的陈述。
     List<String> lines = Files.readAllLines(sessions.resolve(id + ".jsonl"));
-    assertEquals(6, lines.size(), "只追加了新回合：\n" + lines);
+    assertEquals(6, messageLines(lines).size(), "只追加了新回合：\n" + lines);
     assertEquals(
         1, occurrences(String.join("\n", lines), "\"type\":\"user\",\"text\":\"a probe written mid-turn\""),
         "被挤走的消息仍留在它被写入的位置：\n" + lines);

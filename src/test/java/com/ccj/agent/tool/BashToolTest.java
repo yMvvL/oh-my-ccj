@@ -1,18 +1,35 @@
 package com.ccj.agent.tool;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolResult;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class BashToolTest {
 
   @TempDir Path dir;
+
+  /**
+   * 一个真的能被执行的「shell」：它把自己拿到的参数原样印出来，于是一个程序收到的调用约定是可观察的，
+   * 而不是被推断的。
+   *
+   * @param name 文件名，argv 里可据以判断调用约定的那部分
+   */
+  private Path executableShell(String name) throws IOException {
+    Path script = dir.resolve(name);
+    Files.writeString(script, "#!/bin/sh\nprintf '%s|' \"$@\"\n");
+    Files.setPosixFilePermissions(script, PosixFilePermissions.fromString("rwxr-xr-x"));
+    return script;
+  }
 
   @Test
   void mergesStderrIntoStdoutAndReportsSuccess() throws Exception {
@@ -167,5 +184,64 @@ class BashToolTest {
 
     assertTrue(result.error(), result.content());
     assertFalse(java.nio.file.Files.exists(dir.resolve("ran.txt")));
+  }
+
+  @Test
+  void aConfiguredShellGetsTheCommandAsALoginShellString() throws Exception {
+    // 命令交给的是配置里的那个程序，不是 /bin/bash：假的 shell 印出来的是它自己收到的参数，
+    // 所以「交给了谁、按哪种形状」两件事都在这条断言里被看到了。
+    Path shell = executableShell("my-shell");
+
+    ToolResult result =
+        new BashTool(shell.toString())
+            .execute("{\"command\":\"echo hi\"}", new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertFalse(result.error(), result.content());
+    assertTrue(result.content().contains("-lc|echo hi|"), result.content());
+  }
+
+  @Test
+  void aProgramNamedCmdGetsSlashC() throws Exception {
+    // cmd.exe 不认 -lc，而配置里写的会是一个完整路径（C:\Windows\system32\cmd.exe），所以能据以
+    // 判断的只有文件名。
+    Path cmd = executableShell("cmd");
+
+    ToolResult result =
+        new BashTool(cmd.toString())
+            .execute("{\"command\":\"echo hi\"}", new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertFalse(result.error(), result.content());
+    assertTrue(result.content().contains("/c|echo hi|"), result.content());
+  }
+
+  @Test
+  void aShellThatCannotStartNamesThePathAndTheThreePlacesToChangeIt() throws Exception {
+    Path missing = dir.resolve("no/such/shell");
+
+    ToolResult result =
+        new BashTool(missing.toString())
+            .execute("{\"command\":\"echo hi\"}", new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertTrue(result.error(), result.content());
+    assertTrue(result.content().contains(missing.toString()), result.content());
+    assertTrue(result.content().contains("\"shell\""), result.content());
+    assertTrue(result.content().contains("--shell"), result.content());
+    assertTrue(result.content().contains("CCJ_SHELL"), result.content());
+    // 没起来不是超时，报成一个超时会把读它的人送去等一个永远不会开跑的进程。
+    assertFalse(result.content().contains("超时"), result.content());
+  }
+
+  @Test
+  void withNoShellConfiguredTheCommandGoesToPosixBash() throws Exception {
+    // $0 是 shell 自己报出的名字，于是「没配置时跑的是谁」是被观察到的，而不是被声明的。
+    ToolResult result =
+        new BashTool()
+            .execute("{\"command\":\"echo $0\"}", new ToolContext(dir, Approver.ALWAYS, 4096));
+
+    assertFalse(result.error(), result.content());
+    assertTrue(result.content().contains("exit code 0\n"), result.content());
+    assertTrue(result.content().contains(ProcessRunner.POSIX_DEFAULT), result.content());
+    assertEquals(
+        ProcessRunner.POSIX_DEFAULT, ProcessRunner.resolve(null), "没有配置时是 POSIX 默认");
   }
 }
