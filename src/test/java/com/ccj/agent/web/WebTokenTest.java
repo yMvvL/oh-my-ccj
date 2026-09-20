@@ -9,6 +9,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -33,6 +38,58 @@ class WebTokenTest {
     // 32 个随机字节的十六进制：长到「猜」不成其为一种策略，而末尾的换行不算在里面。
     assertEquals(64, first.length());
     assertTrue(first.chars().allMatch(c -> Character.digit(c, 16) >= 0), first);
+  }
+
+  @Test
+  void processesStartingAtTheSameMomentConvergeOnOneToken() throws Exception {
+    // 重启（旧进程以 75 退出、启动器起新进程）和同一个 home 下的第二个工作区，都可能撞上「文件还不
+    // 存在」的这一瞬。过去两边各自生成、各自写入：磁盘上留下后写的那个，而先写的那个进程还在用内存
+    // 里的值服务，于是它打印过的 URL 和文件里的 token 不再是同一个。现在创建是独占的，输的那一方
+    // 读赢家的值——八个同时启动全部拿到同一个 token，文件里也是那个。
+    Path fresh = home.resolve("concurrent");
+    Files.createDirectories(fresh);
+    int starters = 8;
+    CountDownLatch go = new CountDownLatch(1);
+    List<String> tokens = Collections.synchronizedList(new ArrayList<>());
+    List<Throwable> failures = Collections.synchronizedList(new ArrayList<>());
+    List<Thread> threads = new ArrayList<>();
+    for (int i = 0; i < starters; i++) {
+      Thread thread =
+          new Thread(
+              () -> {
+                try {
+                  go.await();
+                  tokens.add(WebToken.from(fresh));
+                } catch (Throwable t) {
+                  failures.add(t);
+                }
+              },
+              "token-starter-" + i);
+      thread.start();
+      threads.add(thread);
+    }
+    go.countDown();
+    for (Thread thread : threads) {
+      thread.join();
+    }
+
+    assertEquals(List.of(), failures, failures.toString());
+    assertEquals(starters, tokens.size());
+    assertEquals(1, new HashSet<>(tokens).size(), "八次启动，一个 token：" + tokens);
+    assertEquals(
+        tokens.get(0),
+        Files.readString(fresh.resolve(WebToken.FILE_NAME)).strip(),
+        "磁盘上的那个就是所有进程在用的那个");
+  }
+
+  @Test
+  void theGeneratedTokenIsA256BitValueWrittenAsHex() throws Exception {
+    // 文档里写着「32 个随机字节，也就是 256 位」，而这里钉的是那句声明的可核对部分：长度。有人把
+    // BYTES 改小、或者把编码换成更短的，不该只是让一句文档悄悄变成假的。
+    String token = WebToken.generate();
+    assertEquals(64, token.length(), token);
+    assertTrue(token.matches("[0-9a-f]{64}"), token);
+    assertNotEquals(WebToken.generate(), token, "两次生成不是同一个值");
   }
 
   @Test

@@ -80,6 +80,14 @@ public final class Cli {
   /** {@code --web-token} 未传入时承载 web token 的环境变量。 */
   public static final String ENV_WEB_TOKEN = "CCJ_WEB_TOKEN";
 
+  /**
+   * 短于这么多字符的、自己设的 token 会被点名一次。
+   *
+   * <p>16 不是一个密码学边界——它远在猜测可行范围之外——而是一条「这看起来像人随手编的」的界线：生成
+   * 出来的 token 是 64 个十六进制字符，所以任何短于四分之一的都值一行文字。
+   */
+  private static final int SHORT_TOKEN_CHARS = 16;
+
   private static final DateTimeFormatter TIMESTAMP =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
 
@@ -577,6 +585,33 @@ public final class Cli {
       return 2;
     }
     boolean reachesTheNetwork = binds.stream().anyMatch(bind -> !isLoopbackAddress(bind));
+    // 通配地址是一个决定，而它很少是用户以为自己在做的那个：「绑定所有接口」包括咖啡馆的 wifi、酒店
+    // 和任何同网段的设备，而 token 是唯一挡在它们和这个 shell 之间的东西。默认值刻意避开通配，所以
+    // 走到这里说明用户是显式要求的——那就把代价说清楚，并给出更窄的那条路。
+    for (InetSocketAddress bind : binds) {
+      if (bind.getAddress() != null && bind.getAddress().isAnyLocalAddress()) {
+        err.println(
+            "warning: 绑定 " + requested + " 意味着这台机器所在的每一个网络都能连上来——"
+                + "包括你现在所在的这个 wifi 上的任何设备。");
+        err.println(
+            "  想只在某个网络里可达，就点名那个地址（--host <addr>），或者用 `--host tailscale` "
+                + "只服务 tailnet。");
+        err.flush();
+        break;
+      }
+    }
+    // 自己设的 token 照用不误——这是用户的机器、用户的门——但一句短得出奇的 token 值得说出来：它是唯一
+    // 挡在别人和你这个 shell 之间的东西，而这一行的成本是一次字符串长度比较。
+    if (reachesTheNetwork && token != null && token.length() < SHORT_TOKEN_CHARS) {
+      err.println(
+          "warning: --web-token 只有 "
+              + token.length()
+              + " 个字符。这个 token 是这台机器上唯一的门禁，而短到可以猜的 token 会让人以为门是锁着的。");
+      err.println(
+          "  让它自己生成（64 个十六进制字符，存在 <home>/web-token 里），或者用 "
+              + "`openssl rand -hex 32` 造一个。");
+      err.flush();
+    }
     if (reachesTheNetwork && token == null) {
       // 在这里生成一个 token 并存进主目录，因为重点就是敲一个词：`ccj`，手机就能用。每次都得
       // 传一遍的秘密，最终会落进 shell 历史、落进 `ps`，或者落进一个 alias——那又多了一个可能
@@ -618,8 +653,8 @@ public final class Cli {
       }
       if (reachesTheNetwork) {
         out.println(
-            "  第一个地址是本机（在那里不需要 token）；其余是 tailnet 地址，"
-                + "需要在 URL 里带上 token");
+            "  第一个地址是本机（在那里不需要 token）；其余地址需要在 URL 里带上 token"
+                + "（点开一次，token 就进了 cookie）");
       }
       out.println(
           (provider == null
