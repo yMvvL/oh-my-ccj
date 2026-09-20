@@ -1183,6 +1183,12 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 }
 .photo-menu .btn { justify-content: flex-start; }
 
+/* 拖着一张图片进窗口时，输入框自己亮起来：能放的地方不说，用户没法知道这里能不能放。 */
+.composer-card.drop-target {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 0 2px var(--dsw-alias-state-business-primary);
+}
+
 /* 待发送的图片：它跟着下一句话一起走，所以它得一直看得见，直到它真的走了。 */
 .photo-pending {
   display: flex;

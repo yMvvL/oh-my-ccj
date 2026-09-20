@@ -131,6 +131,7 @@
     btnPhotoAlbum: $('photo-album-btn'),
     photoCamera: $('photo-camera'),
     photoAlbum: $('photo-album'),
+    composerCard: $('composer-card'),
     photoPending: $('photo-pending'),
     photoPendingThumb: $('photo-pending-thumb'),
     photoPendingName: $('photo-pending-name'),
@@ -4639,6 +4640,89 @@
     dom.photoAlbum.value = '';
     sendPhoto(file);
   });
+
+  // ------------------------------------------------- 图片的入口：按钮、粘贴、拖放
+  /* 桌面上绝大多数图片来自剪贴板：截图之后 Ctrl+V，而不是「存成文件、再去选它」。粘贴和拖放因此
+   * 走的是和选文件完全相同的那条路（sendPhoto），不是第二条——一条图片路径意味着一个行为，而两
+   * 条路径迟早会分叉。 */
+  document.addEventListener('paste', function (event) {
+    const file = imageFrom(event.clipboardData);
+    if (!file) {
+      return; // 文本粘贴照旧落进输入框，这里什么都不做。
+    }
+    event.preventDefault();
+    sendPhoto(file);
+  });
+
+  /* 拖动期间的高亮：拖过窗口时不说，用户没法知道这里能不能放。 */
+  let dragDepth = 0;
+  document.addEventListener('dragenter', function (event) {
+    if (!hasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    dragDepth += 1;
+    dom.composerCard.classList.add('drop-target');
+  });
+  document.addEventListener('dragover', function (event) {
+    if (hasFiles(event.dataTransfer)) {
+      event.preventDefault(); // 不阻止默认行为，浏览器会直接打开那个文件。
+    }
+  });
+  document.addEventListener('dragleave', function () {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+      dom.composerCard.classList.remove('drop-target');
+    }
+  });
+  document.addEventListener('drop', function (event) {
+    if (!hasFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    dragDepth = 0;
+    dom.composerCard.classList.remove('drop-target');
+    const file = imageFrom(event.dataTransfer);
+    if (file) {
+      sendPhoto(file);
+    } else {
+      appendNotice('只能拖入图片：把图片存下来再拖，或者按「图片」按钮选一张');
+    }
+  });
+
+  /** 这次剪贴板／拖放里要上传的那张图片，或者 null。 */
+  function imageFrom(dataTransfer) {
+    if (!dataTransfer) {
+      return null;
+    }
+    const files = dataTransfer.files;
+    if (files && files.length) {
+      for (let i = 0; i < files.length; i++) {
+        if (String(files[i].type || '').startsWith('image/')) {
+          return files[i];
+        }
+      }
+      return null;
+    }
+    // 粘贴时文件常常只以 item 的形式出现，而不在 files 里。
+    const items = dataTransfer.items;
+    if (!items) {
+      return null;
+    }
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file' && String(item.type || '').startsWith('image/')) {
+        return item.getAsFile();
+      }
+    }
+    return null;
+  }
+
+  /** 这次拖放里有没有文件，用来和拖一段选中的文本区分开。 */
+  function hasFiles(dataTransfer) {
+    return !!dataTransfer && Array.prototype.indexOf.call(dataTransfer.types || [], 'Files') >= 0;
+  }
+  // --------------------------------------------- 图片的入口结束
 
   dom.composer.addEventListener('submit', function (event) {
     event.preventDefault();
