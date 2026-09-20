@@ -265,6 +265,15 @@ public final class AgentHub implements AutoCloseable {
     return node;
   }
 
+  /** 这条会话持有的待发送图片，或者 {@code null}。 */
+  private Held heldPicture(FileSession current) {
+    if (current == null) {
+      return null;
+    }
+    Conversation conversation = conversations.get(current.id());
+    return conversation == null ? null : conversation.pendingPicture.get();
+  }
+
   private ObjectNode statusFields() {
     FileSession current = session();
     Config active = config;
@@ -294,6 +303,14 @@ public final class AgentHub implements AutoCloseable {
     node.put("sessionId", current == null ? "" : current.id());
     node.put("messageCount", current == null ? 0 : current.messages().size());
     node.put("autoApprove", autoApprove.get());
+    // 一张已经描述好、还没走的图片：刷新之后那条缩略条还在，而不是变成一张看不见、却会跟着下一句话发
+    // 出去的图片。
+    Held held = heldPicture(current);
+    if (held == null) {
+      node.putNull("picture");
+    } else {
+      node.set("picture", pictureEvent(held.saved(), held.description(), held.mediaType()));
+    }
     node.put("subAgents", subAgents.get());
     // "busy" 回答的是屏幕上那个对话：页面的输入框针对的是它显示的转录，别处正在跑的回合不能把它禁用掉。
     Conversation shown = conversation(current == null ? "" : current.id());
@@ -1131,14 +1148,22 @@ public final class AgentHub implements AutoCloseable {
    * 仍然拒绝的，是<em>同一个</em>对话里的第二个回合——两个写入者往同一份转录里追加，正是毁掉它的东西。
    */
   public Submit submit(String text) {
+    return submit(text, null);
+  }
+
+  /**
+   * 一句话，以及它带着的那张已经描述过的图片。
+   *
+   * <p>这就是「上传」和「发送」重新合成一条消息的地方：描述放在前面，用户说的话放在后面，于是模型一次
+   * 收到的是「这是图片里有什么」和「照这个做」——而不是先收到前半句、自己决定后半句。
+   *
+   * <p>{@code pictureName} 是一次一致性检查，不是指令：图片就是这条会话持有的那一张（上传即「我要发它」），
+   * 而页面如果在命名另一张，那就是页面和服务器对不上了，值得说清楚而不是猜。名字不对时什么都不发送，
+   * 图片也仍然留着——一次重命名竞争不该花掉用户的一次上传。
+   */
+  public Submit submit(String text, String pictureName) {
     if (closed) {
       throw new IllegalStateException("web 会话正在关闭");
-    }
-    if (text == null || text.isBlank()) {
-      throw new IllegalArgumentException("需要一条消息");
-    }
-    if (provider.get() == null) {
-      throw new IllegalStateException("没有配置模型——打开「设置」添加一个");
     }
     FileSession current = session();
     if (current == null) {
@@ -1146,18 +1171,46 @@ public final class AgentHub implements AutoCloseable {
     }
     Conversation conversation =
         conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current));
+    Held held = conversation.pendingPicture.get();
+    String name = held == null ? null : held.saved().path().getFileName().toString();
+    if (pictureName != null && !pictureName.isBlank() && held != null) {
+      boolean named =
+          pictureName.equals(name) || pictureName.equals(held.saved().path().toString());
+      if (!named) {
+        throw new IllegalArgumentException(
+            "这张会话里待发送的图片是 " + name + "，不是 " + pictureName + "——请重新选一张");
+      }
+    }
+    if (pictureName != null && !pictureName.isBlank() && held == null) {
+      throw new IllegalArgumentException("这条会话里已经没有待发送的图片了——请重新选一张");
+    }
+    // 空白的正文只有在它带着一张图片时才是可以接受的：那时候这条消息说的就是图片本身，也就是过去上传
+    // 独自达成的效果，只不过现在是用户要求的。
+    if ((text == null || text.isBlank()) && held == null) {
+      throw new IllegalArgumentException("需要一条消息");
+    }
+    if (provider.get() == null) {
+      throw new IllegalStateException("没有配置模型——打开「设置」添加一个");
+    }
+    String composed =
+        held == null ? text.strip() : held.block() + (text.isBlank() ? "" : "\n\n" + text.strip());
     if (conversation.begin()) {
-      startTurn(conversation, text);
+      conversation.pendingPicture.compareAndSet(held, null);
+      startTurn(conversation, composed);
       return Submit.STARTED;
     }
     // 忙，而这不再是个错误：消息等着轮到自己。用 409 拒绝它是旧行为，而一次拒绝会把一段思考中的停顿变成
     // 彻底停摆——你看着这个回合时冒出的想法，等它结束时已经没了。
-    if (!conversation.enqueue(text)) {
+    if (!conversation.enqueue(composed)) {
       throw new IllegalStateException(
           "这个对话已经有 "
               + MAX_QUEUED_MESSAGES
               + " 条消息在等了；请等回合结束，或者中止它");
     }
+    // 图片跟着这句话走了，所以它不再等着。入队失败时上面就已经抛出，而图片仍在原处：队列满了是稍后重试，
+    // 不是丢掉一次上传。
+    conversation.pendingPicture.compareAndSet(held, null);
+    publish(conversation.id(), "picture", Json.object().putNull("name"));
     publishStatus();
     return Submit.QUEUED;
   }
@@ -1201,15 +1254,11 @@ public final class AgentHub implements AutoCloseable {
     if (closed) {
       throw new IllegalStateException("web 会话正在关闭");
     }
-    if (provider.get() == null) {
-      throw new IllegalStateException("没有配置模型——打开「设置」添加一个");
-    }
     FileSession current = session();
     if (current == null) {
       throw new IllegalStateException("没有打开的会话");
     }
-    // 字节说了算，而且先由它说了算：不是图片的上传，在占位被拿走之前、在任何东西被写入之前、在视觉端点被
-    // 调用之前就被拒绝。
+    // 字节说了算，而且先由它说了算：不是图片的上传，在任何东西被写入之前、在视觉端点被调用之前就被拒绝。
     String mediaType = AttachmentStore.mediaTypeOf(bytes);
     Config active = config;
     if (active.vision() == null || !active.vision().isConfigured()) {
@@ -1221,28 +1270,79 @@ public final class AgentHub implements AutoCloseable {
     }
     Conversation conversation =
         conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current));
-    if (!conversation.begin()) {
-      // 在描述之前拒绝，而不是之后：先描述会把一次好几兆的上传和一次视觉调用，花在一个永远启动不了的
-      // 回合上。
-      throw new IllegalStateException(
-          "这个对话里还有回合在跑；请先中止它");
-    }
     AttachmentStore.Saved saved;
     String description;
     try (VisionClient client = VisionClient.from(active.vision(), settings.env())) {
       description = client.describe(bytes, mediaType);
       saved = AttachmentStore.forSession(current.file()).save(name, bytes);
-    } catch (RuntimeException e) {
-      // 占位被交还，这样一个被拒的图片不会让对话为某个并不存在的回合而一直忙下去。
-      conversation.end();
-      throw e;
     }
-    startTurn(conversation, pictureMessage(saved, description));
+    // 没有回合，也不占位：这里没有任何东西开始运行。一个已经在跑自己的回合的对话仍然可以接收一张图片，
+    // 因为描述这张图片不是那个对话的工作——它是一次辅助调用，结果就停在这里等着，而旧的「先中止它」正是
+    // 把一次上传变成一条不通的路。
+    //
+    // 一次只留一张，所以第二次上传取代第一次。被取代的那个文件留在会话的附件目录里，随之一起删除——它
+    // 从来没有进过对话，所以也不该假装它被送出去过。
+    Held previous = conversation.pendingPicture.getAndSet(new Held(saved, description, mediaType));
+    publish(
+        current.id(),
+        "picture",
+        pictureEvent(saved, description, mediaType));
     return Json.object()
         .put("accepted", true)
         .put("attachment", saved.path().toString())
         .put("mediaType", saved.mediaType())
+        .put("description", description)
+        // 说清楚它现在处于什么状态：一个 202 说的是「收到了」，而页面需要知道它还没有被送出去。
+        .put("held", true)
+        .put("replaced", previous != null);
+  }
+
+  /**
+   * 页面要显示的那张待发送图片，或者 {@code null}。
+   *
+   * <p>状态快照和事件说的是同一件事：刷新页面之后那张缩略条仍然在，而不是变成一张看不见、却会跟着下一
+   * 句话一起发出去的图片。
+   */
+  private static ObjectNode pictureEvent(
+      AttachmentStore.Saved saved, String description, String mediaType) {
+    return Json.object()
+        .put("name", saved.path().getFileName().toString())
+        .put("file", saved.path().toString())
+        .put("mediaType", mediaType)
         .put("description", description);
+  }
+
+  /**
+   * 丢掉这张待发送的图片，它没有跟着任何一句话走。
+   *
+   * <p>返回丢掉的是哪一个的名字，或者 {@code null}：页面说得出「移除了 photo.png」，而点名一张从来
+   * 不在那里的图片是一次会撒谎的成功。
+   */
+  public String discardPicture() {
+    FileSession current = session();
+    if (current == null) {
+      return null;
+    }
+    Conversation conversation = conversations.get(current.id());
+    if (conversation == null) {
+      return null;
+    }
+    Held dropped = conversation.pendingPicture.getAndSet(null);
+    if (dropped == null) {
+      return null;
+    }
+    publish(current.id(), "picture", Json.object().putNull("name"));
+    publishStatus();
+    return dropped.saved().path().getFileName().toString();
+  }
+
+  /** 一张已经描述过、正等着和用户下一句话一起发出去的图片。 */
+  record Held(AttachmentStore.Saved saved, String description, String mediaType) {
+
+    /** 这条消息在对话里的开头，用户自己说的话接在它后面。 */
+    String block() {
+      return pictureMessage(saved, description);
+    }
   }
 
   /**
@@ -2098,6 +2198,17 @@ public final class AgentHub implements AutoCloseable {
      * 工作目录。
      */
     private volatile Path cwd;
+    /**
+     * 已经描述好、等着和用户下一句话一起发出去的那张图片。
+     *
+     * <p>挂在这个对话上，而不是挂在整个 hub 上：两个对话各持有自己的那一张，切换会话时各自看到自己的
+     * 那一张，而不是看到另一个会话上传的图片。
+     *
+     * <p>描述与「发送」分开，是因为这两件事是分开的。上传一张图片是「看看这个」，而从输入框发出去才是
+     * 「照这个做」——过去它们是一个动作，于是模型在用户还没说出想让它做什么之前，就已经拿着一段描述开始
+     * 干活了。
+     */
+    private final AtomicReference<Held> pendingPicture = new AtomicReference<>();
 
     Conversation(String id, FileSession session) {
       this.id = id;

@@ -126,8 +126,16 @@
     hint: $('composer-hint'),
     photoHint: $('photo-hint'),
     btnPhoto: $('btn-photo'),
+    photoMenu: $('photo-menu'),
+    btnPhotoCamera: $('photo-camera-btn'),
+    btnPhotoAlbum: $('photo-album-btn'),
+    photoCamera: $('photo-camera'),
+    photoAlbum: $('photo-album'),
+    photoPending: $('photo-pending'),
+    photoPendingThumb: $('photo-pending-thumb'),
+    photoPendingName: $('photo-pending-name'),
+    btnPhotoDrop: $('photo-pending-drop'),
     btnUndo: $('btn-undo'),
-    photoInput: $('photo-input'),
     side: $('side'),
     toolList: $('tool-list'),
     usage: $('usage'),
@@ -779,6 +787,13 @@
     }
     // 屏幕上那个回合背后还等着什么，好让输入框说出来。
     applyQueued(status.queued);
+    // 刷新之后那张缩略条必须回来：它描述的是服务器*持有*的东西，而不是这个页面记得的东西。
+    if ('picture' in status) {
+      setPendingPicture(status.picture ? {
+        name: str(status.picture.name),
+        description: str(status.picture.description)
+      } : null);
+    }
     setBusy(!!status.busy || pendingApprovals() > 0);
     paintRunningRows();
   }
@@ -2022,6 +2037,10 @@
       case 'approval': breakBlock(); onApproval(ev); break;
       case 'approval-closed': onApprovalClosed(ev); break;
       case 'notice': breakBlock(); appendNotice(str(ev.text)); break;
+      case 'picture':
+        // 服务器才是这张待发送图片的权威：上传、移除、以及别处（另一个标签页）碰它，都会到这里。
+        setPendingPicture(ev.name ? { name: str(ev.name), description: str(ev.description) } : null);
+        break;
       case 'summary': breakBlock(); appendSummary(ev); break;
       case 'usage': renderUsage(ev); break;
       case 'compacted':
@@ -4483,7 +4502,9 @@
     // 在这里拒绝曾是服务器过去用 409 回答时页面这边的对应动作，而在一个长回合里
     // 打出来的想法值得留着。
     const text = dom.input.value.trim();
-    if (!text) { return; }
+    // 一张待发送的图片本身就可以是一条消息，所以空正文在它存在时是可以的。
+    if (!text && !state.picture) { return; }
+    const picture = state.picture ? state.picture.name : '';
     dom.input.value = '';
     state.stick = true;
     scrollToBottom();
@@ -4491,7 +4512,7 @@
     // 它的 `done` 已经从事件流渲染过了——之后再设这个标记会把输入框卡在一个早已结束的
     // 回合上。流才是权威，无论哪种情况它都会纠正这里。
     try {
-      const res = await postJSON('/api/message', { text: text });
+      const res = await postJSON('/api/message', { text: text, picture: picture });
       // 「已排队」表示那个回合还在跑，而这条消息是下一条。计数*不*在这里加：服务器排队时
       // 会发布一个 status，那个事件常常比这个响应先到，而本地也加一次，正是提示对一条消息
       // 说出「2 条排队中」的原因——这是在浏览器里实测到的，同一个事实的两个来源之间的
@@ -4499,12 +4520,16 @@
       if (res && res.queued) {
         setBusy(true);
       }
+      /* 它跟着这句话走了，所以缩略条该消失了——而且要由本地清掉，不能等 status：图片
+       * 已经不在了，而下一个 status 正是被这条消息触发的。 */
+      if (picture) { setPendingPicture(null); }
     } catch (err) {
       // 409 留给它现在仍然表示的意思：队列满了，或者没有配置模型。两件都是用户必须处理的
       // 事，而两件都不是「有回合正在运行」。
       appendError(err.message);
       refreshStatus();
       dom.input.value = text;
+      // 图片和正文一起退回来：一次被拒绝的发送不该花掉一次上传。
     }
     dom.input.focus();
   }
@@ -4524,17 +4549,77 @@
     state.stick = true;
     setPhotoHint('正在描述 ' + file.name + '…');
     try {
-      await request('/api/attachment?name=' + encodeURIComponent(file.name), {
+      const res = await request('/api/attachment?name=' + encodeURIComponent(file.name), {
         method: 'POST',
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
         body: file
       });
+      /* 描述回来了，而它要停在这里等你写下一句话。本地缩略图来自你刚交给我们的那个
+       * File——服务器上的那份文件是它的副本，不是这个对象。 */
+      setPendingPicture({
+        name: res && res.attachment ? res.attachment.split(/[\\/]/).pop() : file.name,
+        description: res ? str(res.description) : '',
+        localUrl: URL.createObjectURL(file)
+      });
+      if (res && res.replaced) { appendNotice('这张图片取代了上一张还没发出去的图片'); }
+      setPhotoHint('已描述，发送时会跟着你的话一起发出去');
+      dom.input.focus();
     } catch (err) {
       appendError('图片被拒绝：' + err.message);
     } finally {
-      setPhotoHint('');
       refreshStatus();
     }
+  }
+
+  /* 待发送的图片只有一份，因为一次只有一张会跟着消息走。它是可见的、可移除的，而且
+   * 服务器也这么认为——刷新页面后服务器会用 status 把同一条缩略条重新送回来。 */
+  function setPendingPicture(picture) {
+    const previous = state.picture;
+    /* 同一个上传的两条路径会先后到达：这个请求的响应（它带着页面手上那个 File，所以有一张真的
+     * 缩略图）和服务器随后发布的事件（它没有）。名字一样就是同一张图片，所以本地那张缩略图跟着
+     * 一起留下，而不是被一条更晚、更无知的消息抹掉。 */
+    if (picture && !picture.localUrl && previous && previous.localUrl &&
+        previous.name === picture.name) {
+      picture.localUrl = previous.localUrl;
+      previous.localUrl = null;
+    }
+    if (previous && previous.localUrl) { URL.revokeObjectURL(previous.localUrl); }
+    state.picture = picture || null;
+    const current = state.picture;
+    dom.photoPending.hidden = !current;
+    dom.photoPendingThumb.hidden = !current;
+    if (!current) {
+      dom.photoPendingName.textContent = '';
+      dom.photoPendingThumb.removeAttribute('src');
+      setPhotoHint('');
+      return;
+    }
+    // 缩略条是提醒，不是描述本身：描述有时是一整段（推理模型尤其如此），而它真正被读到的
+    // 地方是它将要成为的那条消息。所以这里只留一个开头。
+    const glimpse = firstLine(current.description);
+    dom.photoPendingName.textContent =
+      current.name + (glimpse ? ' · ' + clip(glimpse, 60) : '');
+    if (current.localUrl) {
+      dom.photoPendingThumb.src = current.localUrl;
+    } else {
+      dom.photoPendingThumb.removeAttribute('src');
+      dom.photoPendingThumb.hidden = true;
+    }
+  }
+
+  async function dropPendingPicture() {
+    try {
+      await request('/api/attachment', { method: 'DELETE' });
+    } catch (err) {
+      appendError('移除图片：' + err.message);
+    }
+    setPendingPicture(null);
+    refreshStatus();
+  }
+
+  function openPhotoMenu(open) {
+    dom.photoMenu.hidden = !open;
+    dom.btnPhoto.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
   function setPhotoHint(text) {
@@ -4542,7 +4627,21 @@
     dom.photoHint.hidden = !text;
   }
 
-  dom.btnPhoto.addEventListener('click', function () { dom.photoInput.click(); });
+  dom.btnPhoto.addEventListener('click', function (event) {
+    event.stopPropagation();
+    openPhotoMenu(dom.photoMenu.hidden);
+  });
+  dom.btnPhotoCamera.addEventListener('click', function () { openPhotoMenu(false); dom.photoCamera.click(); });
+  dom.btnPhotoAlbum.addEventListener('click', function () { openPhotoMenu(false); dom.photoAlbum.click(); });
+  dom.btnPhotoDrop.addEventListener('click', dropPendingPicture);
+  /* 点别处、按 Esc 就关掉。菜单留在一个没有焦点的按钮下面，是那种「点了没反应」的
+   * 来源。 */
+  document.addEventListener('click', function (event) {
+    if (!dom.photoMenu.hidden && !dom.photoMenu.contains(event.target)) { openPhotoMenu(false); }
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !dom.photoMenu.hidden) { openPhotoMenu(false); }
+  });
 
   /* 把上一回合改动过的东西放回去。服务器用恢复的内容作答并发布一条通知，转录里的说明就在
    * 那里——这一侧只报告拒绝，因为拒绝正是没有别的东西会报告的那种情况。 */
@@ -4557,11 +4656,17 @@
 
   dom.btnUndo.addEventListener('click', undoLastTurn);
 
-  dom.photoInput.addEventListener('change', function () {
-    const file = dom.photoInput.files && dom.photoInput.files[0];
+  dom.photoCamera.addEventListener('change', function () {
+    const file = dom.photoCamera.files && dom.photoCamera.files[0];
     /* 在上传之前清掉，所以连续两次选同一张图片是两次上传，而不是一次上传加一次
      * 没反应。 */
-    dom.photoInput.value = '';
+    dom.photoCamera.value = '';
+    sendPhoto(file);
+  });
+
+  dom.photoAlbum.addEventListener('change', function () {
+    const file = dom.photoAlbum.files && dom.photoAlbum.files[0];
+    dom.photoAlbum.value = '';
     sendPhoto(file);
   });
 

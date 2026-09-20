@@ -16,10 +16,11 @@
 | `GET` | `/app.js`, `/style.css` | 静态资源，从 jar 里提供 |
 | `GET` | `/api/status` | 提供方、模型、base URL、cwd（以及 `-C` 是否覆盖了它）、会话、工具、当前屏幕上那个会话的 `busy`，以及 `running`——此刻正在工作的其它会话的 id |
 | `GET` | `/api/events` | 循环上报的一切组成的 SSE 流 |
-| `POST` | `/api/message` | `{"text": "..."}`——开始一个回合，或者**把它排到正在跑的那个回合后面**：两种情况都返回 `202 {"accepted": true, "queued": true|false}`。只有队列满（16）或没有配置模型时才返回 `409`。队列是按对话分的，所以另一个对话仍然立刻就能开始 |
+| `POST` | `/api/message` | `{"text": "...", "picture": "photo.jpg"}`——开始一个回合，或者**把它排到正在跑的那个回合后面**：两种情况都返回 `202 {"accepted": true, "queued": true|false}`。只有队列满（16）或没有配置模型时才返回 `409`。队列是按对话分的，所以另一个对话仍然立刻就能开始 |
 | `POST` | `/api/abort` | 在下一个安全点停掉正在跑的回合，**并丢弃排在它后面的内容**，同时公布丢弃了多少条；加上 `?id=<session>` 可以停掉你并未在看的那个对话里的回合（其队列不受影响） |
 | `POST` | `/api/compact` | 压缩屏幕上这个会话：较旧的回合变成一段摘要，写入下一代文件。回合正在跑、或摘要不会比它替换掉的东西更小时返回 `409` |
-| `POST` | `/api/attachment` | 一张图片作为原始请求体，`?name=<file name>`——视觉模型描述它，这段描述开启一个回合；字节不是 PNG/JPEG/WebP/GIF 时 `400`，超过 8 MB 时 `413`，该对话正在跑或没有配置视觉模型时 `409` |
+| `POST` | `/api/attachment` | 一张图片作为原始请求体，`?name=<file name>`——视觉模型描述它，**这段描述就等在这里**，直到 `POST /api/message` 把它和用户的一句话一起发出去；字节不是 PNG/JPEG/WebP/GIF 时 `400`，超过 8 MB 时 `413`，没有配置视觉模型时 `409`。返回 `202 {accepted, attachment, mediaType, description, held, replaced}`，其中 `replaced` 说的是它取代了哪一张还没发出去的图片 |
+| `DELETE` | `/api/attachment` | 丢掉那张待发送的图片，它不跟着任何一句话走。返回 `200 {discarded: <name>|null}` |
 | `POST` | `/api/undo` | 把上一个回合改动过的文件放回去：`200 {"restored": n, "files": [...], "remaining": m}`，并在转录里留一条通知。回合正在跑时返回 `409`——在它底下做退回，会把模型正想着的文件还原回去 |
 | `POST` | `/api/approval` | `{"id": "...", "allow": true, "remember": false}`——为一个待批的审批作答 |
 | `POST` | `/api/auto-approve` | `{"enabled": true}`——把整个会话切到自动批准 |
@@ -248,9 +249,13 @@ token 来自 `--web-token`、`CCJ_WEB_TOKEN`，或者——首次使用时生成
 
 ## 图片
 
-输入区的**图片**按钮用来发送一张图片，进入对话的是一段由独立视觉模型写出的*描述*——主模型
-从不接收图像。完整设计（包括为什么是这个形状）在 [VISION.md](VISION.md) 里；这里讲的是页面
-和这个端点做了什么。
+输入区的**图片**按钮先问来源——**相机**还是**相册**——再打开对应的那个文件输入。两个文件输入是
+必需的：`capture` 是按钮级的属性，一个按钮没法同时表示「拍一张」和「从图库里选一张」，而图库必须
+仍然可达。
+
+进入对话的是一段由独立视觉模型写出的*描述*——主模型从不接收图像。**描述不开启回合**：它挂在
+这条会话上等着，输入框上方出现一条缩略条，你的下一句话把它一起带走。完整设计（包括为什么是这个
+形状）在 [VISION.md](VISION.md) 里；这里讲的是页面和这两个端点做了什么。
 
 ```js
 // 文件本身就是请求体；名字走查询参数，因为只有字节才能说明这个文件是什么。
@@ -261,8 +266,9 @@ fetch('/api/attachment?name=' + encodeURIComponent(file.name), {
 });
 ```
 
-服务器返回 `202`，内容为 `{accepted, attachment, mediaType, description}`，并开启一个回合，
-它的第一条消息是：
+服务器返回 `202`，内容为 `{accepted, attachment, mediaType, description, held, replaced}`，并且
+**什么都不开始**。此后页面上的缩略条一直可见、可移除（`DELETE /api/attachment`），服务器也会在
+`status` 里把同一件事报回来，所以刷新页面之后它还在。用户按下发送时，这条消息是：
 
 ```
 [picture whiteboard.png] a whiteboard with a red arrow and the words 'ship it'

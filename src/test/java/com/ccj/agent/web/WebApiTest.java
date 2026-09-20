@@ -2843,6 +2843,12 @@ class WebApiTest {
     return new Sse(response.body());
   }
 
+  private HttpResponse<String> delete(String path) throws Exception {
+    return client.send(
+        HttpRequest.newBuilder(URI.create(origin + path)).DELETE().build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   private HttpResponse<String> get(String path) throws Exception {
     return client.send(
         HttpRequest.newBuilder(URI.create(origin + path)).GET().build(),
@@ -3032,7 +3038,7 @@ class WebApiTest {
   // ------------------------------------------------------------------ 图片
 
   @Test
-  void aPictureBecomesATurnOnItsDescription() throws Exception {
+  void aPictureWaitsForTheSentenceItGoesOutWith() throws Exception {
     List<String> asked = new CopyOnWriteArrayList<>();
     AtomicInteger visionCalls = new AtomicInteger();
     startVision("a whiteboard with a red arrow and the words 'ship it'", visionCalls, asked);
@@ -3047,13 +3053,34 @@ class WebApiTest {
       assertEquals(
           "a whiteboard with a red arrow and the words 'ship it'",
           response.path("description").asText());
+      assertTrue(response.path("held").asBoolean(), posted.body());
 
-      // 交给模型的那条消息是描述加上图片所在的位置，这样描述漏掉的细节还能用 read 工具读回来。
+      // 报告的那个缺陷：上传过去会立刻开始一个回合，于是模型在用户说出想让它做什么之前，就已经
+      // 拿着一份描述开始干活了。所以这里钉住没有回合：没有用户消息，没有模型请求，服务器说它
+      // 只是把图片拿在手里。
+      JsonNode status = Json.parse(get("/api/status").body());
+      assertEquals(
+          "whiteboard.png",
+          status.path("picture").path("name").asText(),
+          "status 把它报成「待发送」，所以刷新之后那条缩略条还在");
+      assertTrue(
+          sse.forSession(status.path("sessionId").asText()).stream()
+              .noneMatch(e -> "user".equals(e.path("type").asText())),
+          "什么都没进对话");
+      assertEquals(List.of(), provider.requests(), "而且没有回合被启动");
+
+      // 现在说想让它做什么。描述和这句话是*一条*消息，描述在前、请求在后——这正是「一起发过去」。
+      assertEquals(202, post("/api/message",
+          "{\"text\":\"把图里的箭头指出来\",\"picture\":\"whiteboard.png\"}").statusCode());
+
       JsonNode user = sse.await("user", 5000);
       String text = user.path("text").asText();
-      assertTrue(text.contains("a whiteboard with a red arrow"), text);
       assertTrue(text.startsWith("[picture whiteboard.png]"), text);
-      assertTrue(text.contains(response.path("attachment").asText()), text);
+      assertTrue(text.contains("a whiteboard with a red arrow"), text);
+      assertTrue(text.contains(response.path("attachment").asText()),
+          "描述漏掉的细节还能用 read 读回来：" + text);
+      assertTrue(text.endsWith("把图里的箭头指出来"),
+          "用户的请求是这条消息的最后一件事：" + text);
       assertTrue(
           sse.await("done", 5000).path("finalText").asText().contains("arrow"),
           "这个回合靠的就是这段描述");
@@ -3061,7 +3088,12 @@ class WebApiTest {
       // 没有任何图像到达主模型：请求里只有文本，别无其他。
       String toMainModel = provider.requests().get(0).messages().toString();
       assertTrue(toMainModel.contains("a whiteboard with a red arrow"), toMainModel);
+      assertTrue(toMainModel.contains("把图里的箭头指出来"), toMainModel);
       assertFalse(toMainModel.contains("base64"), "图片本身留在对话之外");
+
+      // 它跟着那句话走了，所以它不再等着。
+      assertTrue(Json.parse(get("/api/status").body()).path("picture").isNull(),
+          "发出去之后就没有待发送的图片了");
     }
 
     assertEquals(1, visionCalls.get(), "一张图片，一次描述");
@@ -3076,6 +3108,86 @@ class WebApiTest {
     assertTrue(
         stored.getParent().getFileName().toString().endsWith(".attachments"),
         "放在会话旁边，而不是项目里：" + stored);
+  }
+
+  @Test
+  void aPictureGoesOutWithTheNextMessageEvenWhenThePageDoesNotNameIt() throws Exception {
+    // 上传就是「我要发它」：那张图片是这条会话持有的东西，所以它跟着下一句话走，不管那句话有没有
+    // 点名它。页面照常点名它，而一个不点名的调用——脚本、另一个标签页、curl——不该悄悄把图片丢掉。
+    AtomicInteger visionCalls = new AtomicInteger();
+    startVision("a receipt with a total of 42", visionCalls, new CopyOnWriteArrayList<>());
+    restartWithVision();
+
+    try (Sse sse = watch()) {
+      assertEquals(202, postPicture("receipt.png", pngBytes()).statusCode());
+      assertEquals(202, post("/api/message", "{\"text\":\"这个多少钱\"}").statusCode());
+      String text = sse.await("user", 5000).path("text").asText();
+      assertTrue(text.contains("a receipt with a total of 42"), text);
+      assertTrue(text.endsWith("这个多少钱"), text);
+    }
+  }
+
+  @Test
+  void aPictureNobodyUploadedIsRefusedRatherThanSentAsATextOnlyTurn() throws Exception {
+    // 页面点名了一张服务器并不持有的图片：服务器和页面不一致了，而猜哪一边对，要么发出一个没有
+    // 图片的回合，要么发出一个用户在另一台设备上已经丢掉的回合。
+    AtomicInteger visionCalls = new AtomicInteger();
+    startVision("never used", visionCalls, new CopyOnWriteArrayList<>());
+    restartWithVision();
+
+    HttpResponse<String> posted =
+        post("/api/message", "{\"text\":\"看图\",\"picture\":\"other.png\"}");
+
+    assertEquals(400, posted.statusCode(), posted.body());
+    assertTrue(posted.body().contains("请重新选一张"), posted.body());
+    assertEquals(List.of(), provider.requests(), "两端不一致时什么都不发");
+  }
+
+  @Test
+  void aHeldPictureIsDroppedWithoutBeingSent() throws Exception {
+    AtomicInteger visionCalls = new AtomicInteger();
+    startVision("a cat on a keyboard", visionCalls, new CopyOnWriteArrayList<>());
+    restartWithVision();
+
+    try (Sse sse = watch()) {
+      assertEquals(202, postPicture("cat.png", pngBytes()).statusCode());
+
+      HttpResponse<String> dropped = delete("/api/attachment");
+      assertEquals(200, dropped.statusCode(), dropped.body());
+      assertEquals("cat.png", Json.parse(dropped.body()).path("discarded").asText());
+      assertTrue(Json.parse(get("/api/status").body()).path("picture").isNull());
+
+      assertEquals(202, post("/api/message", "{\"text\":\"刚才那张图呢\"}").statusCode());
+      String text = sse.await("user", 5000).path("text").asText();
+      assertEquals("刚才那张图呢", text, "被丢掉的那张图不会跟着这句话走");
+    }
+  }
+
+  @Test
+  void aSecondPictureReplacesTheFirstWhileItIsStillWaiting() throws Exception {
+    // 一次只有一张图片会跟着消息走，所以第二次上传取代第一次，而不是把两张都留在那里等着。
+    List<String> asked = new CopyOnWriteArrayList<>();
+    AtomicInteger visionCalls = new AtomicInteger();
+    startVision("a first description", visionCalls, asked);
+    restartWithVision();
+
+    try (Sse sse = watch()) {
+      assertEquals(202, postPicture("first.png", pngBytes()).statusCode());
+      JsonNode second = Json.parse(postPicture("second.png", pngBytes()).body());
+      assertTrue(second.path("replaced").asBoolean(), "第二次上传说的是它取代了什么");
+      assertEquals("second.png",
+          Json.parse(get("/api/status").body()).path("picture").path("name").asText(),
+          "拿着的是第二次上传的那一张");
+
+      assertEquals(202, post("/api/message", "{\"text\":\"这一张\"}").statusCode());
+      String text = sse.await("user", 5000).path("text").asText();
+      // 标记里带着文件名，所以即使两段描述是同一段桩文本，也能看出走的是哪一张。
+      assertTrue(text.startsWith("[picture second.png]"), text);
+      assertTrue(text.endsWith("这一张"), text);
+      assertTrue(Json.parse(get("/api/status").body()).path("picture").isNull(),
+          "发出去之后就没有待发送的图片了");
+    }
+    assertEquals(2, visionCalls.get(), "两张图片各描述一次：上传即描述，没有别的时机");
   }
 
   @Test
@@ -3115,9 +3227,12 @@ class WebApiTest {
   }
 
   @Test
-  void aPictureIsRefusedWhileThatConversationIsBusyBeforeTheVisionCall() throws Exception {
+  void aPictureCanBeDescribedWhileATurnIsRunning() throws Exception {
+    // 这条规矩随着上传不再开始回合而变了。描述一张图片不是这个对话的工作，而结果就在这里等着，
+    // 所以「还有回合在跑；请先中止它」是把一次上传变成一条死路——你在等一个长回合时拍的那张照片，
+    // 正是你接下来想用的那一张。
     AtomicInteger visionCalls = new AtomicInteger();
-    startVision("a description nobody should pay for", visionCalls, new CopyOnWriteArrayList<>());
+    startVision("a sticky note", visionCalls, new CopyOnWriteArrayList<>());
     restartWithVision();
     provider.reply(Message.Assistant.text("slow answer"));
     provider.gate(new CountDownLatch(1));
@@ -3125,16 +3240,19 @@ class WebApiTest {
     try (Sse sse = watch()) {
       assertEquals(202, post("/api/message", "{\"text\":\"first\"}").statusCode());
       HttpResponse<String> posted = postPicture("photo.png", pngBytes());
-      assertEquals(409, posted.statusCode(), posted.body());
-      assertTrue(posted.body().contains("这个对话里还有回合在跑；请先中止它"), posted.body());
+      assertEquals(202, posted.statusCode(), posted.body());
+      assertEquals("photo.png",
+          Json.parse(get("/api/status").body()).path("picture").path("name").asText(),
+          "它就在那里等着那个回合结束");
 
       provider.release();
       sse.await("done", 5000);
     }
-    // 先把这个对话占下来，才让这一点成立：先描述的话，就会为一个永远开不起来的回合花掉一次
-    // 几兆字节的上传和一次视觉调用。
-    assertEquals(0, visionCalls.get());
-    assertEquals(List.of(), attachmentDirectories(), "而且什么都没写");
+    assertEquals(1, visionCalls.get(), "描述发生了，因为描述不需要那个回合腾出位置");
+    // 在跑的那个回合不受影响：它只发出过一次请求，而里面没有这张图片。
+    assertEquals(1, provider.requests().size());
+    assertFalse(provider.requests().get(0).messages().toString().contains("a sticky note"),
+        "正在跑的回合不会中途长出这张图片");
   }
 
   @Test

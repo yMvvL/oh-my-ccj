@@ -1165,6 +1165,47 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 /* 焦点在卡片上时，那圈描边属于卡片；字段本身绝不在它里面再画一个框。 */
 #input:focus { outline: none; box-shadow: none; }
 /* 动作行由一条细线分隔：它属于卡片，不属于正在写的那句话。 */
+/* 「图片」按钮先问来源：相机还是相册。两个文件输入是必需的（`capture` 是按钮级的），
+ * 所以这个按钮级的菜单是让两边都可达的那一半。 */
+.photo-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-secondary);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-elevated);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+.photo-menu .btn { justify-content: flex-start; }
+
+/* 待发送的图片：它跟着下一句话一起走，所以它得一直看得见，直到它真的走了。 */
+.photo-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-secondary);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-secondary);
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+.photo-pending-thumb {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--dsw-alias-bg-tertiary);
+}
+.photo-pending-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .composer-row {
   display: flex;
   align-items: center;

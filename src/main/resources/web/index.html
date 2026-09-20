@@ -188,15 +188,33 @@
             <p class="picker-error err" id="picker-error" data-role="error" role="alert" hidden></p>
           </div>
         </div>
+          <!-- 已经描述好、还没发出去的那张图片。它必须看得见：跟着下一句话一起走的是它，
+               而一条看不见的附件就是「我明明只是想问个问题」的来源。 -->
+          <div class="photo-pending" id="photo-pending" role="status" hidden>
+            <img class="photo-pending-thumb" id="photo-pending-thumb" alt="" hidden>
+            <span class="photo-pending-name" id="photo-pending-name"></span>
+            <button type="button" class="btn ghost sm" id="photo-pending-drop"
+                    aria-label="移除这张待发送的图片"
+                    title="移除这张待发送的图片。它不会被发出去，也不会留在对话里。">✕</button>
+          </div>
           <span class="hint" id="composer-hint"></span>
           <span class="hint" id="photo-hint" role="status" hidden></span>
-          <!-- 图片永远不会到达模型：服务器保存它，让视觉模型描述它，描述内容成为消息。
-               故意只写 `accept="image/*"` 而不带 `capture` —— `capture` 在 iOS 上会
-               直接调相机、在 Android 上调图库，而图库必须在这个按钮上仍然可达。 -->
+          <!-- 图片永远不会到达模型：服务器保存它，让视觉模型描述它，描述内容成为你的消息的一部分。
+               相机和图库是两个文件输入，而不是一个：`capture` 在 iOS 上会直接调相机、在 Android 上
+               调图库，而那个属性是按钮级的——一个按钮没法同时表示「拍一张」和「选一张」。所以按钮
+               先问要哪一个，再打开对应的那一个，两边都可达。 -->
           <button type="button" class="btn ghost sm" id="btn-photo" aria-label="发送图片"
-                  title="发送图片：由视觉模型描述它，描述内容会成为你的消息">
+                  aria-haspopup="true" aria-expanded="false" aria-controls="photo-menu"
+                  title="发送图片：可以现场拍一张，也可以从相册里选。视觉模型描述它，描述内容会跟着你的下一句话一起发出去">
             <span class="btn-glyph" aria-hidden="true">▣</span><span class="btn-label">图片</span></button>
-          <input type="file" id="photo-input" accept="image/*" hidden>
+          <div class="photo-menu" id="photo-menu" role="menu" aria-label="图片来源" hidden>
+            <button type="button" class="btn ghost sm" id="photo-camera-btn" role="menuitem">
+              <span class="btn-glyph" aria-hidden="true">◉</span><span class="btn-label">相机</span></button>
+            <button type="button" class="btn ghost sm" id="photo-album-btn" role="menuitem">
+              <span class="btn-glyph" aria-hidden="true">▤</span><span class="btn-label">相册</span></button>
+          </div>
+          <input type="file" id="photo-camera" accept="image/*" capture="environment" hidden>
+          <input type="file" id="photo-album" accept="image/*" hidden>
           <button type="button" class="btn ghost sm" id="btn-undo" aria-label="退回上一回合的文件改动"
                   title="把上一回合改动过的文件放回去。每个回合可以退回一次；保留最近二十个回合。">
             <span class="btn-glyph" aria-hidden="true">↺</span><span class="btn-label">退回</span></button>

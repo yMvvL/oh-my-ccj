@@ -254,14 +254,18 @@ public final class HttpApi implements AutoCloseable {
       error(exchange, 405, "需要 POST");
       return;
     }
-    String text = Json.parse(readBody(exchange)).path("text").asText("");
-    if (text.isBlank()) {
+    JsonNode posted = Json.parse(readBody(exchange));
+    String text = posted.path("text").asText("");
+    // 图片是可选的，而且它必须是这条会话已经持有的那一张：上传就是「我要发它」，所以这个名字是一次一致性
+    // 检查而不是一个文件名参数。正文只有在没有图片时才必须存在。
+    String picture = posted.path("picture").asText("");
+    if (text.isBlank() && picture.isBlank()) {
       error(exchange, 400, "字段 'text' 是必需的");
       return;
     }
     // 两种情况下都是 202：消息被接受了，无论它是开启了一个回合，还是在正在跑的那个后面排队。页面会说清
     // 是哪一种，而输入框在两种情况下都保持可用。
-    AgentHub.Submit submit = hub.submit(text);
+    AgentHub.Submit submit = hub.submit(text, picture);
     respond(
         exchange,
         202,
@@ -269,7 +273,9 @@ public final class HttpApi implements AutoCloseable {
   }
 
   /**
-   * 一张图片，以及它变成的那个回合。
+   * 一张图片：保存它，让视觉模型描述它，把它挂在这条会话上等着。
+   *
+   * <p>它过去会立刻开启一个回合，而现在不再这样——描述就停在这里，直到用户说出想让模型拿它做什么。
    *
    * <p>请求体就是图片本身，而不是装着 base64 的 JSON 信封，所以这些字节从不在客户端编码、再在这里解码：
    * 上传就是一个带着图片的请求，而存放时用的名字是 {@code name} 查询参数。
@@ -279,8 +285,15 @@ public final class HttpApi implements AutoCloseable {
    * 那是客户端能据以行动的东西。
    */
   private void attachment(HttpExchange exchange) throws IOException {
+    if ("DELETE".equals(exchange.getRequestMethod())) {
+      // 丢掉这张待发送的图片。DELETE，不是 POST /api/attachment/discard：被丢掉的就是这个资源本身，而
+      // 它没有别的东西可读。
+      String dropped = hub.discardPicture();
+      respond(exchange, 200, Json.object().put("discarded", dropped == null ? null : dropped));
+      return;
+    }
     if (!"POST".equals(exchange.getRequestMethod())) {
-      error(exchange, 405, "需要 POST");
+      error(exchange, 405, "需要 POST 或 DELETE");
       return;
     }
     byte[] bytes;
