@@ -33,6 +33,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          # 把 ~/.m2 缓存起来。没有它，每个 runner 都从零下载整个插件闭包（上百个 artifact），而
+          # 每一次下载都是一次撞上网络抖动的机会——2026-09-21 那次 macOS 失败正是这样：ubuntu 在同一个
+          # 提交上绿了、本机连跑两遍也绿，红的却是 `Failed to read artifact descriptor for
+          # org.codehaus.plexus:plexus-java:jar:1.5.2`，也就是一次下载读失败了，跟代码无关。
+          cache: maven
 
       # 浏览器用例（src/test/js/*.mjs）在 node 下运行，并被接进 JUnit 套件。没有 node 时它们被报告
       # 为*跳过*而不是通过，所以一次没有 node 的构建会显示绿灯却一点页面都没测——这里装上运行时，就是

@@ -30,6 +30,17 @@ Linux 和 macOS 上，运行中的进程保留它打开时的 inode，所以覆�
 
 `jar.name` 这个属性存在的唯一理由就是这个，启动器替你重新构建时也用它。
 
+## 构建的网络那一面
+
+`.mvn/maven.config` 里有两个东西，都是给「下载抖了一下」准备的：`aether.connector.http.retryHandler.count`
+（Maven 3.9 默认的 native 传输）与 `maven.wagon.http.retryHandler.count`（wagon 传输），各重试三次。它们
+不改变任何构建结果，只让一次网络抖动不再把整个构建判死——2026-09-21 的第一次 CI 里，macOS 就是因为
+`Failed to read artifact descriptor for org.codehaus.plexus:plexus-java:jar:1.5.2` 红的，而同一次运行的
+ubuntu 是绿的。
+
+CI 那边另外把 `~/.m2` 缓存起来了（workflow 里 `setup-java` 的 `cache: maven`）：没有它，每个 runner 都从
+零下载整个插件闭包，而每一次下载都是一次撞上抖动的机会。
+
 ## 开发
 
 ```bash

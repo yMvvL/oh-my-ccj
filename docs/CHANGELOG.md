@@ -19,6 +19,12 @@
 代码里是四种；`docs/ROUTER.md` 还写着「GeminiProvider 没有接到 Providers 上，今天没有任何 kind 能选中
 它」——那在写它的时候是真的，而**给 Gemini 接线的那次改动没有回头改它**。两处都按代码改了。
 
+**以及一次与代码无关的 CI 红灯。** 推上去之后 macOS 红了，而失败是 `Failed to read artifact descriptor
+for org.codehaus.plexus:plexus-java:jar:1.5.2`——那是 Maven 在**下载插件依赖**时读失败了；同一个提交上
+ubuntu 是绿的，本机连跑两遍也绿。根子在 runner 每次都从零下载整个插件闭包：上百个 artifact，每个都是一次
+撞上抖动的机会。两处一起治：`.mvn/maven.config` 给两种 HTTP 传输各加了三次重试（native 与 wagon 的属性名
+不同，两个都要写），CI 那边把 `~/.m2` 缓存起来。它们不改变任何构建结果。
+
 **真浏览器那条测试现在跑在自己的 JVM 里。** 它在整套里犯过两次病（一次转录空着、一次 `Runtime.evaluate`
 永远不回答），而单跑 15 次全过、两次失败都只在七十几个类跑过之后发生。它是唯一**驱动另一个进程**的测试，
 所以让它不再与前面那些类共享运行时是最直接的办法——surefire 里多一个 execution，默认那一遍把它排除、它
