@@ -117,7 +117,7 @@
 ## 文档
 
 - **文档随代码一起交付。** README、`docs/`、`SECURITY.md` 以及改动旁边的注释，在一个提交里。没人能找到的功能就是没人有的功能。
-- **README 功能表每一行都是一个主张。** 一行不再与代码相符就是 bug。
+- **README 的能力表每一行都是一个主张**，而用法表与工具表住在 [docs/USAGE.md](USAGE.md)。一行不再与代码相符就是 bug。
 - **说明测量了什么、没测量什么。** 「472 个测试」只在一次运行能复现它时才属于 README。当某样东西没有在做这项工作的机器上验证过时，改动要说明这一点。
 - **`Limitations` 不是道歉小节。** 每一条都是读者为了决定是否信任这个工具所需要的取舍，就按它作为取舍的样子写。
 
@@ -130,9 +130,9 @@
 | 命名、注释、拼写 | `mvn test`：`core/ConventionsTest` 扫描 `src/main/java` 里本仓库不用的美式拼写，失败时报出文件和行号 |
 | 页面绝不用字符串构建 HTML | `WebMarkdownTest`，跑在横幅之间的随包发布 `app.js` 上 |
 | 浏览器用例跑随包发布的源码 | `src/test/js/*.test.mjs`，由 `Web*Test` 通过 node 运行，node 不在时报告为 *skipped* |
-| 页面在真的浏览器里真的能跑完一个回合 | `WebBrowserSmokeTest`，跑 `src/test/js/browser-smoke.mjs`：headless Chrome 通过 CDP 驱动发布出去的页面，端到端走一个回合；没有能用的浏览器、或 node 没有全局 `WebSocket`（需要 22.4 或更新）时报告为 *skipped* |
+| 页面在真的浏览器里真的能跑完一个回合 | `WebBrowserSmokeTest`，跑 `src/test/js/browser-smoke.mjs`：headless Chrome 通过 CDP 驱动发布出去的页面，端到端走一个回合。它是唯一驱动**另一个进程**的测试，所以跑在自己的 JVM 里（pom 的 `browser-smoke` execution）——在整套跑完之后它犯过两次病，而单跑 15 次全过。没有能用的浏览器、或 node 没有全局 `WebSocket`（需要 22.4 或更新）时报告为 *skipped* |
 | 审批是唯一的护栏 | `SECURITY.md` 这么说，而那些移除护栏的测试在护栏消失时会失败 |
-| 文档与代码相符 | 评审，以及 [CHANGELOG.md](CHANGELOG.md) 和 [ROADMAP.md](ROADMAP.md) 里点名版本的条目——一行不再相符的 README 行就是 bug |
+| 文档与代码相符 | [docs/DocsConsistencyTest](../src/test/java/com/ccj/agent/docs/DocsConsistencyTest.java) 守着用法表与工具表（它们住在 [docs/USAGE.md](USAGE.md)）；其余靠评审，以及 [CHANGELOG.md](CHANGELOG.md) 和 [ROADMAP.md](ROADMAP.md) 里点名版本的条目——一行不再相符的 README 行就是 bug |
 
 ## 做一次改动
 
@@ -148,7 +148,7 @@
 - [ ] 没有这个改动，某个测试失败；有它则通过
 - [ ] `mvn -q test` 是绿的，或者说明它为什么跑不了
 - [ ] JS 用例跑了，或者 CI 把它们报告为 skipped 而不是 passed
-- [ ] README / `docs/` / `SECURITY.md` 与代码相符，包括任何被移除的东西
+- [ ] README / `docs/` / `SECURITY.md` 与代码相符，包括任何被移除的东西（用法表与工具表在 [docs/USAGE.md](USAGE.md)）
 - [ ] 没有留下描述已消失行为的注释
 - [ ] 没有新依赖，或者提交信息为它做了论证
 - [ ] 审批路径未变，或者改动说明了它是如何保持诚实的

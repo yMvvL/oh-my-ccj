@@ -56,10 +56,56 @@ curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d
 原生那条路也在代码里：`GeminiProvider` 打的是
 `POST /v1beta/models/{model}:streamGenerateContent?alt=sse`，密钥放 `x-goog-api-key` 头（另一种写法是同一
 个 URL 上的 `?key=`）。它存在的理由是兼容层不转发的原生字段（`systemInstruction`、`thinkingConfig`、
-带 `thought` 标志的 part）。它**还没有**接到 `Providers` 与 `ProviderDefinition` 上，所以今天没有任何
-`kind` 值能选中它。而 `?alt=sse` 与密钥头部这两条只在 proto 和公开文档里核过，**没有**对着真实端点跑过。
+带 `thought` 标志的 part）。`kind: "gemini"` 选中它；`?alt=sse` 与密钥头部这两条只在 proto 和公开
+文档里核过，**没有**对着真实端点跑过。
 
-## 2. 动态目录需要一个接口
+## 2. 自定义提供方
+
+内置名字是编译进去的；其余的都是你的：
+
+```bash
+curl -X POST localhost:6767/api/providers -H 'content-type: application/json' -d '{
+  "name": "myrelay", "kind": "openai",
+  "baseUrl": "https://relay.example.com/v1",
+  "apiKeyEnv": "MY_KEY", "models": ["deepseek-v4-flash"]}'
+ccj --provider myrelay --model deepseek-v4-flash
+```
+
+`kind` 是**线上协议**，共四种：讲 `/chat/completions` 的都算 `openai`（默认），messages API 是
+`anthropic`，OpenAI 的 Responses API 是 `openai-responses`，Google 的
+`:streamGenerateContent` 是 `gemini`。名字由你起，协议是另一件事——`{"name":"my-gemini","kind":"gemini"}`
+与 `{"name":"gemini","kind":"gemini"}` 说的是同一个实现类。四种协议也都可以直接用它们自己的名字作为
+`--provider`（`openai-responses`、`gemini`）。
+
+定义存放在 `~/.oh-my-ccj/providers.json`，存储前会先校验，并可以在设置面板里管理。UI 读的目录来自
+`ModelCatalog` 接口，而不是直接来自配置，所以一个清楚自己模型列表的网关可以自己作答——见
+下一节。`gemini` 没有默认模型：型号名换得太快，猜一个就是把一次配置错误变成一次
+莫名其妙的 404。
+
+## 3. 提供方、端点和密钥
+
+`baseUrl`、`apiKey` 和 `apiKeyEnv` 描述的是一个*提供方*，而不是会话，所以 `config.json` 为每个提供方保留
+一对：顶层是生效中的那些字段（用 `settingsFor` 标出），另外为每一个你输入过的其它提供方保留一个
+`remembered` 条目。
+
+```json
+{
+  "provider": "CommandCode",
+  "model": "deepseek/deepseek-v4.1-flash",
+  "apiKey": "…",
+  "settingsFor": "CommandCode",
+  "remembered": { "deepseek": { "apiKey": "…", "baseUrl": "https://api.deepseek.com" } }
+}
+```
+
+切换提供方会把要离开的那一对移进 `remembered`，再把新提供方的那一对取出来，所以两个方向的切换都是免费的，
+密钥也绝不搬家：它只被发送给当初为它输入的那个提供方，配那个提供方的端点。没有记住配对的提供方由它自己的
+定义（`providers.json`）或内置默认值提供。选中某个提供方时清空密钥字段，就是忘掉那个提供方的密钥；其它
+提供方的都不受影响。设置表单按提供方显示「已保存」（`rememberedProviders` 只带名字，从不带密钥），因为
+一个承诺了却不会发送的密钥，正是错误端点被再次写下来的方式。文件只记录你选了什么——默认得到的端点或密钥
+变量名会被省略，在加载时重新推导。
+
+## 4. 动态目录需要一个接口
 
 `ModelCatalog` 回答「存在哪些提供方和模型，以及这个答案来自哪里？」：
 
@@ -93,7 +139,7 @@ final class RouterCatalog implements ModelCatalog {
 new AgentHub.Settings(…, new RouterCatalog(baseUrl), providerStore, …);
 ```
 
-## 3. 路由器应该暴露什么
+## 5. 路由器应该暴露什么
 
 目录只需要一个端点，而无聊的选择最好：
 
@@ -103,10 +149,10 @@ new AgentHub.Settings(…, new RouterCatalog(baseUrl), providerStore, …);
 | `POST /v1/chat/completions` | 代理的回合 | 已经必需，已经能用 |
 | `GET /health`（可选） | 未来的提供方状态面板 | 今天不需要它做任何事 |
 
-## 4. 刻意不属于代理的东西
+## 6. 刻意不属于代理的东西
 
 代理只与一个端点说话，也不试图当路由器：没有跨提供方故障转移、没有成本记账、没有模型选择启发式。那些是路由器的活儿，重复它们会把两套互相矛盾的政策放到同一条路径上。代理*确实*报告的是它能看见的记账——token、缓存命中率、工具调用，按会话（`/api/status.usage`）——这正是路由器面板为了展示节省量、而不是猜测节省量所需要的东西。
 
-## 5. 如果以后想要一个路由器面板
+## 7. 如果以后想要一个路由器面板
 
 模式就是工作区面板：一个 `GET /api/router/*` 端点代理路由器自己的 API（本地路由器没有什么值得中继的 CORS 故事），再加上页面里的一个窗格。已经存在、会被复用的零件：只有回环、带 token 闸门的服务器、SSE 事件流、通知通道，以及设置表单的提供方列表。`AgentHub` 之上没有任何东西需要改；hub 会获得一个针对路由器元数据的瘦客户端，就像它获得了文件夹选择器一样。

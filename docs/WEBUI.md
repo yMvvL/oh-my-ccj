@@ -210,6 +210,10 @@ oh-my-ccj 0.1.0 — web UI：http://127.0.0.1:6767/
 网卡上，就问 `tailscale ip -4`；`100.64.0.0/10` 之外的一律拒绝，而没有 tailnet 的机器就只在
 回环上提供服务，而不是去监听别的东西。
 
+**绑定的是地址，不是每个接口。** `ss -ltn | grep 6767` 会显示两个监听：`127.0.0.1:6767` 和
+`100.64.0.1:6767`。手机用的是 tailnet 那个，它也是唯一能从本机之外够到的。`--host tailscale`
+只服务 tailnet 地址（那样本机也得用它，或者用 MagicDNS 名字 `<机器名>.<你的 tailnet>.ts.net`）。
+
 **门禁。** 两种进入方式，回答的是不同的问题：
 
 | 请求 | 结果 |
@@ -228,7 +232,8 @@ token 来自 `--web-token`、`CCJ_WEB_TOKEN`，或者——首次使用时生成
 进制字符；撞上同一个值需要大约 2^128 次生成，所以这里不需要查重。需要的是另外两件事，而它们现在
 都被测试钉住：一次安装只有一个 token（两个进程同时启动时，创建是独占的，输的那一方读赢家写下的
 值——重启和第二个工作区都可能撞上这一瞬），以及自己设的 token 短于 16 个字符时启动会警告一次，
-因为它是这台机器上唯一的门禁。正是这个文件让「直接跑 `ccj`」可行：不需要把秘密放在命令行上（`ps` 和 shell
+因为它是这台机器上唯一的门禁。`--web-token` 和 `CCJ_WEB_TOKEN` 两处任意一处留空都算「没有
+token」，而不是空密码。正是这个文件让「直接跑 `ccj`」可行：不需要把秘密放在命令行上（`ps` 和 shell
 历史会把它读回去），也不需要每次重启都换一个新 token（那会让手机每次都被登出）。它刻意**不是**
 `config.json` 里的一个 key：主目录被随手备份的概率，远比 shell 配置文件高。`HttpApi.urls()`
 只在需要的地方给每个地址标上 token——回环地址是裸着打印的，所以在本机打开浏览器，永远不会把
@@ -239,8 +244,16 @@ token 来自 `--web-token`、`CCJ_WEB_TOKEN`，或者——首次使用时生成
 **把它收窄到只有一台设备**是 Tailscale 的活，而不是这个页面的活：默认的 tailnet 规则本来就
 允许每台设备连上其它任何一台，所以把「在我的 tailnet 上」和「我的」区分开的正是 token。一条
 把 `dst: <this-machine>:6767` 限制到某个 `src` 设备的访问规则可以进一步收窄（用 Tailscale 自己
-的 ACL 语法，在管理控制台里应用）。想要带真实证书的 HTTPS 时，替代做法是在回环监听前面放一个
-`tailscale serve`——出于上面同样的理由，它仍然需要一个 token。
+的 ACL 语法，在管理控制台里应用）：
+
+```json
+{ "acls": [ { "action": "accept", "src": ["friends-phone"], "dst": ["this-machine:6767"] },
+            { "action": "accept", "src": ["this-machine"], "dst": ["this-machine:6767"] } ] }
+```
+
+（上面这一对才是把它*收窄*的东西；`tailscale status` 会打印设备名。）想要带真实证书的 HTTPS 时，
+替代做法是在回环监听前面放一个 `tailscale serve --bg 6767`——它仍然需要 token，因为那时服务器看到
+的 `Host` 是主机名，而不是 loopback。
 
 **布局**在 720px 以下会变化，因为手机不是缩小的桌面窗口：
 
@@ -343,9 +356,10 @@ fetch('/api/attachment?name=' + encodeURIComponent(file.name), {
                "apiKeyEnv": "MY_KEY", "models": ["deepseek-v4-flash", "gpt-5.5"]}}}
 ```
 
-- `kind` 是 wire 协议（`openai` 覆盖所有 `/chat/completions` 端点，`anthropic` 则是 messages
-  API），正是它让一个中继、一个网关、本地 vLLM 或个人路由器无需发版就能使用。只有两种协议存在，
-  其它任何值都会被当作拼写错误拒绝。
+- `kind` 是 wire 协议，共四种：`openai` 覆盖所有 `/chat/completions` 端点，`anthropic` 是 messages
+  API，`openai-responses` 是 OpenAI 的 Responses API，`gemini` 是 Google 的
+  `:streamGenerateContent`。正是它让一个中继、一个网关、本地 vLLM 或个人路由器无需发版就能使用；
+  其它任何值都会被当作拼写错误拒绝，而拒绝消息列出的是这四项。
 - 一条定义的 `baseUrl` 就是这条定义所服务的端点；状态里报告的也是它，所以「这个请求会发到哪里」
   只有一个答案。存放在 `config.json` 里的 `baseUrl`，只有在它是为这个提供方输入的时候才会被
   使用（`--base-url` flag、`CCJ_BASE_URL`，或者在这个提供方被选中时用的设置表单）——你一分钟前

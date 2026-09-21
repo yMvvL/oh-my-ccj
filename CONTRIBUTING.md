@@ -30,6 +30,44 @@ Linux 和 macOS 上，运行中的进程保留它打开时的 inode，所以覆�
 
 `jar.name` 这个属性存在的唯一理由就是这个，启动器替你重新构建时也用它。
 
+## 开发
+
+```bash
+./mvnw test                               # the whole suite: no network, no API key
+mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
+mvn -Dtest='Web*Test' test                # HTTP + SSE + approval handshake only
+mvn -DskipTests package                   # fat jar
+```
+
+所有测试都是离线的。提供方测试和端到端测试会起一个脚本化的 HTTP 服务器（`com.sun.net.httpserver`），它用
+分块传输编码和刻意打散的帧讲两种线上格式，所以 SSE 拼装是在真实中继会产生的那种边界上被测试的。端到端测试
+驱动真正的 CLI：请求经 HTTP 发出、SSE 被解析、工具被执行、文件落到磁盘、会话被写入。
+
+| 包 | 类 | 测试数 | 覆盖 |
+|---|---|---|---|
+| `core` | 15 | 179 | 循环、工具调用与只读重叠、中止、上下文预算与 token 估算、压缩与恢复、审批规则与它们的拒绝、子代理与它的账本、配置的合并与遮蔽、提示词（项目自己的 `CCJ.md` 领起） |
+| `web` | 24 | 192 | 按主题分成九个类、共用一个夹具：页面与 SSE 流、审批握手、会话并发、会话与工作区、账本与压缩、设置表单、提供方目录、图片与视觉、跨源与 token 与 `Host`。另有九个在 node 下跑的页面用例（其中一个是真浏览器）。这里曾经是一个 3942 行的 `WebApiTest` |
+| `tool` | 11 | 106 | 匹配与截断、超时与取消、拒绝路径、`edit` 的多块与失败邻域、`fetch` 的 scheme 与体积、`restart` 及它的拒绝、**可配置的 shell 与它的参数形状** |
+| `provider` | 9 | 112 | SSE 解析、**四种线上映射**（chat-completions、messages、Responses、Gemini）、重试、自定义提供方、effort 档位、视觉客户端、模型目录 |
+| `session` | 6 | 76 | 编解码往返（含 thinking）、追加与重开、列表缓存、世代文件、附件与检查点 |
+| `e2e` | 1 | 29 | CLI → HTTP → 工具 → 磁盘：推理、预算、工具在哪个目录运行、`CCJ.md` 到达请求、重启落在同一个对话 |
+| `cli` | 2 | 18 | 参数解析、模式选择、端口建议 |
+| `workspace` | 1 | 11 | 注册表规则、持久化、隔离、给选中的文件夹命名 |
+| `mcp` | 1 | 10 | stdio 握手、工具注册、审批、关闭 |
+| `demo` | 1 | 8 | 没有模型时的工具路由、工具调用、错误路径 |
+| `docs` | 1 | 2 | `docs/USAGE.md` 的用法一段逐字等于 `--help`；工具表的名字、顺序与参数与每个工具的 schema 一致 |
+
+合计 **743 个测试，72 个类**。这张表按包从 surefire 报告里数出来，而不是手写的清单——手写过的那一版
+漂到了实际数字的一半左右。用法表与工具表现在由 `docs` 包里的那个测试守着（3.3 用的是「机器比对」而不是
+「生成」）。
+
+上面的数字来自维护者环境里的最后一次运行；同一套测试在 CI 的 Linux 与 macOS 上跑的是
+`./mvnw -B -ntp verify`——见 [.github/workflows/build.yml](.github/workflows/build.yml)。它第一次真的
+跑起来时两个平台都红了，四条失败全是真问题（都被本机漏掉了），修完再推才是全绿；那四条在
+[CHANGELOG](docs/CHANGELOG.md) 里。工作要往哪去，见
+[docs/ROADMAP.md](docs/ROADMAP.md)；这里的代码、测试和文档是怎么写的，见
+[docs/CONVENTIONS.md](docs/CONVENTIONS.md)。
+
 ## 如果你在修 bug
 
 一个在修复之前就失败的测试，是 pull request 里最有价值的东西——它是「这个 bug 就是你以为的那个 bug」的

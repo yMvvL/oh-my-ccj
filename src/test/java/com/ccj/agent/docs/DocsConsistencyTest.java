@@ -19,34 +19,34 @@ import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /**
- * README 里那两张表是**代码事实的抄写**：命令行选项表是 {@link CliOptions#usage()} 的逐字副本，工具表是
- * 每个工具的 {@code parametersJson()} 的副本。
+ * {@code docs/USAGE.md} 里那两张表是**代码事实的抄写**：命令行选项表是 {@link CliOptions#usage()} 的逐字
+ * 副本，工具表是每个工具的 {@code parametersJson()} 的副本。
  *
  * <p>抄写会漂移，而漂移的代价不对称：代码改了而表没改时，读到它的人（以及照着它写的脚本）会照着一张说过
  * 时话的纸做事。[CONVENTIONS](../docs/CONVENTIONS.md) 把这条约定写成「README 功能表每一行都是一个主张」，
  * 却把它交给评审——而评审是这个仓库里唯一没有机器守着的一环。这两个用例就是那台机器：它们不生成文档，它们
  * 让漂移**构建失败**，而失败消息说出该改哪儿。
  *
- * <p>它们断言的是发布出去的字节（真 README、真 usage、真 schema），不是某份副本，理由与
+ * <p>它们断言的是发布出去的字节（真文档、真 usage、真 schema），不是某份副本，理由与
  * {@code src/test/js/*.mjs} 相同。
  */
 class DocsConsistencyTest {
 
-  private static final Path README = Path.of("README.md");
+  private static final Path USAGE = Path.of("docs/USAGE.md");
 
   @Test
-  void theUsageBlockInTheReadmeIsExactlyWhatTheCliPrints() throws IOException {
-    String readme = Files.readString(README);
+  void theUsageBlockIsExactlyWhatTheCliPrints() throws IOException {
+    String doc = Files.readString(USAGE);
     String usage = CliOptions.usage();
     assertTrue(
-        readme.contains(usage.stripTrailing()),
-        "README 的「用法」一节必须逐字等于 CliOptions.usage() 打印出来的东西；"
-            + "改了 usage() 就一起改 README，否则读者会照着一张说过时话的纸做事。");
+        doc.contains(usage.stripTrailing()),
+        "docs/USAGE.md 的「用法」一节必须逐字等于 CliOptions.usage() 打印出来的东西；"
+            + "改了 usage() 就一起改 docs/USAGE.md，否则读者会照着一张说过时话的纸做事。");
   }
 
   @Test
   void theToolTableListsExactlyTheRegisteredToolsAndTheirParameters() throws IOException {
-    Map<String, String> documented = documentedTools(Files.readString(README));
+    Map<String, String> documented = documentedTools(Files.readString(USAGE));
     Map<String, ToolSpec> actual = new LinkedHashMap<>();
     for (ToolSpec spec : Tools.standard().specs()) {
       actual.put(spec.name(), spec);
@@ -70,12 +70,13 @@ class DocsConsistencyTest {
   }
 
   /**
-   * README「工具」一节里那张表：工具名 → 它那一行列出的参数，按 schema 的顺序、可选参数带 {@code ?}。
+   * {@code docs/USAGE.md}「工具」一节里那张表：工具名 → 它那一行列出的参数，按 schema 的顺序、可选参数带
+   * {@code ?}。
    *
    * <p>只读那一节的表，而不是整份文件里所有的表格行：别的表格（按包分的测试数等）与工具 schema 无关。
    */
-  private static Map<String, String> documentedTools(String readme) {
-    String section = section(readme, "### 工具");
+  private static Map<String, String> documentedTools(String doc) {
+    String section = section(doc, "## 工具");
     Map<String, String> out = new LinkedHashMap<>();
     Matcher row = Pattern.compile("(?m)^\\| `([^`]+)` \\| ([^|]+) \\|").matcher(section);
     while (row.find()) {
@@ -95,16 +96,16 @@ class DocsConsistencyTest {
   }
 
   /** 一节的内容，从它那一行标题到下一个同级或更高级的标题。 */
-  private static String section(String readme, String heading) {
-    int start = readme.indexOf(heading);
-    assertTrue(start >= 0, "README 里找不到 " + heading);
-    Matcher next = Pattern.compile("(?m)^#{1,3} ").matcher(readme.substring(start + heading.length()));
-    int end = next.find() ? start + heading.length() + next.start() : readme.length();
-    return readme.substring(start, end);
+  private static String section(String doc, String heading) {
+    int start = doc.indexOf(heading);
+    assertTrue(start >= 0, "docs/USAGE.md 里找不到 " + heading);
+    Matcher next = Pattern.compile("(?m)^#{1,3} ").matcher(doc.substring(start + heading.length()));
+    int end = next.find() ? start + heading.length() + next.start() : doc.length();
+    return doc.substring(start, end);
   }
 
   /**
-   * 一份 schema 的参数，按它声明的顺序，可选的那些带上 {@code ?}——README 用的就是这个记号。
+   * 一份 schema 的参数，按它声明的顺序，可选的那些带上 {@code ?}——文档用的就是这个记号。
    *
    * <p>「可选」问的是 schema 自己：不在 {@code required} 里就是可选。这样那一个问号也是一个被检查的主张，
    * 而不是装饰。

@@ -74,6 +74,33 @@
         <configuration>
           <trimStackTrace>false</trimStackTrace>
         </configuration>
+        <executions>
+          <!-- 默认那一遍：全部测试，除了驱动真浏览器的那一条。 -->
+          <execution>
+            <id>default-test</id>
+            <configuration>
+              <excludes>
+                <exclude>**/WebBrowserSmokeTest.java</exclude>
+              </excludes>
+            </configuration>
+          </execution>
+          <!-- 真浏览器那一条单独一个 JVM。
+               它唯一驱动的是**另一个进程**（headless Chrome，经 CDP），而本机两次在整套跑完之后的失败
+               （一次转录空着、一次 Runtime.evaluate 永远不回答）都只在套件里出现：单跑 15 次全过。一个
+               自己的 JVM 是让它不再与前面七十几个类共享运行时的最直接办法，也不需要把整棵套件降级成
+               「每个类一个 JVM」。 -->
+          <execution>
+            <id>browser-smoke</id>
+            <goals>
+              <goal>test</goal>
+            </goals>
+            <configuration>
+              <includes>
+                <include>**/WebBrowserSmokeTest.java</include>
+              </includes>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
 
       <plugin>

@@ -21,6 +21,20 @@ nothing about any of them. That is what makes the loop testable headless — the
 behind a scripted provider in unit tests, behind a mock HTTP server in end-to-end tests, and against
 a real relay in production.
 
+### 目录 → 职责
+
+```
+cli/       argument parsing, wiring, REPL, exit codes   (the only place that calls System.exit)
+ui/        AgentListener implementation: streaming text, tool cards, spinner, ANSI
+web/       the same loop behind HTTP: agent hub, SSE stream, approval handshake, single page
+workspace/ the workspace registry: named directories and where their sessions live
+demo/      a tool-routing stand-in for a model, so the CLI can be demonstrated with no key
+session/   JSONL message codec, FileSession, SessionStore
+tool/      read write edit bash glob grep + approval-aware helpers
+provider/  OpenAI-compatible and Anthropic providers over java.net.http, plus the SSE reader
+core/      Message, Provider, Tool, ToolRegistry, AgentLoop, Session, Config, AppPaths
+```
+
 ## Message model
 
 `core.Message` is a sealed interface over four records, deliberately shaped like a conversation
