@@ -1,6 +1,6 @@
 # oh-my-ccj
 
-[![build](https://github.com/ArchCCJ/oh-my-ccj/actions/workflows/build.yml/badge.svg)](https://github.com/ArchCCJ/oh-my-ccj/actions/workflows/build.yml)
+[![build](https://github.com/yMvvL/oh-my-ccj/actions/workflows/build.yml/badge.svg)](https://github.com/yMvvL/oh-my-ccj/actions/workflows/build.yml)
 
 **A coding agent in plain Java 21, written from scratch.** No agent framework, no HTTP client library,
 no CLI library: the transport is `java.net.http`, the web UI and every test double ride on

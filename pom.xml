@@ -11,7 +11,7 @@
 
   <name>oh-my-ccj</name>
   <description>从零写成的纯 Java 21 编码代理运行时。</description>
-  <url>https://github.com/ArchCCJ/oh-my-ccj</url>
+  <url>https://github.com/yMvvL/oh-my-ccj</url>
 
   <licenses>
     <license>
@@ -23,8 +23,8 @@
 
   <developers>
     <developer>
-      <id>ArchCCJ</id>
-      <name>ArchCCJ</name>
+      <id>yMvvL</id>
+      <name>yMvvL</name>
     </developer>
   </developers>
 
