@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -115,10 +116,28 @@ class ProjectPromptTest {
     // CCJ.md 才是这个项目读取的文件，而近似命中不算：去猜别的名字，就是一个目录最终带上用户从未
     // 同意过的规则的方式。
     write(root, "CCJ.markdown", "not this one");
-    write(root, "ccj.md", "nor case variants of another name");
     write(root, "AGENTS.md", "nor another tool's file");
 
-    assertEquals("", ProjectPrompt.from(root));
+    if (caseSensitive(root)) {
+      write(root, "ccj.md", "nor case variants of another name");
+      assertEquals("", ProjectPrompt.from(root));
+    } else {
+      // 在大小写不敏感的文件系统上（macOS 默认的 APFS 就是），`ccj.md` **就是** `CCJ.md`：是文件系统
+      // 说这个名字的文件存在。所以这一台机器上的事实不是「近似名字被忽略」，而是「同一个名字被找到」——
+      // 把它写下来，好让一个平台的真相不会被另一个平台上的绿光照成没发生过。
+      write(root, "ccj.md", "the same name, different case");
+      assertEquals("the same name, different case", ProjectPrompt.from(root));
+    }
+  }
+
+  /** 这个临时目录所在的文件系统区分大小写吗？ */
+  private static boolean caseSensitive(Path directory) throws IOException {
+    Path probe = Files.writeString(directory.resolve("CaseProbe.tmp"), "x");
+    try {
+      return !Files.exists(directory.resolve("cASEpROBE.tmp"));
+    } finally {
+      Files.deleteIfExists(probe);
+    }
   }
 
   @Test

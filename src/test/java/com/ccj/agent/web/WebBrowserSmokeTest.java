@@ -50,8 +50,14 @@ class WebBrowserSmokeTest {
   /** 页面让 demo 模型去读的那个文件：回答里必须出现它的内容，所以「回答了」等于「工具真的跑了」。 */
   private static final String FIXTURE = "smoke.txt";
 
-  /** 脚本自己的预算：起浏览器、跑一个回合、等回答。 */
-  private static final int BUDGET_SECONDS = 60;
+  /**
+   * 脚本自己的预算：起浏览器、跑一个回合、等回答。
+   *
+   * <p>这台机器上它跑 1.1 秒；而在维护者机器上全量套件跑到它时，同一个脚本曾经耗尽过 60 秒（转录空着、
+   * 状态行空闲，说明连一个事件都没到）。那条用例证的是**行为**而不是速度，所以预算按「最慢的 CI 机器上
+   * 起 Chrome」来定，而不是按这台机器的秒数。
+   */
+  private static final int BUDGET_SECONDS = 120;
 
   /** 进程的截止时间比脚本的预算长，这样先超时的是脚本，而它报出来的是一份带页面证据的说明。 */
   private static final int PROCESS_TIMEOUT_SECONDS = BUDGET_SECONDS + 60;

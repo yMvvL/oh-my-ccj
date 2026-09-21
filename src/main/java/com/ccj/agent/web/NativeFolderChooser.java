@@ -99,22 +99,54 @@ public final class NativeFolderChooser implements FolderChooser {
   }
 
   /**
-   * 运行一个选择器命令并读取它的回答。输出流就在本线程上抽干，这同时充当等待：进程退出时 EOF 到达，所以
-   * 一个话多的对话框填不满自己的管道、也就阻塞不了，而看门狗会杀掉一个根本没人回答的进程。
+   * 运行一个选择器命令并读取它的回答。
+   *
+   * <p>输出抽在一个自己的线程上，而**等多久由我们决定，管道决定不了**：一个被我们杀掉的选择器，它的后代
+   * 可能仍然握着管道那一端，于是 EOF 永远不来，一次「没人回答的对话框」就会拖满子进程自己的寿命。这在
+   * ubuntu 的 CI 上实测到过——1 秒的截止时间等了 30 秒，正好是那个替身对话框的寿命。所以读到截止时间就
+   * 收手，杀掉整棵进程树，然后当作没有答案——这也正是「没人应答的对话框必须被关掉」要说的事。
    */
   private Optional<Path> run(List<String> command) throws IOException {
     Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+    long deadline = System.nanoTime() + timeout.toNanos();
     ScheduledFuture<?> kill =
-        WATCHDOG.schedule(process::destroyForcibly, timeout.toMillis(), TimeUnit.MILLISECONDS);
+        WATCHDOG.schedule(() -> killTree(process), timeout.toMillis(), TimeUnit.MILLISECONDS);
+    StringBuilder collected = new StringBuilder();
     try {
+      Thread reader =
+          Thread.ofVirtual()
+              .name("ccj-chooser-reader")
+              .start(
+                  () -> {
+                    try (BufferedReader source =
+                        new BufferedReader(
+                            new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                      String line;
+                      while ((line = source.readLine()) != null) {
+                        synchronized (collected) {
+                          collected.append(line).append('\n');
+                        }
+                      }
+                    } catch (IOException e) {
+                      // 进程被杀掉时读端会断开，而那正是这条路上会发生的事：答案就是没有答案。
+                    }
+                  });
+      reader.join(Math.max(0, (deadline - System.nanoTime()) / 1_000_000));
+      boolean answered = !reader.isAlive();
+      if (!answered) {
+        killTree(process);
+        reader.join(1_000);
+      }
       String output;
-      try (BufferedReader reader =
-          new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-        output = reader.lines().collect(Collectors.joining("\n")).strip();
+      synchronized (collected) {
+        output = collected.toString().strip();
+      }
+      if (!answered) {
+        return Optional.empty();
       }
       // EOF 只说明选择器停止写入了：它可能已被看门狗销毁，而被销毁的进程在其退出码可读之前仍需被回收。
       if (!process.waitFor(2, TimeUnit.SECONDS)) {
-        process.destroyForcibly();
+        killTree(process);
         return Optional.empty();
       }
       if (process.exitValue() != 0 || output.isEmpty()) {
@@ -124,13 +156,25 @@ public final class NativeFolderChooser implements FolderChooser {
       return Files.isDirectory(chosen) ? Optional.of(chosen) : Optional.empty();
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+      killTree(process);
       return Optional.empty();
     } finally {
       kill.cancel(false);
       if (process.isAlive()) {
-        process.destroyForcibly();
+        killTree(process);
       }
     }
+  }
+
+  /**
+   * 杀掉这棵树，而不是只杀根。
+   *
+   * <p>一个选择器脚本常常再起一个进程去画那个窗口，而那个孩子同样握着管道的写端：只杀根，读端就等不到
+   * EOF。
+   */
+  private static void killTree(Process process) {
+    process.descendants().forEach(ProcessHandle::destroyForcibly);
+    process.destroyForcibly();
   }
 
   private Optional<Path> swing(String title) throws IOException {

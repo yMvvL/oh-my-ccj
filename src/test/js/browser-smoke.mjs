@@ -242,7 +242,25 @@ async function main() {
       cdp.close();
     }
     chrome.stop();
-    rmSync(profile, { recursive: true, force: true });
+    // 临时的用户数据目录删掉，但**不因为它一时删不掉就判这条用例失败**：刚被 SIGKILL 掉的浏览器还可能
+    // 在往里写，于是 rmdir 撞上 ENOTEMPTY。ubuntu 的 CI 上实测到过——冒烟本身全部通过（那一行「断言」都
+    // 已经打出来了），退出码却是 1，只因为收尾时那个目录还差一口气。重试几次，然后放弃：一个临时目录不是
+    // 这个用例要证明的东西。
+    removeProfile(profile);
+  }
+}
+
+/**
+ * 删掉临时的用户数据目录，给它几次机会。
+ *
+ * <p>「删不掉」与「这次冒烟没通过」是两件事，而把后者写成前者会让一条真的跑通的用例变红——CI 上就是
+ * 这样，三十行通过的证据后面跟着一行 ENOTEMPTY。
+ */
+function removeProfile(profile) {
+  try {
+    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch (err) {
+    console.error('（临时目录没删掉，不影响结论：' + profile + '：' + err.message + '）');
   }
 }
 
@@ -361,6 +379,8 @@ class Cdp {
     this.waiters = new Map();
     /** 页面自己说的话：未捕获的异常、控制台错误、崩溃。失败时它们常常是唯一的线索。 */
     this.notes = [];
+    /** 与服务器的往来（只看 /api/），同样是失败时的线索：它分开「没发出去」与「发了没人回」。 */
+    this.traffic = [];
     socket.addEventListener('message', (event) => this.receive(String(event.data)));
     socket.addEventListener('close', () => {
       for (const entry of this.pending.values()) {
@@ -501,6 +521,18 @@ class Cdp {
       }
     } else if (message.method === 'Inspector.targetCrashed') {
       this.notes.push('页面崩溃了');
+    } else if (message.method === 'Network.requestWillBeSent') {
+      const request = message.params && message.params.request;
+      if (request && String(request.url).includes('/api/')) {
+        this.traffic.push(request.method + ' ' + request.url);
+      }
+    } else if (message.method === 'Network.responseReceived') {
+      const response = message.params && message.params.response;
+      if (response && String(response.url).includes('/api/')) {
+        this.traffic.push('  ← ' + response.status + ' ' + response.url);
+      }
+    } else if (message.method === 'Network.loadingFailed') {
+      this.traffic.push('  ✗ 请求失败：' + (message.params && message.params.errorText));
     }
   }
 }
@@ -516,6 +548,9 @@ async function openPage(cdp, url, deadline) {
   cdp.sessionId = attached.sessionId;
   await cdp.send('Page.enable');
   await cdp.send('Runtime.enable');
+  // 网络也要看：这条用例失败的两种样子——「页面没发出去」和「发出去了但没人回」——在 DOM 上长得一模一样
+  // （转录空着、状态行空闲），而只有网络那一侧能把它们分开。
+  await cdp.send('Network.enable');
 
   const loaded = cdp.once('Page.loadEventFired', deadline);
   const navigation = await cdp.send('Page.navigate', { url });
@@ -671,7 +706,18 @@ async function pageEvidence(cdp) {
     '  输入框里的字：' + JSON.stringify(snapshot.typed),
     '  转录里的助手回答：' + snapshot.answers + ' 段，正文（截断）：' + summarise(snapshot.transcript, 600),
   ];
-  return lines.join('\n') + '\n' + notesOf(cdp);
+  return lines.join('\n') + '\n' + trafficOf(cdp) + notesOf(cdp);
+}
+
+/** 页面跟服务器说过的话，按发生顺序；只看 /api/ 那几条。 */
+function trafficOf(cdp) {
+  if (!cdp || !cdp.traffic.length) {
+    return '  与服务器的往来：一条都没有。\n';
+  }
+  // 只留尾巴：一次卡住的页面可能已经问过很多东西，而要看的是最后那几步。
+  const recent = cdp.traffic.slice(-12);
+  return '  与服务器的往来（最后 ' + recent.length + ' 条）：\n'
+    + recent.map((line) => '    ' + line).join('\n') + '\n';
 }
 
 function notesOf(cdp) {

@@ -26,10 +26,10 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: 设置 JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -42,7 +42,7 @@ jobs:
       # 个全局对象要 22.4 才有。按 20 装的话，那个用例会在两个平台上都记成*跳过*——一台机器跳过一次
       # 冒烟是它该做的事，而每一台机器都跳过一次冒烟，就只是一次没人测过页面。
       - name: 设置 Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
@@ -57,9 +57,22 @@ jobs:
           ./mvnw -B -ntp -DskipTests package
           java -jar target/ccj.jar --version
 
+      # 失败时把「哪条测试、为什么」直接打进日志。surefire 的报告只在磁盘上，而 Maven 的输出在几十行
+      # 之上——一个私有仓库的日志唯一的读者是人，所以让它自己说出结论，比让人去下载 artifact 再翻文件强。
+      - name: 失败的测试
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for report in target/surefire-reports/*.txt; do
+            if grep -qE '<<< (FAILURE|ERROR)' "$report"; then
+              echo "===== $report"
+              cat "$report"
+            fi
+          done
+
       - name: 上传测试报告
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: surefire-reports-${{ matrix.os }}
           path: target/surefire-reports/

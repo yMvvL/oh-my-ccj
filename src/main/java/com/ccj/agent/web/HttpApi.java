@@ -303,10 +303,41 @@ public final class HttpApi implements AutoCloseable {
     try {
       bytes = AttachmentStore.readBounded(exchange.getRequestBody(), declaredLength(exchange));
     } catch (IOException e) {
+      // 拒掉之前先把剩下的请求体读掉（有界）。不读的下场是客户端看到的不是这条 413，而是「响应被截断」：
+      // 它还在上传，而我们已经把连接关了。ubuntu 的 CI 上实测到过一次（macOS 上碰巧没撞上、本机一直绿），
+      // 而「fixed content-length: 72, bytes received: 0」不是一个客户端能据以行动的答案。
+      drain(exchange.getRequestBody(), declaredLength(exchange));
       error(exchange, 413, e.getMessage());
       return;
     }
     respond(exchange, 202, hub.describePicture(queryParam(exchange, "name"), bytes));
+  }
+
+  /**
+   * 请求体里拒绝之后还会剩下的字节上限。
+   *
+   * <p>这里的目的是让一个正常的客户端把话说完、然后读到我们的回复，而不是配合一个不肯停下来的发送方：超过
+   * 这个数就直接关掉，那条 413 仍然发出去了，只是对方可能看不到。
+   */
+  private static final int DRAIN_LIMIT_BYTES = 16 * 1024 * 1024;
+
+  /** 把请求体剩下的部分读掉并丢掉，最多 {@link #DRAIN_LIMIT_BYTES} 字节。 */
+  private static void drain(InputStream body, long declaredLength) {
+    long budget =
+        declaredLength > 0 ? Math.min(declaredLength, DRAIN_LIMIT_BYTES) : DRAIN_LIMIT_BYTES;
+    byte[] scratch = new byte[8 * 1024];
+    long read = 0;
+    try {
+      while (read < budget) {
+        int chunk = body.read(scratch, 0, (int) Math.min(scratch.length, budget - read));
+        if (chunk < 0) {
+          return;
+        }
+        read += chunk;
+      }
+    } catch (IOException e) {
+      // 读不动就算了：响应照发，连接由服务器关掉。
+    }
   }
 
   /** 客户端发了 {@code Content-Length} 时就是它；分块请求体则为 -1。 */

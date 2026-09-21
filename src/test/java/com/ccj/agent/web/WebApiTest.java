@@ -300,10 +300,12 @@ class WebApiTest {
               "/api/approval",
               "{\"id\":\"" + approval.path("id").asText() + "\",\"allow\":true}");
       assertEquals(200, resolved.statusCode(), resolved.body());
-      assertEquals("hi", Files.readString(cwd.resolve("made.txt")));
-
       JsonNode done = sse.await("done", 5000);
       assertEquals("done", done.path("finalText").asText());
+      // 文件在**回合结束之后**才读：批复返回 200 只说明那个答案被记下了，工具可能还在跑。此前这里当场就读，
+      // 于是在 macOS 的 CI 上偶发 NoSuchFileException——一条在别人机器上红、在本机永远绿的测试，比没有这条
+      // 测试更糟，因为它把「真的在磁盘上发生了」这句话变得不可信。
+      assertEquals("hi", Files.readString(cwd.resolve("made.txt")));
       JsonNode ended = lastOf(sse, "tool");
       assertTrue(ended.path("ok").asBoolean(), ended.toString());
       assertEquals("end", ended.path("state").asText());
@@ -3459,6 +3461,58 @@ class WebApiTest {
     hub = hub(provider, layered);
     api = HttpApi.start(hub, new InetSocketAddress("127.0.0.1", 0), null);
     origin = "http://127.0.0.1:" + api.port();
+  }
+
+  @Test
+  void anOversizeUploadIsDrainedSoTheClientsAnswerIsNotTruncated() throws Exception {
+    // 上一条覆盖「服务器在读取途中发现超限」；这一条覆盖 CI 上真正咬人的那一条：**公布的长度就超了**，
+    // 于是服务器一个字节都不读就拒掉、然后把连接关掉——而客户端还在往里灌八兆。它看到的不是这条 413，
+    // 而是 `fixed content-length: 72, bytes received: 0`（ubuntu 的 CI 上实测；macOS 上碰巧没撞上，本机
+    // 一直是绿的）。所以拒绝之前要把请求体读掉（有界），让对方把话说完再收下这个答案。
+    //
+    // 手写一个 socket 而不是用 HttpClient：这里的要点正是「客户端还在写的时候服务器答了」，而那种交错
+    // 自己控制才做得出来。
+    long declared = AttachmentStore.MAX_BYTES + 1L;
+    int chunk = 64 * 1024;
+    long sent = 0;
+    String head =
+        "POST /api/attachment?name=huge.png HTTP/1.1\r\n"
+            + "Host: 127.0.0.1:" + api.port() + "\r\n"
+            + "Content-Type: application/octet-stream\r\n"
+            + "Content-Length: " + declared + "\r\n"
+            + "Connection: close\r\n\r\n";
+    byte[] first = new byte[chunk];
+    System.arraycopy(pngBytes(), 0, first, 0, 8);
+
+    try (Socket socket = new Socket(InetAddress.getLoopbackAddress(), api.port())) {
+      java.io.OutputStream out = socket.getOutputStream();
+      out.write(head.getBytes(StandardCharsets.UTF_8));
+      out.write(first);
+      out.flush();
+      sent += chunk;
+      // 一边发一边看：拒答会在这中间到。全部发完之后再读，读到的必须是完整的那条 413。
+      String raw = null;
+      try {
+        while (sent < declared) {
+          int n = (int) Math.min(chunk, declared - sent);
+          out.write(first, 0, n);
+          out.flush();
+          sent += n;
+          Thread.sleep(1);
+        }
+        raw = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      } catch (IOException e) {
+        // 服务器在我们还在写的时候就关了连接——这正是修复前那个 bug 的样子，所以把它当作断言失败报告，
+        // 而不是当成一个错误异常。
+        assertEquals(
+            declared,
+            sent,
+            "服务器在请求体发完之前就把连接关了（发了 " + sent + " 字节），客户端读不到那条 413：" + e);
+        return;
+      }
+      assertTrue(raw.startsWith("HTTP/1.1 413"), raw.substring(0, Math.min(200, raw.length())));
+      assertTrue(raw.contains("上限"), raw);
+    }
   }
 
   private HttpResponse<String> postPicture(String name, byte[] bytes) throws Exception {
