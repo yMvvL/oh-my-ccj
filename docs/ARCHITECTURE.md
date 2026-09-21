@@ -298,7 +298,7 @@ left out and re-derived by `resolved()`.
 | `ContextBudgetTest` | that no projection, at any budget, separates a call from its result |
 | `SessionRepairTest` | that an interrupted history is filled in, in the right place, that a displaced answer is carried back into its turn, and that the file is left alone |
 | `CliEndToEndTest` | CLI → HTTP → SSE → tool → real file on disk, both providers, denial path, exit codes |
-| `WebApiTest` | the HTTP and SSE surface: approval handshake, an outstanding approval surviving a session switch, refusal by session, sessions running side by side, `sessionId` on every event, the tree's running rows |
+| `Web*Test`（9 类，共用 `WebHarness`） | 按主题分开：页面与 SSE 流、审批握手、会话并发、会话与工作区、账本与压缩、设置表单、提供方目录、图片与视觉、跨源与 token。以前是一个 3942 行的 `WebApiTest`——一个类读不完，而「一个下午能读完」是它的卖点之一 |
 | `WebApprovalTest` | that the status carries what a prompt needs and the page rebuilds one from it (the page half runs under node) |
 | `WebReplayTest` | that a long history is split on a turn boundary, filled in during idle time, and that the reader's scroll position is held while it is (the page half runs under node) |
 

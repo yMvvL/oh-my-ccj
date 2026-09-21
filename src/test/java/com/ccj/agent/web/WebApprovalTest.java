@@ -31,9 +31,13 @@ class WebApprovalTest {
   void theStatusCarriesEverythingAPromptNeeds() throws IOException {
     String hub = hubSource();
 
+    // Pending 跟着审批台搬到了 ApprovalDesk.java：那张桌子就在那里，而记录着「谁在问、问什么」的也是
+    // 它，所以这条主张的家跟着它走。它是包内可见的，因为状态快照在隔壁——列出屏幕上这个对话正在等什么，
+    // 正是隔壁那件事。
+    String desk = deskSource();
     assertTrue(
-        hub.contains("private record Pending("),
-        "审批必须记住自己在问什么，而不只是它等待的那个 future");
+        desk.contains("record Pending("),
+        "审批必须记住自己在问什么，而不只是它等待的那个 future：\n" + desk);
     assertTrue(
         hub.contains("pending.title()") && hub.contains("pending.detail()"),
         "而且状态会报告它，否则一个看向别处的页面就没法把提示再画出来：\n" + hub);
@@ -65,9 +69,17 @@ class WebApprovalTest {
 
 
   private static String hubSource() {
-    Path hub = Path.of("src", "main", "java", "com", "ccj", "agent", "web", "AgentHub.java");
+    return source(Path.of("src", "main", "java", "com", "ccj", "agent", "web", "AgentHub.java"));
+  }
+
+  /** 审批台现在住在这里；{@code Pending} 那条主张读的就是它。 */
+  private static String deskSource() {
+    return source(Path.of("src", "main", "java", "com", "ccj", "agent", "web", "ApprovalDesk.java"));
+  }
+
+  private static String source(Path file) {
     try {
-      return Files.exists(hub) ? Files.readString(hub) : "";
+      return Files.exists(file) ? Files.readString(file) : "";
     } catch (IOException err) {
       return "";
     }

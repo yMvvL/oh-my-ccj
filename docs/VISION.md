@@ -84,7 +84,7 @@ vision: { baseUrl, apiKey, apiKeyEnv, model }     // all optional; absent means 
 | 1 | `Config.vision` —— record、文件往返、`--vision-*` 标志与环境变量 | 一个带 `vision` 块的配置文件能往返；没有它时该功能报告自己为关 | **done** —— `VisionConfig`、`Config.merge`/`fromFile`/`fromEnv`/`writeInto`、`--vision-base-url`/`--vision-model`/`--vision-api-key`/`--vision-api-key-env`、`CCJ_VISION_*`，以及 `describe()` 报告 `(off)` |
 | 2 | `VisionClient` —— 一次调用、base64 `data:` URL、有界响应 | 对一个本地 stub 服务器：一张 PNG 发出，文本回来，500 被报告为描述失败而不是崩溃 | **done** —— `provider/VisionClient`，`VisionClientTest` 里六个用例，全部离线 |
 | 3 | `AttachmentStore` —— 存到会话目录下、嗅探类型、拒绝它无法识别的东西 | 一张真实 PNG/JPEG 能往返；一个名叫 `.png` 的文本文件被拒绝；一个 9 MB 的请求体在被读取之前就被拒绝 | **done** —— `session/AttachmentStore`，十二个用例；删除一个会话会删掉它的图片 |
-| 4 | `POST /api/attachment` + `describe` 步骤，接进输入框 | 从浏览器：选一张图片，看到它被描述、挂在输入框上等着，然后随下一句话一起发出去 | **done** —— `AgentHub.describePicture`、该端点、输入框的图片按钮（相机 / 相册两个来源）；`WebApiTest` 里对着 stub 视觉端点跑八个用例 |
+| 4 | `POST /api/attachment` + `describe` 步骤，接进输入框 | 从浏览器：选一张图片，看到它被描述、挂在输入框上等着，然后随下一句话一起发出去 | **done** —— `AgentHub.describePicture`、该端点、输入框的图片按钮（相机 / 相册两个来源）；`WebPictureVisionTest`（拆分前叫 `WebApiTest`）里对着 stub 视觉端点跑八个用例 |
 | 4b | 描述与发送分开 | 描述不再自己开启回合：模型醒来时同时拿着图片里有什么和用户的要求 | **done** —— 见下面的「用起来之后的修正」 |
 | 5 | 手机：手机宽度下的 CSS、选择器按钮、`capture` | 页面在 390×844 下可用；在有真手机时按钮打开图库或相机 | **done，但刻意不带 `capture`** —— 见*两个做了不同决定的地方* |
 | 6 | 文档：README 行、`docs/WEBUI.md`、安全一节 | 上限、存放位置以及什么离开本机都写下来 | **done** —— README 的功能/环境变量/限制各行、`WEBUI.md` 的「图片」一节、`SECURITY.md` 的两处清单 |
@@ -118,7 +118,7 @@ vision: { baseUrl, apiKey, apiKeyEnv, model }     // all optional; absent means 
 ## 验证了什么，以及没有验证什么
 
 - 整套测试是绿的：**549 个测试，0 个失败，0 个跳过**（`./mvnw -o test`，node 在，所以浏览器用例跑了而不是被跳过）。
-- 端到端路径在 `WebApiTest` 里通过真实服务器被走到：一张真实 PNG 经 HTTP 发到 `/api/attachment`，回环上一个 stub 视觉端点收到 `data:` URL 和提示里的护栏，描述出现在响应里、`status` 里和 `picture` 事件里，**而转录里什么都没有**（没有 `user` 事件，没有模型请求）；随后 `POST /api/message` 把它和一句话拼成*一条*消息并开启回合，图片在磁盘上的 `<id>.attachments/` 下，而每一种拒绝（不是图片、超过上限、没有视觉模型、点名一张并不持有的图片）都能证明视觉端点没被调用、或者什么都没发出去。
+- 端到端路径在 `WebPictureVisionTest` 里通过真实服务器被走到：一张真实 PNG 经 HTTP 发到 `/api/attachment`，回环上一个 stub 视觉端点收到 `data:` URL 和提示里的护栏，描述出现在响应里、`status` 里和 `picture` 事件里，**而转录里什么都没有**（没有 `user` 事件，没有模型请求）；随后 `POST /api/message` 把它和一句话拼成*一条*消息并开启回合，图片在磁盘上的 `<id>.attachments/` 下，而每一种拒绝（不是图片、超过上限、没有视觉模型、点名一张并不持有的图片）都能证明视觉端点没被调用、或者什么都没发出去。
 - 设计引用的那些测量——一张 2.1 MB 的 PNG 产生 2.9 MB 的请求体、`max_tokens` 给 100 时返回空、`image_tokens` 在一次显然看到了图像的调用上读出 `0`——来自写这份文档的那次会话，对着已经配置好的中继。
 - **这个预算需要第二次测量，而本文档的第一个数字是错的。** 1500 对设计所针对的那张图够用，对一张内容繁多的页面的手机截图不够，而整个功能存在的理由正是后一种情况。用同样形状的手机截图（390×844，长文章）对同一个中继测得：1500 时 → `finish_reason: length`，1500 个 token 全花在推理上，`content` 为空；4096 时 → `stop`，用了 2882 个 token，2225 个字符的描述；8192 时 → `stop`，1084 个 token，2419 个字符。默认值现在是 8192，而失败从回复本身诊断（`finish_reason`、推理 token），所以消息会说是哪个设置修好它，而不是打印一墙 JSON。上限不是花费，所以宽裕的默认值几乎免费；`vision.maxTokens`、`--vision-max-tokens` 和 `CCJ_VISION_MAX_TOKENS` 是为那些它不够、或者太多的端点准备的。
 - **这里没有验证：** 选择器在真手机上的行为（没有涉及任何手机；上面关于 `capture` 的决定是从平台行为推理出来的，不是测量），以及真实视觉端点而不是 stub——按约定测试套件是离线的，所以任何测试都不使用 API 密钥。

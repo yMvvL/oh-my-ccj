@@ -23,8 +23,8 @@ sandbox: the approval prompt is the only guard, and `--yolo` removes it.
 ---
 
 从零开始用纯 Java 21 写成的编码代理运行时。没有代理框架，没有 HTTP 客户端库，没有 CLI 库——传输用
-`java.net.http`，Web UI 和测试替身用 `com.sun.net.httpserver`——22.5k 行 Java 加一个 8.8k 行的原生页面，
-旁边还有 21.3k 行测试（其中 2.5k 行跑在真 node 里，包括一个真浏览器）。
+`java.net.http`，Web UI 和测试替身用 `com.sun.net.httpserver`——22.7k 行 Java 加一个 8.8k 行的原生页面，
+旁边还有 21.7k 行测试（其中 2.5k 行跑在真 node 里，包括一个真浏览器）。
 
 `ccj` 与模型流式地对话，让模型调用能触碰你文件系统的工具，把结果回喂给它，如此重复直到模型给出回答。
 它是每个编码代理都围绕的那个循环的一个小巧、可读的实现。
@@ -528,7 +528,7 @@ core/      Message, Provider, Tool, ToolRegistry, AgentLoop, Session, Config, Ap
 ```bash
 ./mvnw test                               # the whole suite: no network, no API key
 mvn -Dtest=CliEndToEndTest test           # end-to-end through the CLI only
-mvn -Dtest=WebApiTest test                # HTTP + SSE + approval handshake only
+mvn -Dtest='Web*Test' test                # HTTP + SSE + approval handshake only
 mvn -DskipTests package                   # fat jar
 ```
 
@@ -539,7 +539,7 @@ mvn -DskipTests package                   # fat jar
 | 包 | 类 | 测试数 | 覆盖 |
 |---|---|---|---|
 | `core` | 15 | 179 | 循环、工具调用与只读重叠、中止、上下文预算与 token 估算、压缩与恢复、审批规则与它们的拒绝、子代理与它的账本、配置的合并与遮蔽、提示词（项目自己的 `CCJ.md` 领起） |
-| `web` | 16 | 190 | HTTP 路由、SSE 与重连、审批熬过会话切换、按会话拒绝、并行对话、token 闸门与 `Host` 守卫、跨源、检查点退回、图片流程、设置表单、**账本等于账本之外的**、以及九个在 node 下跑的页面用例（其中一个是真浏览器） |
+| `web` | 24 | 192 | 按主题分成九个类、共用一个夹具：页面与 SSE 流、审批握手、会话并发、会话与工作区、账本与压缩、设置表单、提供方目录、图片与视觉、跨源与 token 与 `Host`。另有九个在 node 下跑的页面用例（其中一个是真浏览器）。这里曾经是一个 3942 行的 `WebApiTest` |
 | `tool` | 11 | 106 | 匹配与截断、超时与取消、拒绝路径、`edit` 的多块与失败邻域、`fetch` 的 scheme 与体积、`restart` 及它的拒绝、**可配置的 shell 与它的参数形状** |
 | `provider` | 9 | 112 | SSE 解析、**四种线上映射**（chat-completions、messages、Responses、Gemini）、重试、自定义提供方、effort 档位、视觉客户端、模型目录 |
 | `session` | 6 | 76 | 编解码往返（含 thinking）、追加与重开、列表缓存、世代文件、附件与检查点 |
@@ -550,7 +550,7 @@ mvn -DskipTests package                   # fat jar
 | `demo` | 1 | 8 | 没有模型时的工具路由、工具调用、错误路径 |
 | `docs` | 1 | 2 | README 的用法一段逐字等于 `--help`；工具表的名字、顺序与参数与每个工具的 schema 一致 |
 
-合计 **742 个测试，64 个类**。这张表按包从 surefire 报告里数出来，而不是手写的清单——手写过的那一版
+合计 **743 个测试，72 个类**。这张表按包从 surefire 报告里数出来，而不是手写的清单——手写过的那一版
 漂到了实际数字的一半左右。用法表与工具表现在由 `docs` 包里的那个测试守着（3.3 用的是「机器比对」而不是
 「生成」）。
 

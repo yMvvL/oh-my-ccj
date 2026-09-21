@@ -449,7 +449,7 @@ public final class HttpApi implements AutoCloseable {
       error(exchange, 400, "字段 'id' 是必需的");
       return;
     }
-    if (!hub.resolveApproval(id, AgentHub.answerOf(allow, remember, answer))) {
+    if (!hub.resolveApproval(id, ApprovalDesk.answerOf(allow, remember, answer))) {
       error(exchange, 404, "没有 id 为 " + id + " 的待处理审批");
       return;
     }
@@ -693,12 +693,12 @@ public final class HttpApi implements AutoCloseable {
     OutputStream out = exchange.getResponseBody();
     long lastEventId = lastEventId(exchange);
     SseClient client = new SseClient(out, lastEventId);
-    List<AgentHub.Event> missed = hub.subscribe(client);
+    List<EventStream.Event> missed = hub.subscribe(client);
     try {
       // 重放缓冲区只为一个目的存在：补上重连的页面错过的那段空白。全新的连接没有空白——它从
       // /api/history 取得对话，所以在这里重放缓冲区会把每个近期事件渲染第二遍。
       if (lastEventId > 0) {
-        for (AgentHub.Event event : missed) {
+        for (EventStream.Event event : missed) {
           if (event.id() > client.lastSent()) {
             client.send(event);
           }
@@ -709,7 +709,7 @@ public final class HttpApi implements AutoCloseable {
       // 这条线程在流的整个生命期里独占这个 socket：它写队列里的东西，队列一直空着时就发心跳。这里从没有
       // 别的写入者，正因如此，一个停止读取的浏览器阻塞不了发布事件的人。
       while (!client.closed()) {
-        AgentHub.Event event = client.take(HEARTBEAT_MILLIS);
+        EventStream.Event event = client.take(HEARTBEAT_MILLIS);
         if (client.closed()) {
           break;
         }
@@ -718,7 +718,7 @@ public final class HttpApi implements AutoCloseable {
           continue;
         }
         client.send(event);
-        for (AgentHub.Event queued = client.poll(); queued != null; queued = client.poll()) {
+        for (EventStream.Event queued = client.poll(); queued != null; queued = client.poll()) {
           client.send(queued);
         }
       }
@@ -753,13 +753,13 @@ public final class HttpApi implements AutoCloseable {
    * <p>那个队列是有意设有上界的：一个可能再也回不来的客户端，不能让它无限地长堆。溢出的客户端被丢弃，页面
    * 会重连并从 {@code /api/history} 重读历史——反正它每次断开后都会这么做。
    */
-  private static final class SseClient implements Consumer<AgentHub.Event> {
+  private static final class SseClient implements Consumer<EventStream.Event> {
 
     /** 一个慢客户端在被丢弃之前可以落后多少条事件。 */
     private static final int QUEUE_LIMIT = 4096;
 
     private final OutputStream out;
-    private final BlockingQueue<AgentHub.Event> pending = new ArrayBlockingQueue<>(QUEUE_LIMIT);
+    private final BlockingQueue<EventStream.Event> pending = new ArrayBlockingQueue<>(QUEUE_LIMIT);
     private volatile Thread reader;
     private volatile boolean closed;
     private long lastSent;
@@ -771,7 +771,7 @@ public final class HttpApi implements AutoCloseable {
 
     /** 在发布线程上调用：这里从不阻塞，也从不写入。 */
     @Override
-    public void accept(AgentHub.Event event) {
+    public void accept(EventStream.Event event) {
       if (closed) {
         return;
       }
@@ -787,7 +787,7 @@ public final class HttpApi implements AutoCloseable {
     }
 
     /** 等下一个事件，或等 {@code timeoutMillis} 过去而没有什么可发。 */
-    AgentHub.Event take(long timeoutMillis) throws InterruptedException {
+    EventStream.Event take(long timeoutMillis) throws InterruptedException {
       reader = Thread.currentThread();
       try {
         return pending.poll(timeoutMillis, TimeUnit.MILLISECONDS);
@@ -797,11 +797,11 @@ public final class HttpApi implements AutoCloseable {
     }
 
     /** 已经排在队列里的其余东西，不等待。 */
-    AgentHub.Event poll() {
+    EventStream.Event poll() {
       return pending.poll();
     }
 
-    void send(AgentHub.Event event) {
+    void send(EventStream.Event event) {
       write(
           "id: "
               + event.id()

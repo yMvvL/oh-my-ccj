@@ -4,13 +4,10 @@ import com.ccj.agent.core.AgentListener;
 import com.ccj.agent.core.AgentLoop;
 import com.ccj.agent.core.AgentOptions;
 import com.ccj.agent.core.ApprovalAnswer;
-import com.ccj.agent.core.ApprovalRequest;
 import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Approver;
-import com.ccj.agent.core.RuleApprover;
 import com.ccj.agent.core.SpendLimit;
 import com.ccj.agent.core.Compaction;
-import com.ccj.agent.core.Checks;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
 import com.ccj.agent.core.SubAgentRunner;
@@ -41,41 +38,29 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
  * 拥有浏览器无法拥有的东西：会话、正在跑的回合、回合被卡住时所等的审批，以及回合要去的模型。
  *
- * <p>有意做成无头的——它发布 {@link Event}，对 HTTP 一无所知，所以同一个对象也可以支撑一个 websocket
- * 或一个测试。
+ * <p>有意做成无头的——它发布 {@link EventStream.Event}，对 HTTP 一无所知，所以同一个对象也可以支撑一个
+ * websocket 或一个测试。
  *
  * <p>每个回合都属于一个对话，并在那个对话自己的槽位里运行，所以可以有好几个同时在飞：一个会话里的长任务
  * 不是用户不能在另一个会话里开始工作的理由。一次只接一个回合的单位是会话——<em>同一个</em>对话里的第二条
@@ -86,29 +71,6 @@ import java.util.function.Consumer;
  * {@link #applyConfig} 会在有任何东西写进磁盘之前校验并装好新的提供方。
  */
 public final class AgentHub implements AutoCloseable {
-
-  /** 重连的浏览器可以重放多少条事件。 */
-  private static final int REPLAY_LIMIT = 500;
-
-  /**
-   * 一次工具调用在拒绝之前等人类多久。超时就拒绝：与 CLI 在 stdin 不是终端时采用的同一条「失败即关闭」
-   * 的规则。
-   */
-  /**
-   * 一个审批在替用户作答之前要等多久。
-   *
-   * <p>{@code 0} 意味着「一直等到有人作答」——这是默认值，也是诚实的那个：请求许可就是向一个人提一个
-   * 问题，而会过期的问题是从未真正被问过的问题。用旧的 120 秒上限实测过：一个在等一条从未到达页面的审批的
-   * 回合，被计时器结束、工作被丢下，而用户屏幕上显示的是一个早已被撤回的提示——两头都糟，因为它看起来像
-   * 工具里的一个 bug，而不是一个没被回答的问题。
-   *
-   * <p>无限等下去是安全的，而不是死锁，因为有两条不依赖计时器的出路：中止对话会用「否」回答待处理的审批
-   * （见 {@code Conversation.abort}），而重新加载的页面会从它进来时索要的状态里重建提示。另一种做法
-   * ——计时器——会把第一条出路弄坏，因为它把「还没有人作答」变成了「没有人作答」。
-   *
-   * <p>设了数字时仍然尊重它，给想要回合失败而不是挂起的调用方：测试会设它，无人值守的运行也可以。
-   */
-  private static final long APPROVAL_TIMEOUT_SECONDS = 0;
 
   /** 一个回合运行期间，一个对话最多可以积压多少条消息。见 Conversation.queued。 */
   private static final int MAX_QUEUED_MESSAGES = 16;
@@ -168,14 +130,6 @@ public final class AgentHub implements AutoCloseable {
     }
   }
 
-  /**
-   * 发生过的一件事，按线上格式塑形。
-   *
-   * <p>{@code sessionId} 属于事件而不是连接，是因为一条流承载服务器上的每一个对话：在回合并行运行的
-   * 时候，一个不点名自己会话的事件会被渲染进当时碰巧打开的那份转录里。
-   */
-  public record Event(long id, String type, String sessionId, ObjectNode payload) {}
-
   private static final DateTimeFormatter TIMESTAMP =
       DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(ZoneId.systemDefault());
 
@@ -194,18 +148,10 @@ public final class AgentHub implements AutoCloseable {
   /** 每个正在跑的回合一个：干着活的会话拿到自己的线程，而不是服务器的线程。 */
   private final ExecutorService turns = Executors.newVirtualThreadPerTaskExecutor();
 
-  private final List<Consumer<Event>> subscribers = new CopyOnWriteArrayList<>();
-  private final Deque<Event> replay = new ArrayDeque<>();
-  private final AtomicLong nextEventId = new AtomicLong();
-  private final AtomicInteger nextApprovalId = new AtomicInteger();
-  /**
-   * 在等人类的审批，按它们的 id 键存放。
-   *
-   * <p>是整个服务器一份，而不是每个对话一份：审批按 id 作答，来自任何一个注意到它的页面，而一个在后台
-   * 回合里需要人类的请求，正是这件事绝不能弄错的情形。
-   */
-  private final Map<String, Pending> pendingApprovals = new ConcurrentHashMap<>();
-  private final AtomicBoolean autoApprove = new AtomicBoolean();
+  /** 事件扇出：谁在听、重连可以重放哪一段、每条事件拿到哪个序号。 */
+  private final EventStream events = new EventStream();
+  /** 审批台：谁在等人类，以及一个请求能等多久。 */
+  private final ApprovalDesk approvals;
   private final AtomicReference<Provider> provider = new AtomicReference<>();
 
   /**
@@ -244,7 +190,15 @@ public final class AgentHub implements AutoCloseable {
     this.checkpoints = com.ccj.agent.session.CheckpointStore.recording();
     this.settings = settings;
     this.session = session;
-    this.autoApprove.set(settings.autoApprove());
+    // 审批台拿到的全是回调，而不是本对象的引用：规则来自设置那一刻装上的那个字段，状态由这里发布，
+    // 审批按 id 作答，而它该归到哪个会话只有本类说得出来（见 currentTurnSession）。
+    this.approvals =
+        new ApprovalDesk(
+            settings.autoApprove(),
+            () -> approvalRules,
+            this::publishStatus,
+            events::publish,
+            this::currentTurnSession);
     this.subAgents.set(settings.subAgents());
     this.folderChooser =
         settings.folderChooser() == null ? new NativeFolderChooser() : settings.folderChooser();
@@ -310,7 +264,7 @@ public final class AgentHub implements AutoCloseable {
         "path", activeWorkspace == null ? "" : activeWorkspace.path().toString());
     node.put("sessionId", current == null ? "" : current.id());
     node.put("messageCount", current == null ? 0 : current.messages().size());
-    node.put("autoApprove", autoApprove.get());
+    node.put("autoApprove", approvals.autoApprove());
     // 上限是用户设的，不是推测的；null 表示没设。页面用它把「用了多少」变成「用了多少 / 上限多少」。
     if (config.maxTotalTokens() == null) {
       node.putNull("maxTotalTokens");
@@ -347,8 +301,8 @@ public final class AgentHub implements AutoCloseable {
     // 不列出来的话，看一眼别的对话再回来就会丢掉提示，只剩中止这一条出路。
     ArrayNode waiting = node.putArray("approvals");
     String shownId = current == null ? "" : current.id();
-    for (Map.Entry<String, Pending> entry : pendingApprovals.entrySet()) {
-      Pending pending = entry.getValue();
+    for (Map.Entry<String, ApprovalDesk.Pending> entry : approvals.pending().entrySet()) {
+      ApprovalDesk.Pending pending = entry.getValue();
       if (!pending.sessionId().equals(shownId)) {
         continue;
       }
@@ -1109,7 +1063,12 @@ public final class AgentHub implements AutoCloseable {
     return posted.path("clearVision").asBoolean(false) ? edited.withoutVision() : edited;
   }
 
-  private static String text(JsonNode node, String field) {
+  /**
+   * 表单字段的读法：空文本与缺失一样，都表示「没有这个字段」。
+   *
+   * <p>包内可见，因为 {@link SettingsFiles#applyRules} 读 tool/command/path 时用的也是同一条规则。
+   */
+  static String text(JsonNode node, String field) {
     JsonNode value = node.get(field);
     if (value == null || value.isNull()) {
       return null;
@@ -1762,7 +1721,7 @@ public final class AgentHub implements AutoCloseable {
             active.reasoning(),
             active.maxContextTokens());
     ToolContext context =
-        new ToolContext(conversation.cwd(), gate(), active.outputLimitBytes());
+        new ToolContext(conversation.cwd(), approvals.gate(), active.outputLimitBytes());
     return new AgentLoop(
         current,
         registryFor(conversation, current, options, active),
@@ -1796,7 +1755,7 @@ public final class AgentHub implements AutoCloseable {
             active.outputLimitBytes(),
             // 这个对话自己的审批人，这样子代理的许可请求会出现在用户已经在看的转录里。它在本回合的线程
             // 上运行，所以 `currentTurnSession` 会把它归到这里，而中止这个回合就会回答它。
-            gate());
+            approvals.gate());
     ToolRegistry registry = new ToolRegistry();
     for (String name : tools.names()) {
       tools.find(name).ifPresent(registry::register);
@@ -2002,68 +1961,17 @@ public final class AgentHub implements AutoCloseable {
 
   // ------------------------------------------------------------------ approvals
 
-  /**
-   * 回答一个待处理的审批。id 未知或已经回答过时返回 false。
-   *
-   * <p>{@code remember} 过去的意思是「把整个会话切成自动审批」，在一个布尔关口下它也只能是这个意思：
-   * 对「别再问我这个了」的回答变成了「别再问我任何事了」。它现在的意思就是那个人在按钮上读到的——这个
-   * 请求，在本会话余下的时间里——而「永远别再问」该去的地方是规则文件。
-   */
+  /** 见 {@link ApprovalDesk#resolveApproval}。 */
   public boolean resolveApproval(String id, ApprovalAnswer answer) {
-    Pending pending = id == null ? null : pendingApprovals.get(id);
-    if (pending == null || answer == null) {
-      return false;
-    }
-    return pending.answer().complete(answer);
+    return approvals.resolveApproval(id, answer);
   }
-
-  /** 页面提交上来的回答，仍然理解更老的那两个布尔字段。 */
-  static ApprovalAnswer answerOf(boolean allow, boolean remember, String posted) {
-    if (posted != null && !posted.isBlank()) {
-      return switch (posted.strip().toLowerCase(java.util.Locale.ROOT)) {
-        case "session" -> ApprovalAnswer.ALLOW_SESSION;
-        case "always" -> ApprovalAnswer.ALLOW_ALWAYS;
-        case "never" -> ApprovalAnswer.DENY_ALWAYS;
-        case "allow", "once", "yes" -> ApprovalAnswer.ALLOW_ONCE;
-        case "deny", "no" -> ApprovalAnswer.DENY;
-        default -> throw new IllegalArgumentException(
-            "未知的审批回答 '" + posted + "'；请使用 deny、never、once、session 或 always");
-      };
-    }
-    if (!allow) {
-      return ApprovalAnswer.DENY;
-    }
-    return remember ? ApprovalAnswer.ALLOW_SESSION : ApprovalAnswer.ALLOW_ONCE;
-  }
-
-  /**
-   * 一个回合被卡住时所等的一个审批，以及发问的会话。
-   *
-   * <p>会话被保留下来，是因为中止必须能够拒绝一个对话自己的请求：没有它，一个在等人类的回合永远没法被
-   * 停下，而一个用户没在看的后台回合会一直坐到超时，毫无出路。
-   */
-  /**
-   * 一个回合被卡住时所等的一个审批：谁在问、问什么，以及它在等哪个回答。
-   *
-   * <p>标题和详情都被保留，不只是那个 future，因为提示必须能被重新画出来。审批是阻塞在内存里的请求
-   * 而不是消息，所以一个切走又切回来的页面没法从对话里重建它——它上报还悬着什么，由页面把它画出来。
-   * 没有这一条，看一眼别的对话就会把问题悄悄扔掉，只剩中止这一条出路。
-   */
-  private record Pending(
-      String sessionId,
-      String title,
-      String detail,
-      ApprovalRequest request,
-      CompletableFuture<ApprovalAnswer> answer) {}
 
   public boolean autoApprove() {
-    return autoApprove.get();
+    return approvals.autoApprove();
   }
 
   public void setAutoApprove(boolean enabled) {
-    if (autoApprove.getAndSet(enabled) != enabled) {
-      publishStatus();
-    }
+    approvals.setAutoApprove(enabled);
   }
 
   public boolean subAgents() {
@@ -2073,63 +1981,6 @@ public final class AgentHub implements AutoCloseable {
   public void setSubAgents(boolean enabled) {
     if (subAgents.getAndSet(enabled) != enabled) {
       publishStatus();
-    }
-  }
-
-  /**
-   * 阻塞循环线程，直到浏览器作答。在调用内部发布，是让代理的请求可见的原因；超时返回 false，是让它不
-   * 至于永远等下去的原因。
-   */
-  private ApprovalAnswer askApproval(ApprovalRequest request) {
-    if (autoApprove.get()) {
-      return ApprovalAnswer.ALLOW_ONCE;
-    }
-    String sessionId = currentTurnSession();
-    String id = "ap-" + nextApprovalId.incrementAndGet();
-    CompletableFuture<ApprovalAnswer> answer = new CompletableFuture<>();
-    pendingApprovals.put(id, new Pending(sessionId, request.title(), request.detail(), request, answer));
-    // 还要发一个状态，这样一个没在看这个对话的页面也能知道有东西在等——而一个*正在*看它的页面，能从它
-    // 进来时索要的状态里重建提示。
-    publishStatus();
-    publish(
-        sessionId,
-        "approval",
-        Json.object()
-            .put("id", id)
-            .put("title", request.title())
-            .put("detail", request.detail())
-            .put("tool", request.tool())
-            .put("command", request.command())
-            .put("path", request.path() == null ? null : request.path().toString())
-            .put("sessionId", sessionId));
-    try {
-      ApprovalAnswer answered =
-          APPROVAL_TIMEOUT_SECONDS <= 0
-              // 没有截止时间：问题一直立着，直到有人作答，或者直到回合被中止——那会从另一边回答它。
-              ? answer.get()
-              : answer.get(APPROVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-      publish(
-          sessionId,
-          "approval-closed",
-          Json.object()
-              .put("id", id)
-              .put("allow", answered.allowed())
-              // 它是四个回答里的哪一个：重新渲染转录的页面会说「本会话内允许」，而不是从一个布尔值去猜。
-              .put("answer", answered.name().toLowerCase(java.util.Locale.ROOT)));
-      return answered;
-    } catch (TimeoutException e) {
-      publish(
-          sessionId,
-          "approval-closed",
-          Json.object().put("id", id).put("allow", false).put("reason", "timeout"));
-      return ApprovalAnswer.DENY;
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      return ApprovalAnswer.DENY;
-    } catch (ExecutionException e) {
-      return ApprovalAnswer.DENY;
-    } finally {
-      pendingApprovals.remove(id);
     }
   }
 
@@ -2156,46 +2007,22 @@ public final class AgentHub implements AutoCloseable {
 
   // ------------------------------------------------------------------ events
 
-  /**
-   * 注册一个订阅者并在同一个原子步骤里交回它错过的事件——否则在「读重放缓冲区」和「开始监听」之间发布
-   * 的事件会丢掉。
-   */
-  public List<Event> subscribe(Consumer<Event> subscriber) {
-    synchronized (replay) {
-      subscribers.add(subscriber);
-      return List.copyOf(replay);
-    }
+  /** 见 {@link EventStream#subscribe}。 */
+  public List<EventStream.Event> subscribe(Consumer<EventStream.Event> subscriber) {
+    return events.subscribe(subscriber);
   }
 
-  public void unsubscribe(Consumer<Event> subscriber) {
-    synchronized (replay) {
-      subscribers.remove(subscriber);
-    }
+  /** 见 {@link EventStream#unsubscribe}。 */
+  public void unsubscribe(Consumer<EventStream.Event> subscriber) {
+    events.unsubscribe(subscriber);
   }
 
   private void publish(String type, ObjectNode payload) {
-    publish("", type, payload);
+    events.publish(type, payload);
   }
 
   private void publish(String sessionId, String type, ObjectNode payload) {
-    ObjectNode node = payload == null ? Json.object() : payload;
-    node.put("type", type);
-    // 已经点名自己会话的载荷保留它——状态是*关于*某个对话的，构建时就拿着那个 id。只有什么都不说的
-    // 载荷才会拿到传进来的 id，所以空的那个仍然是「这是关于服务器的」，而不是「这是关于会话 '' 的」。
-    if (!node.has("sessionId")) {
-      node.put("sessionId", sessionId == null ? "" : sessionId);
-    }
-    Event event =
-        new Event(nextEventId.incrementAndGet(), type, node.path("sessionId").asText(), node);
-    synchronized (replay) {
-      replay.addLast(event);
-      while (replay.size() > REPLAY_LIMIT) {
-        replay.removeFirst();
-      }
-      for (Consumer<Event> subscriber : subscribers) {
-        subscriber.accept(event);
-      }
-    }
+    events.publish(sessionId, type, payload);
   }
 
   private static String sessionIdOf(FileSession session) {
@@ -2232,10 +2059,7 @@ public final class AgentHub implements AutoCloseable {
   @Override
   public void close() {
     closed = true;
-    for (Pending waiting : pendingApprovals.values()) {
-      waiting.answer().complete(ApprovalAnswer.DENY);
-    }
-    pendingApprovals.clear();
+    approvals.denyAll();
     turns.shutdownNow();
     Provider current = provider.getAndSet(null);
     if (current != null) {
@@ -2406,13 +2230,8 @@ public final class AgentHub implements AutoCloseable {
       if (running == null) {
         return false;
       }
-      // 一个在等人类的回合，是靠回答那个问题来停下的：光有标志会让它一直阻塞到审批超时，那不是用户所想
-      // 的任何意义上的「停下」。
-      for (Map.Entry<String, Pending> entry : pendingApprovals.entrySet()) {
-        if (id.equals(entry.getValue().sessionId())) {
-          entry.getValue().answer().complete(ApprovalAnswer.DENY);
-        }
-      }
+      // 在等人类的那个回合是靠回答那个问题被停下的，理由见 ApprovalDesk.denySession。
+      approvals.denySession(id);
       running.abort();
       return true;
     }
@@ -2525,9 +2344,9 @@ public final class AgentHub implements AutoCloseable {
     }
   }
 
-  /** 留给想在无浏览器的情况下断言审批契约的测试。 */
+  /** 见 {@link ApprovalDesk#approver}。 */
   public Approver approver() {
-    return this::askApproval;
+    return approvals.approver();
   }
 
   /**
@@ -2582,226 +2401,24 @@ public final class AgentHub implements AutoCloseable {
 
   // ------------------------------------------------- approvals and post-edit checks
 
-  /**
-   * 设置面板需要的审批规则：哪一个项目、哪些条，以及它们的读法。
-   *
-   * <p>{@code describe} 是 {@link ApprovalRules#describe()} 的原文，面板把它直接印出来——规则的读法只有
-   * 一处，面板不再造第二种说法。它与 {@code rules} 同序：先拒绝、再允许，本会话内的放行排在最后（它们不在
-   * 文件里，因此也不在 {@code rules} 里）。
-   */
+  /** 见 {@link SettingsFiles#rulesJson}。 */
   public ObjectNode rulesJson() {
-    ApprovalRules rules = approvalRules;
-    ObjectNode node = Json.object();
-    if (rules == null) {
-      // 没有接上规则文件的 hub：如实说没有，而不是编一个路径出来。
-      node.putNull("file");
-      node.put("project", cwd().toString());
-      node.putArray("rules");
-      node.putArray("describe");
-      return node;
-    }
-    node.put("file", rules.file().toString());
-    node.put("project", rules.project().toString());
-    ArrayNode list = node.putArray("rules");
-    rules.deny().forEach(rule -> list.add(ruleJson(rule, "deny")));
-    rules.allow().forEach(rule -> list.add(ruleJson(rule, "allow")));
-    ArrayNode describe = node.putArray("describe");
-    rules.describe().forEach(describe::add);
-    return node;
+    return SettingsFiles.rulesJson(approvalRules, cwd());
   }
 
-  private static ObjectNode ruleJson(ApprovalRules.Rule rule, String effect) {
-    ObjectNode node = Json.object();
-    node.put("effect", effect);
-    node.put("tool", rule.tool());
-    if (rule.command() == null) {
-      node.putNull("command");
-    } else {
-      node.put("command", rule.command());
-    }
-    if (rule.path() == null) {
-      node.putNull("path");
-    } else {
-      node.put("path", rule.path());
-    }
-    return node;
-  }
-
-  /**
-   * 加一条或删一条审批规则，走 {@link ApprovalRules} 自己那条写入路径，所以面板写出来的文件与手编的完全
-   * 一样。
-   *
-   * <p>改动立刻生效：规则每次工具调用都从文件里读，而这里写的就是那个文件。所以写完之后把同一个文件重新打开
-   * 并设回去——一个没有生效的删除，比一个不能编辑的规则文件更糟。
-   */
+  /** 见 {@link SettingsFiles#applyRules}。 */
   public ObjectNode applyRules(JsonNode posted) {
-    ApprovalRules rules = approvalRules;
-    if (rules == null) {
-      throw new IllegalArgumentException("这个服务器没有接上审批规则文件，所以规则改不了");
-    }
-    if (posted == null || !posted.isObject()) {
-      throw new IllegalArgumentException("需要一个 JSON 对象");
-    }
-    String effect = posted.path("effect").asText("");
-    boolean deny;
-    if ("deny".equals(effect)) {
-      deny = true;
-    } else if ("allow".equals(effect)) {
-      deny = false;
-    } else {
-      throw new IllegalArgumentException("effect 必须是 'allow' 或 'deny'");
-    }
-    String tool = text(posted, "tool");
-    if (tool == null) {
-      throw new IllegalArgumentException("字段 'tool' 是必需的：一条规则必须点名它拦住的工具");
-    }
-    ApprovalRules.Rule rule =
-        new ApprovalRules.Rule(tool, text(posted, "command"), text(posted, "path"));
-    switch (posted.path("action").asText("")) {
-      case "add" -> rules.remember(deny, rule);
-      case "remove" -> {
-        if (!rules.forget(deny, rule)) {
-          throw new IllegalArgumentException(
-              "这条规则已经不在文件里了——它可能已被另一次改动删掉；列表已重新读取，请看着它再删一次");
-        }
-      }
-      default -> throw new IllegalArgumentException("action 必须是 'add' 或 'remove'");
-    }
-    // **不**重开一份实例：判定每次调用都重读那个文件（`deny()`/`allow()` 里就是 `read()`），所以刚写下的
-    // 规则下一次工具调用就会被看到，而重开会把同一个实例里那个「本会话内放行」的清单丢掉——面板上保存一条
-    // 规则，于是变成了把本次会话已经答过的所有事情再问一遍。
-    return rulesJson();
+    return SettingsFiles.applyRules(posted, approvalRules, cwd());
   }
 
-  /**
-   * 设置面板需要的编辑后检查，以及它们所在的那个文件。
-   *
-   * <p>{@code timeoutSeconds} 一并回传，是因为 POST 是整份替换：面板得先看见一个检查的全部内容，才能在
-   * 重写那一份时把它原样带回去。丢掉的字段会在下一次编辑时悄悄变成默认值。
-   */
+  /** 见 {@link SettingsFiles#checksJson}。 */
   public ObjectNode checksJson() {
-    Path file = settings.configFile();
-    ObjectNode node = Json.object();
-    if (file == null) {
-      node.putNull("file");
-      node.putArray("checks");
-      return node;
-    }
-    node.put("file", file.toString());
-    ArrayNode list = node.putArray("checks");
-    for (Checks.Check check : Checks.from(file).declared()) {
-      ObjectNode entry = list.addObject();
-      entry.put("glob", check.glob());
-      entry.put("command", check.command());
-      entry.put("timeoutSeconds", check.timeoutSeconds());
-    }
-    return node;
+    return SettingsFiles.checksJson(settings.configFile());
   }
 
-  /**
-   * 整份替换配置文件里的 {@code checks} 键，其他键一个都不动。
-   *
-   * <p>校验用的是 {@link Checks} 自己的解析，所以面板上看到的那句话与工具运行时报告的那句话是同一句。它只认
-   * 文件，错误消息里也要指名真正的配置文件，所以这里是先写进去再读回来自检：不合法就原样放回去——配置文件
-   * 绝不能因为一次被拒绝的保存而变得读不出来。
-   */
+  /** 见 {@link SettingsFiles#applyChecks}。 */
   public ObjectNode applyChecks(JsonNode posted) {
-    Path file = settings.configFile();
-    if (file == null) {
-      throw new IllegalArgumentException("这个服务器没有配置文件，所以检查改不了");
-    }
-    JsonNode block = posted == null || !posted.isObject() ? null : posted.get("checks");
-    if (block == null) {
-      throw new IllegalArgumentException(
-          "需要一个 'checks' 数组：正文形如 {\"checks\": [{\"glob\": \"**/*.java\", \"command\":"
-              + " \"mvn -q -o -DskipTests compile\"}]}");
-    }
-    JsonNode root;
-    try {
-      root = Files.isRegularFile(file) ? Json.parse(Files.readString(file)) : Json.object();
-    } catch (IOException e) {
-      throw new UncheckedIOException("无法读取 " + file, e);
-    }
-    if (!root.isObject()) {
-      throw new IllegalArgumentException("配置文件 " + file + " 必须包含一个 JSON 对象");
-    }
-    ObjectNode updated = (ObjectNode) root;
-    if (block.isNull() || (block.isArray() && block.isEmpty())) {
-      updated.remove("checks");
-    } else {
-      updated.set("checks", block);
-    }
-    byte[] before = readOrNull(file);
-    writeConfig(file, updated);
-    try {
-      Checks.from(file).declared();
-    } catch (RuntimeException e) {
-      restore(file, before);
-      throw e;
-    }
-    return checksJson();
-  }
-
-  /** 文件此刻的字节；不存在时为 null。 */
-  private static byte[] readOrNull(Path file) {
-    try {
-      return Files.isRegularFile(file) ? Files.readAllBytes(file) : null;
-    } catch (IOException e) {
-      throw new UncheckedIOException("无法读取 " + file, e);
-    }
-  }
-
-  /** 把文件放回它原来的样子；它原来不存在时删掉。 */
-  private static void restore(Path file, byte[] before) {
-    try {
-      if (before == null) {
-        Files.deleteIfExists(file);
-      } else {
-        Files.write(file, before);
-      }
-    } catch (IOException e) {
-      throw new UncheckedIOException("无法还原 " + file, e);
-    }
-  }
-
-  /** 写回配置文件：只动调用方改过的那个键，其余一切照旧，并像写设置那样限制为仅属主可读。 */
-  private static void writeConfig(Path file, ObjectNode root) {
-    try {
-      Path parent = file.toAbsolutePath().getParent();
-      if (parent != null) {
-        Files.createDirectories(parent);
-      }
-      Files.writeString(
-          file,
-          Json.writePretty(root) + "\n",
-          StandardCharsets.UTF_8,
-          StandardOpenOption.CREATE,
-          StandardOpenOption.TRUNCATE_EXISTING);
-      try {
-        Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
-      } catch (UnsupportedOperationException | IOException ignored) {
-        // 不是 POSIX 文件系统；内容已经写下了，而那才是被要求的事。
-      }
-    } catch (IOException e) {
-      throw new UncheckedIOException("无法写入 " + file, e);
-    }
-  }
-
-  /**
-   * 审批链：先由规则回答，再由人回答，而每一个自动给出的回答都在转录里说出来——一次静悄悄发生的审批
-   * 是没人能审计的审批。
-   */
-  private Approver gate() {
-    ApprovalRules rules = approvalRules;
-    if (rules == null) {
-      return this::askApproval;
-    }
-    return new RuleApprover(
-        rules,
-        this::askApproval,
-        text ->
-            publish(
-                currentTurnSession(), "notice", Json.object().put("text", text)));
+    return SettingsFiles.applyChecks(posted, settings.configFile());
   }
 
   private static String message(Throwable e) {

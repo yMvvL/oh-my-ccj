@@ -215,7 +215,7 @@ class WebSettingsFilesTest {
    */
   @Test
   void addingAndThenDeletingARuleChangesTheNextTurnsDecision() throws Exception {
-    CopyOnWriteArrayList<AgentHub.Event> events = new CopyOnWriteArrayList<>();
+    CopyOnWriteArrayList<EventStream.Event> events = new CopyOnWriteArrayList<>();
     hub.subscribe(events::add);
     String command = "printf hi > proof.txt";
 
@@ -240,7 +240,7 @@ class WebSettingsFilesTest {
     provider.reply(Message.Assistant.text("asked again"));
 
     assertEquals(AgentHub.Submit.STARTED, hub.submit("second"));
-    AgentHub.Event approval = awaitEvent(events, "approval", 1);
+    EventStream.Event approval = awaitEvent(events, "approval", 1);
     assertTrue(hub.resolveApproval(approval.payload().path("id").asText(), ApprovalAnswer.DENY));
     awaitEvent(events, "done", 2);
 
@@ -413,9 +413,9 @@ class WebSettingsFilesTest {
                 "call_bash", "bash", Json.write(Json.object().put("command", command)))));
   }
 
-  private static int count(List<AgentHub.Event> events, String type) {
+  private static int count(List<EventStream.Event> events, String type) {
     int n = 0;
-    for (AgentHub.Event event : events) {
+    for (EventStream.Event event : events) {
       if (event.type().equals(type)) {
         n++;
       }
@@ -424,12 +424,12 @@ class WebSettingsFilesTest {
   }
 
   /** 等到第 {@code count} 个某类型的事件；超时是测试失败，而不是一个悄悄通过的断言。 */
-  private static AgentHub.Event awaitEvent(List<AgentHub.Event> events, String type, int count)
+  private static EventStream.Event awaitEvent(List<EventStream.Event> events, String type, int count)
       throws InterruptedException {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
     while (System.nanoTime() < deadline) {
-      List<AgentHub.Event> matching = new ArrayList<>();
-      for (AgentHub.Event event : events) {
+      List<EventStream.Event> matching = new ArrayList<>();
+      for (EventStream.Event event : events) {
         if (event.type().equals(type)) {
           matching.add(event);
         }
