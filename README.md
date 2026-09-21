@@ -554,8 +554,10 @@ mvn -DskipTests package                   # fat jar
 漂到了实际数字的一半左右。用法表与工具表现在由 `docs` 包里的那个测试守着（3.3 用的是「机器比对」而不是
 「生成」）。
 
-上面的数字来自维护者环境里的最后一次运行。CI 在 Linux 和 macOS 上实际跑的是 `./mvnw -B -ntp verify`
-——见 [.github/workflows/build.yml](.github/workflows/build.yml)。工作要往哪去，见
+上面的数字来自维护者环境里的最后一次运行；同一套测试在 CI 的 Linux 与 macOS 上跑的是
+`./mvnw -B -ntp verify`——见 [.github/workflows/build.yml](.github/workflows/build.yml)。它第一次真的
+跑起来时两个平台都红了，四条失败全是真问题（都被本机漏掉了），修完再推才是全绿；那四条在
+[CHANGELOG](docs/CHANGELOG.md) 里。工作要往哪去，见
 [docs/ROADMAP.md](docs/ROADMAP.md)；这里的代码、测试和文档是怎么写的，见
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md)。
 
