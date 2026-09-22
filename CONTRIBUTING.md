@@ -41,6 +41,13 @@ ubuntu 是绿的。
 CI 那边另外把 `~/.m2` 缓存起来了（workflow 里 `setup-java` 的 `cache: maven`）：没有它，每个 runner 都从
 零下载整个插件闭包，而每一次下载都是一次撞上抖动的机会。
 
+## 那两张图片是怎么来的
+
+README 里那张页面截图（`docs/images/web-ui.png`）与仓库设置里用的社交预览图
+（`docs/images/social-preview.png`）都是**真的**跑出来的：`./ccj --demo` 起一个临时 home，在无头 Chrome 里
+发一条 `read pom.xml`（真的会执行一次工具调用），再截图。不是画出来的，也没有摆拍——所以它们过期的方式和
+别的东西一样：界面改了，重新拍一次。截图前把 `--wallpapers` 指向一个空目录，免得把自己的壁纸公开出去。
+
 ## 开发
 
 ```bash
