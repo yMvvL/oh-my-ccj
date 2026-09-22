@@ -87,7 +87,7 @@ vision: { baseUrl, apiKey, apiKeyEnv, model }     // all optional; absent means 
 | 4 | `POST /api/attachment` + `describe` 步骤，接进输入框 | 从浏览器：选一张图片，看到它被描述、挂在输入框上等着，然后随下一句话一起发出去 | **done** —— `AgentHub.describePicture`、该端点、输入框的图片按钮（相机 / 相册两个来源）；`WebPictureVisionTest`（拆分前叫 `WebApiTest`）里对着 stub 视觉端点跑八个用例 |
 | 4b | 描述与发送分开 | 描述不再自己开启回合：模型醒来时同时拿着图片里有什么和用户的要求 | **done** —— 见下面的「用起来之后的修正」 |
 | 5 | 手机：手机宽度下的 CSS、选择器按钮、`capture` | 页面在 390×844 下可用；在有真手机时按钮打开图库或相机 | **done，但刻意不带 `capture`** —— 见*两个做了不同决定的地方* |
-| 6 | 文档：README 行、`docs/WEBUI.md`、安全一节 | 上限、存放位置以及什么离开本机都写下来 | **done** —— README 的功能/环境变量/限制各行、`WEBUI.md` 的「图片」一节、`SECURITY.md` 的两处清单 |
+| 6 | 文档：`docs/USAGE.md`、`docs/WEBUI.md`、安全一节 | 上限、存放位置以及什么离开本机都写下来 | **done** —— 图片那一行与环境变量/限制各行（今天就住在 `docs/USAGE.md` 里）、`WEBUI.md` 的「图片」一节、`SECURITY.md` 的两处清单 |
 
 有一件事是步骤没有要求、而面板现在有的：视觉模型可以从**设置**（*Pictures* 一节）配置，而不只是从配置文件和标志。设计说视觉模型与主提供方分开配置——现在也仍然如此，在表单上它自己的块里、在文件里、在它自己的标志里——但一个只能靠在机器上编辑文件才能打开的功能，是手机打不开的功能，而手机正是这一切存在的原因。
 
