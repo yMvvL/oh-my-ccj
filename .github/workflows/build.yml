@@ -63,7 +63,7 @@ jobs:
           java -jar target/ccj.jar --version
 
       # 失败时把「哪条测试、为什么」直接打进日志。surefire 的报告只在磁盘上，而 Maven 的输出在几十行
-      # 之上——一个私有仓库的日志唯一的读者是人，所以让它自己说出结论，比让人去下载 artifact 再翻文件强。
+      # 之上——日志唯一的读者是人，所以让它自己说出结论，比让人去下载 artifact 再翻文件强。
       - name: 失败的测试
         if: failure()
         run: |
