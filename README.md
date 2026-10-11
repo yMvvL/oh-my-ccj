@@ -97,6 +97,7 @@ ln -sfn "$PWD/ccj" ~/.local/bin/ccj        # use `ccj` from anywhere
 
 - 手册：**[docs/USAGE.md](docs/USAGE.md)**（flag、REPL 命令、配置与环境变量、每个工具、全部能力、限制的完整清单）｜**[docs/WEBUI.md](docs/WEBUI.md)**（页面的每一部分，以及从别的设备够到它）
 - 提供方与扩展：**[docs/ROUTER.md](docs/ROUTER.md)**（四种协议、自定义提供方）｜**[docs/MCP.md](docs/MCP.md)**（外部工具经同一个审批器进来）
-- 内部：**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**｜**[docs/BOOTSTRAP.md](docs/BOOTSTRAP.md)**（重启并落回同一个对话）｜**[docs/COMPACT.md](docs/COMPACT.md)**｜**[docs/SUBAGENTS.md](docs/SUBAGENTS.md)**
+- 内部：**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**｜**[docs/BOOTSTRAP.md](docs/BOOTSTRAP.md)**（重启并落回同一个对话）｜**[docs/COMPACT.md](docs/COMPACT.md)**｜**[docs/SUBAGENTS.md](docs/SUBAGENTS.md)**｜**[docs/PERF.md](docs/PERF.md)**（这个工具自己有多贵：启动、每回合的前缀、列一次会话）
+- 能测的东西：**[docs/EVAL.md](docs/EVAL.md)**（一套离线的回归任务）｜**[docs/RETRIEVAL.md](docs/RETRIEVAL.md)**（按意思找代码：配置、它的出口审批、量到的召回率）
 - 关于信任与写法：**[SECURITY.md](SECURITY.md)**｜**[docs/CONVENTIONS.md](docs/CONVENTIONS.md)**
 - 关于这个项目：**[CONTRIBUTING.md](CONTRIBUTING.md)**｜**[docs/ROADMAP.md](docs/ROADMAP.md)**｜**[docs/CHANGELOG.md](docs/CHANGELOG.md)**｜**[docs/VISION.md](docs/VISION.md)**｜**[docs/RESUME.md](docs/RESUME.md)**

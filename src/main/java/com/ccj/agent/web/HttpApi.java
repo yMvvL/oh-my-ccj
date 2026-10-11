@@ -1,6 +1,8 @@
 package com.ccj.agent.web;
 
 import com.ccj.agent.core.Json;
+import com.ccj.agent.obs.Metric;
+import com.ccj.agent.obs.Metrics;
 import com.ccj.agent.session.AttachmentStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -215,6 +217,8 @@ public final class HttpApi implements AutoCloseable {
         case "/theme.css" -> staticResource(exchange, "/web/theme.css", "text/css; charset=utf-8");
         case "/api/wallpapers" -> wallpapers(exchange);
         case "/api/status" -> get(exchange, hub.status());
+        case "/metrics" -> metrics(exchange);
+        case "/api/trace" -> trace(exchange);
         case "/api/sessions" -> sessions(exchange);
         case "/api/workspaces/browse" -> browse(exchange);
         case "/api/history" -> get(exchange, hub.historyJson());
@@ -692,7 +696,7 @@ public final class HttpApi implements AutoCloseable {
 
     OutputStream out = exchange.getResponseBody();
     long lastEventId = lastEventId(exchange);
-    SseClient client = new SseClient(out, lastEventId);
+    SseClient client = new SseClient(out, lastEventId, hub.metrics());
     List<EventStream.Event> missed = hub.subscribe(client);
     try {
       // 重放缓冲区只为一个目的存在：补上重连的页面错过的那段空白。全新的连接没有空白——它从
@@ -759,14 +763,16 @@ public final class HttpApi implements AutoCloseable {
     private static final int QUEUE_LIMIT = 4096;
 
     private final OutputStream out;
+    private final Metrics metrics;
     private final BlockingQueue<EventStream.Event> pending = new ArrayBlockingQueue<>(QUEUE_LIMIT);
     private volatile Thread reader;
     private volatile boolean closed;
     private long lastSent;
 
-    SseClient(OutputStream out, long lastSent) {
+    SseClient(OutputStream out, long lastSent, Metrics metrics) {
       this.out = out;
       this.lastSent = lastSent;
+      this.metrics = metrics;
     }
 
     /** 在发布线程上调用：这里从不阻塞，也从不写入。 */
@@ -778,7 +784,12 @@ public final class HttpApi implements AutoCloseable {
       if (pending.offer(event)) {
         return;
       }
-      // 落后太多追不上了：丢弃这个客户端并唤醒它的线程，让它不再等待。
+      // 落后太多追不上了：丢弃这个客户端并唤醒它的线程，让它不再等待。丢一个连接不是一次失败——页面会
+      // 重连——但它是一件值得计数的事：一个反复被丢掉的客户端，看起来就像一台过载的机器，而那张图上唯一
+      // 能证明这件事的数字就是这个。
+      if (metrics != null) {
+        metrics.inc(Metric.SSE_DROPPED);
+      }
       closed = true;
       Thread waiting = reader;
       if (waiting != null) {
@@ -926,9 +937,64 @@ public final class HttpApi implements AutoCloseable {
     respond(exchange, 200, body);
   }
 
+  /**
+   * 这个进程的数字，Prometheus 的文本格式。
+   *
+   * <p>路径就叫 {@code /metrics}，不带 {@code /api} 前缀：这是抓取端点的通名，而一个抓取器认得的是名字，
+   * 不是我们的路由风格。内容类型带上了 {@code version=0.0.4}，那是这类端点的惯例，也是抓取器用来确认自己
+   * 读得懂的东西。
+   *
+   * <p>它和其他每一条一样过那道门：在这个服务器绑了网络地址时，它同样要 token。指标里没有密钥、没有路径，
+   * 但有「这台机器现在在跑几个对话、花了多少 token」——那不是一条可以白送的广播。
+   */
+  private void metrics(HttpExchange exchange) throws IOException {
+    if (!"GET".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "需要 GET");
+      return;
+    }
+    respondText(
+        exchange, 200, "text/plain; version=0.0.4; charset=utf-8", hub.metrics().render());
+  }
+
+  /**
+   * 当前会话最近一次运行的 span 树。
+   *
+   * <p>它回答的是指标答不了的那半个问题：直方图说「工具调用平均 300 毫秒」，而这棵树说「那一次慢的是
+   * {@code bash}，它花了 4 秒」。没有回合可看时返回一棵空的树，而不是 404——「还没跑过」是一种状态，
+   * 不是一个错误。
+   */
+  private void trace(HttpExchange exchange) throws IOException {
+    if (!"GET".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "需要 GET");
+      return;
+    }
+    com.ccj.agent.obs.RunTrace trace = hub.lastTrace(hub.currentSessionId());
+    if (trace == null) {
+      respond(exchange, 200, Json.object().putNull("run"));
+      return;
+    }
+    respond(exchange, 200, trace.toJson());
+  }
+
   private void respond(HttpExchange exchange, int status, ObjectNode body) throws IOException {
     byte[] bytes = Json.write(body).getBytes(StandardCharsets.UTF_8);
     exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
+    exchange.sendResponseHeaders(status, bytes.length);
+    try (OutputStream out = exchange.getResponseBody()) {
+      out.write(bytes);
+    }
+  }
+
+  /**
+   * 一段不是 JSON 的响应体。
+   *
+   * <p>它存在的理由是 {@code /metrics}：Prometheus 的抓取格式是行文本，把它塞进一个 JSON 对象里，就等于
+   * 让每一个抓取器都多写一层解包——而抓取格式的形状是被别人的工具定死的，不是被我们。
+   */
+  private void respondText(HttpExchange exchange, int status, String contentType, String body)
+      throws IOException {
+    byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+    exchange.getResponseHeaders().add("Content-Type", contentType);
     exchange.sendResponseHeaders(status, bytes.length);
     try (OutputStream out = exchange.getResponseBody()) {
       out.write(bytes);

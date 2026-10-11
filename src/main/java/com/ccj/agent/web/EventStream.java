@@ -1,6 +1,8 @@
 package com.ccj.agent.web;
 
 import com.ccj.agent.core.Json;
+import com.ccj.agent.obs.Metric;
+import com.ccj.agent.obs.Metrics;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -25,6 +27,17 @@ public final class EventStream {
   private final List<Consumer<Event>> subscribers = new CopyOnWriteArrayList<>();
   private final Deque<Event> replay = new ArrayDeque<>();
   private final AtomicLong nextEventId = new AtomicLong();
+  /** 记到哪里；null 表示不记（测试与嵌入式用法不需要一个指标注册表）。 */
+  private final Metrics metrics;
+
+  public EventStream() {
+    this(null);
+  }
+
+  /** 带指标注册表的事件流：订阅者数、已发布的事件数都会记进去。 */
+  public EventStream(Metrics metrics) {
+    this.metrics = metrics;
+  }
 
   /**
    * 发生过的一件事，按线上格式塑形。
@@ -41,6 +54,9 @@ public final class EventStream {
   public List<Event> subscribe(Consumer<Event> subscriber) {
     synchronized (replay) {
       subscribers.add(subscriber);
+      if (metrics != null) {
+        metrics.set(Metric.SSE_SUBSCRIBERS, subscribers.size());
+      }
       return List.copyOf(replay);
     }
   }
@@ -48,6 +64,9 @@ public final class EventStream {
   public void unsubscribe(Consumer<Event> subscriber) {
     synchronized (replay) {
       subscribers.remove(subscriber);
+      if (metrics != null) {
+        metrics.set(Metric.SSE_SUBSCRIBERS, subscribers.size());
+      }
     }
   }
 
@@ -65,6 +84,9 @@ public final class EventStream {
     }
     Event event =
         new Event(nextEventId.incrementAndGet(), type, node.path("sessionId").asText(), node);
+    if (metrics != null) {
+      metrics.inc(Metric.SSE_EVENTS);
+    }
     synchronized (replay) {
       replay.addLast(event);
       while (replay.size() > REPLAY_LIMIT) {

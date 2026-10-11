@@ -1,5 +1,6 @@
 package com.ccj.agent.cli;
 
+import com.ccj.agent.core.AgentListener;
 import com.ccj.agent.core.AgentLoop;
 import com.ccj.agent.core.AgentOptions;
 import com.ccj.agent.core.AppPaths;
@@ -10,6 +11,7 @@ import com.ccj.agent.core.RuleApprover;
 import com.ccj.agent.core.SpendLimit;
 import com.ccj.agent.core.Checks;
 import com.ccj.agent.session.CheckpointStore;
+import com.ccj.agent.mcp.McpServer;
 import com.ccj.agent.mcp.McpTools;
 import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
@@ -21,15 +23,22 @@ import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolRegistry;
 import com.ccj.agent.core.ToolSpec;
 import com.ccj.agent.demo.DemoProvider;
+import com.ccj.agent.retrieval.EmbeddingConfig;
+import com.ccj.agent.retrieval.RetrievalIndex;
+import com.ccj.agent.eval.EvalReport;
+import com.ccj.agent.eval.EvalRunner;
+import com.ccj.agent.eval.EvalTask;
 import com.ccj.agent.provider.ConfigModelCatalog;
 import com.ccj.agent.provider.ProviderStore;
 import com.ccj.agent.provider.Providers;
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.ResumePoint;
 import com.ccj.agent.session.SessionStore;
+import com.ccj.agent.tool.RecallTool;
 import com.ccj.agent.tool.RestartTool;
 import com.ccj.agent.tool.Tools;
 import com.ccj.agent.ui.Ansi;
+import com.ccj.agent.obs.Recorder;
 import com.ccj.agent.ui.ConsoleRenderer;
 import com.ccj.agent.web.AgentHub;
 import com.ccj.agent.workspace.WorkspaceStore;
@@ -184,6 +193,8 @@ public final class Cli {
       return fail(err, e);
     }
 
+    // 语义检索的索引，配了才有；它要在这里声明，因为它持有的那个 HTTP 客户端要在退出时关掉。
+    RetrievalIndex retrieval = null;
     ToolRegistry tools;
     try {
       // 配置文件在构建工具之前读取，因为编辑类工具会带上这个文件声明的编辑后检查。Checks.from()
@@ -196,6 +207,14 @@ public final class Cli {
       // 代理，但也不能一声不吭——缺失的能力和没人提过的能力，从这里看是一模一样的。
       McpTools mcp = McpTools.discover(paths.home().resolve("mcp.json"));
       mcp.registerInto(tools);
+      // 语义检索：只有这台机器上真的配了一个嵌入端点时，它才进这张表——与 MCP 服务器同一条规矩。一个
+      // 「总是报没配」的工具，比一个不存在的工具更糟：它占着模型的一次注意力，还什么都回答不了。
+      Path embeddingsFile = paths.home().resolve("embeddings.json");
+      Optional<EmbeddingConfig> embeddings = EmbeddingConfig.open(embeddingsFile);
+      if (embeddings.isPresent()) {
+        retrieval = RetrievalIndex.open(cwd, paths.home(), embeddings.get(), env);
+        tools.register(new RecallTool(retrieval, embeddingsFile));
+      }
       for (String complaint : mcp.complaints()) {
         err.println("warning: " + complaint);
       }
@@ -204,9 +223,23 @@ public final class Cli {
       return fail(err, e);
     }
     if (options.tools()) {
-      printTools(tools, out);
+      printTools(tools, Prompts.system(config.systemPrompt(), cwd), out);
       return 0;
     }
+
+    if (options.mcpServe()) {
+      if (options.trace() != null) {
+        // 说一句，而不是安静地忽略：一个收下了却什么都不做的 flag，是那种「我以为它开着」的配置错误。
+        err.println("warning: --trace 在 MCP 服务器模式下不生效——这个进程不跑回合，只应答工具调用");
+        err.flush();
+      }
+      return serveMcp(tools, cwd, paths.home(), config, options.yolo(), in, out, err);
+    }
+
+    // --trace 指到的那个文件：一次运行一行，含一棵 span 树。null 表示不留——而默认就是不留，因为一份
+    // 没有人要的痕迹会安静地长在磁盘上，而它长的地方（应用主目录）已经没有别的增长物了。
+    Recorder.TraceSink traceSink =
+        options.trace() == null ? null : Recorder.toFile(Path.of(options.trace()));
 
     // 没有 flag 也没有提示词时：web UI 是默认前端，--repl 则是终端前端。
     boolean webMode = !options.repl() && options.print() == null;
@@ -220,14 +253,28 @@ public final class Cli {
       try {
         provider = Providers.create(config, env, providerStore);
       } catch (RuntimeException e) {
-        if (!webMode) {
+        if (!webMode && options.eval() == null) {
           return fail(err, e);
         }
         // 设置表单存在的意义正是修好这个：照常提供服务，让用户在那里配置。
         provider = null;
-        err.println("尚未配置模型——请在 web UI（设置）里添加一个，或传入 --model");
+        // 评测不说这句：它的任务大多自带剧本，根本不需要模型，而一句「尚未配置模型」会让人以为它失败了。
+        // 真的需要模型的任务，由评测自己点名。
+        if (options.eval() == null) {
+          err.println("尚未配置模型——请在 web UI（设置）里添加一个，或传入 --model");
+          err.flush();
+        }
+      }
+    }
+
+    if (options.eval() != null) {
+      if (options.trace() != null) {
+        err.println("warning: --trace 在评测模式下不生效——报告里的数字来自同一套记账，而那才是要看的东西");
         err.flush();
       }
+      // 评测跑在自己的临时目录里，所以它不需要一个可用的工作目录——它也不该因为用户碰巧站在一个被删掉的
+      // 目录里而失败。
+      return runEval(options.eval(), provider, out, err);
     }
 
     if (!Files.isDirectory(cwd)) {
@@ -279,6 +326,7 @@ public final class Cli {
             env,
             providerStore,
             paths.home(),
+            traceSink,
             out,
             err);
       }
@@ -295,6 +343,7 @@ public final class Cli {
             autoApprove,
             renderer,
             options.print(),
+            traceSink,
             in,
             out,
             err);
@@ -314,6 +363,7 @@ public final class Cli {
               agentOptions,
               autoApprove,
               renderer,
+              traceSink,
               in,
               out,
               err);
@@ -342,6 +392,93 @@ public final class Cli {
       if (provider != null) {
         provider.close();
       }
+      if (retrieval != null) {
+        retrieval.close();
+      }
+    }
+  }
+
+  /**
+   * 在 stdin/stdout 上讲 MCP，把本程序的工具提供给另一个代理。
+   *
+   * <p>不需要模型、不需要网络、不开端口：它读 stdin 上的 JSON-RPC，答在 stdout 上，而 stdout 从今往后只
+   * 用来干这一件事——一句问候或一行进度写进去，就是一条解析不了的响应。所以本方法打印的任何东西（包括审批
+   * 规则自动给出的那句回答）都走 stderr。
+   *
+   * <p>审批照旧：{@code --yolo} 或者用户自己写在 {@code approvals.json} 里的规则，二者必居其一——这个进程
+   * 的 stdin 被协议占着，没有第二个地方能问人。默认拒绝，「默认允许」这一档不存在。
+   */
+  private int serveMcp(
+      ToolRegistry tools,
+      Path cwd,
+      Path home,
+      Config config,
+      boolean yolo,
+      BufferedReader in,
+      PrintStream out,
+      PrintStream err) {
+    boolean auto = yolo || Boolean.TRUE.equals(config.autoApprove());
+    Approver fallback =
+        auto
+            ? Approver.ALWAYS
+            : request -> {
+              err.println("已拒绝 " + request.title() + "：" + request.detail());
+              err.println(
+                  "  这个进程的 stdin 是 MCP 通道，没有终端可以问；要放行就写一条规则进 "
+                      + home.resolve("approvals.json")
+                      + "，或者用 --yolo 启动");
+              err.flush();
+              return ApprovalAnswer.DENY;
+            };
+    // 自动给出的那句回答走 stderr：stdout 上的每一个字节都属于协议。
+    Approver approver =
+        auto ? fallback : new RuleApprover(ApprovalRules.open(home.resolve("approvals.json"), cwd), fallback, err::println);
+    ToolRegistry exposed = new ToolRegistry();
+    for (String name : tools.names()) {
+      if (RestartTool.NAME.equals(name)) {
+        // `restart` 会结束这个进程。一个远端的调用者按下它，看到的是连接断掉，而不是一个结果——而它没有
+        // 任何办法知道刚才发生了什么。
+        continue;
+      }
+      tools.find(name).ifPresent(exposed::register);
+    }
+    err.println(
+        "ccj "
+            + VERSION
+            + " MCP 服务器：在 stdin/stdout 上讲 JSON-RPC，提供 "
+            + String.join("、", exposed.names())
+            + "（restart 不在其中）");
+    err.flush();
+    int outputLimit = config.outputLimitBytes() == null ? 32 * 1024 : config.outputLimitBytes();
+    return new McpServer(exposed, cwd, approver, outputLimit, VERSION).serve(in, out, err);
+  }
+
+  /**
+   * 跑一组评测任务，打印报告，按「全部通过」决定退出码。
+   *
+   * <p>退出码是这一项的全部意义所在：一个只在人看着的时候跑的评测套件，与一个有断言的评测套件是两件事，
+   * 而 CI 只读得懂退出码。见 {@code evals/} 与 docs/EVAL.md。
+   */
+  private int runEval(String target, Provider provider, PrintStream out, PrintStream err) {
+    List<EvalTask> tasks;
+    try {
+      tasks = EvalTask.read(Path.of(target));
+    } catch (RuntimeException e) {
+      err.println("error: " + message(e));
+      err.flush();
+      return 2;
+    }
+    try {
+      EvalReport report = EvalRunner.run(tasks, provider);
+      out.print(report.render());
+      out.flush();
+      return report.allPassed() ? 0 : 1;
+    } catch (IllegalArgumentException e) {
+      err.println("error: " + message(e));
+      err.flush();
+      return 2;
+    } catch (RuntimeException e) {
+      return fail(err, e);
     }
   }
 
@@ -356,13 +493,14 @@ public final class Cli {
       boolean autoApprove,
       ConsoleRenderer renderer,
       String prompt,
+      Recorder.TraceSink traceSink,
       BufferedReader in,
       PrintStream out,
       PrintStream err) {
     AgentLoop loop =
         newLoop(
-            provider, tools, session, agentOptions, cwd, home, config, autoApprove, renderer, in, out,
-            err);
+            provider, tools, session, agentOptions, cwd, home, config, autoApprove, renderer,
+            traceSink, in, out, err);
     try {
       loop.run(prompt);
       return RestartTool.restartRequested() ? RestartTool.RESTART_EXIT : 0;
@@ -383,13 +521,19 @@ public final class Cli {
       Config config,
       boolean autoApprove,
       ConsoleRenderer renderer,
+      Recorder.TraceSink traceSink,
       BufferedReader in,
       PrintStream out,
       PrintStream err) {
     ToolContext context =
         new ToolContext(
             cwd, gatedApprover(autoApprove, in, out, err, renderer, cwd, home), config.outputLimitBytes());
-    return new AgentLoop(provider, tools, session, agentOptions, context, renderer);
+    // 指标注册表给 null：终端这条路上没有人读指标，而痕迹是这里唯一会被留下来的东西。
+    AgentListener listener =
+        traceSink == null
+            ? renderer
+            : new Recorder(null, session.id(), traceSink, renderer);
+    return new AgentLoop(provider, tools, session, agentOptions, context, listener);
   }
 
   /**
@@ -552,6 +696,7 @@ public final class Cli {
       Map<String, String> env,
       ProviderStore providerStore,
       Path home,
+      Recorder.TraceSink traceSink,
       PrintStream out,
       PrintStream err) {
     int port = options.port() == null ? DEFAULT_WEB_PORT : options.port();
@@ -648,6 +793,7 @@ public final class Cli {
     // 规则文件位于应用主目录，按项目区分：仓库无法自带一个「什么可以不经询问就运行」的决定，
     // 因为仓库写不到这里。
     hub.setApprovalRules(ApprovalRules.open(home.resolve("approvals.json"), cwd));
+    hub.setTraceSink(traceSink);
     Wallpapers wallpapers = Wallpapers.from(env, options.wallpapers());
     try (HttpApi api = HttpApi.start(hub, binds, token, wallpapers)) {
       List<String> urls = api.urls();
@@ -806,11 +952,25 @@ public final class Cli {
     out.flush();
   }
 
-  private static void printTools(ToolRegistry tools, PrintStream out) {
+  /**
+   * 工具清单，以及每个回合都要为它付掉的那一份。
+   *
+   * <p>每个工具后面那个数字是它的名字、描述与手写 schema 的估算 token（{@link TokenEstimate} 的同一个
+   * 启发式，上下文预算用的也是它），末行是合计。合计值得看一眼，因为前缀——系统提示加全部工具的 schema
+   * ——在每个模型回合里原样重发一遍，而实测：前缀几乎全由工具表贡献，约 6.6k 字符的 schema 值一千多
+   * token。缩短描述是唯一能真正减小它的地方（前缀缓存是提供方那边的另一件事），而看得见数字才有人会去做
+   * 这件事。见 docs/PERF.md。
+   */
+  private static void printTools(ToolRegistry tools, String systemPrompt, PrintStream out) {
     for (ToolSpec spec : tools.specs()) {
       String first = spec.description().lines().findFirst().orElse("").strip();
-      out.printf("%-8s  %s%n", spec.name(), first);
+      int tokens = TokenEstimate.of(spec.name() + spec.description() + spec.parametersJson());
+      out.printf("%-8s %5dt  %s%n", spec.name(), tokens, first);
     }
+    int systemTokens = TokenEstimate.of(systemPrompt);
+    out.printf(
+        "%n每个回合固定发出去的前缀（估算）：系统提示 %d + 工具 %d = %d token%n",
+        systemTokens, tools.schemaTokens(), systemTokens + tools.schemaTokens());
     out.flush();
   }
 
@@ -835,6 +995,7 @@ public final class Cli {
     private final Config config;
     private final Map<String, String> env;
     private final ConsoleRenderer renderer;
+    private final Recorder.TraceSink traceSink;
     private final BufferedReader in;
     private final PrintStream out;
     private final PrintStream err;
@@ -858,6 +1019,7 @@ public final class Cli {
         AgentOptions agentOptions,
         boolean autoApprove,
         ConsoleRenderer renderer,
+        Recorder.TraceSink traceSink,
         BufferedReader in,
         PrintStream out,
         PrintStream err) {
@@ -873,6 +1035,7 @@ public final class Cli {
       this.agentOptions = agentOptions;
       this.autoApprove = autoApprove;
       this.renderer = renderer;
+      this.traceSink = traceSink;
       this.in = in;
       this.out = out;
       this.err = err;
@@ -886,7 +1049,9 @@ public final class Cli {
               cwd,
               gatedApprover(autoApprove, in, out, err, renderer, cwd, home),
               config.outputLimitBytes());
-      this.loop = new AgentLoop(provider, tools, session, agentOptions, context, renderer);
+      AgentListener listener =
+          traceSink == null ? renderer : new Recorder(null, session.id(), traceSink, renderer);
+      this.loop = new AgentLoop(provider, tools, session, agentOptions, context, listener);
     }
 
     void run() {
@@ -1164,7 +1329,7 @@ public final class Cli {
         }
         case "/compact" -> compact();
         case "/undo" -> undo();
-        case "/tools" -> printTools(tools, out);
+        case "/tools" -> printTools(tools, agentOptions.system(), out);
         case "/config" -> printConfig(config, env, out);
         case "/yolo" -> {
           autoApprove = !autoApprove;

@@ -9,6 +9,27 @@ public interface AgentListener {
 
   AgentListener NOOP = new AgentListener() {};
 
+  /**
+   * 一次运行开始之前调用一次：一次<em>运行</em>，而不是其中的一个模型回合——后者是
+   * {@link #onTurnStart(int)}，在一次运行里会来很多次。
+   *
+   * <p>它与 {@link #onRunEnd} 成对，存在的理由是让观察者能画出一次运行的边界：一次运行的耗时、它的结局，
+   * 都是把这两头的时间相减得来的，而只靠回合边界拼不出它——最后一个回合结束到运行真正结束之间，还隔着
+   * 收尾那一段（落盘、清空队列、自动压缩）。
+   */
+  default void onRunStart() {}
+
+  /**
+   * 一次运行结束时调用一次，正常收尾和失败收尾都走这里。
+   *
+   * <p>两者都有 {@code failure} 或都没有，是刻意的：一次因为模型不可达而结束的运行，既不是「完成」也不是
+   * 「用户中止」，而用其中任何一个去表示它，都会让读这个数字的人算错——所以它就是它自己。
+   *
+   * @param result 运行的结果；运行以异常结束时为 null
+   * @param failure 结束这次运行的异常；正常结束（含被中止）时为 null
+   */
+  default void onRunEnd(AgentLoop.Result result, Throwable failure) {}
+
   /** 每个模型回合开始前调用，从第 0 步算起。 */
   default void onTurnStart(int step) {}
 

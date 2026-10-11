@@ -51,6 +51,9 @@ public record CliOptions(
     boolean subAgents,
     String wallpapers,
     String shell,
+    String trace,
+    String eval,
+    boolean mcpServe,
     Map<String, String> subAgentModels,
     Map<String, String> subAgentReasonings,
     boolean help,
@@ -157,6 +160,9 @@ public record CliOptions(
     boolean subAgents = false;
     String wallpapers = null;
     String shell = null;
+    String trace = null;
+    String eval = null;
+    boolean mcpServe = false;
     Map<String, String> subAgentModels = new LinkedHashMap<>();
     Map<String, String> subAgentReasonings = new LinkedHashMap<>();
     boolean open = false;
@@ -328,6 +334,18 @@ public record CliOptions(
           shell = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
+        case "--trace" -> {
+          trace = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
+        case "--eval" -> {
+          eval = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
+        case "--mcp-serve" -> {
+          mcpServe = true;
+          i += 1;
+        }
         case "--subagent-model" -> {
           String pair = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
@@ -389,6 +407,9 @@ public record CliOptions(
         subAgents,
         wallpapers,
         shell,
+        trace,
+        eval,
+        mcpServe,
         subAgentModels,
         subAgentReasonings,
         help,
@@ -467,6 +488,11 @@ public record CliOptions(
               --home <dir>         应用主目录（默认：~/.oh-my-ccj）
           -C, --cwd <dir>          工具解析相对路径时依据的工作目录
               --shell <file>       跑命令与编辑后检查的那个程序（默认：/bin/bash）
+              --trace <file>       把每个回合的 trace 追加到这份 JSONL 里：一次运行一行，含一棵
+                                   span 树（模型回合与工具调用各自的耗时）
+              --eval <file|dir>    跑一组评测任务并打印报告后退出：每行一个 JSON 任务，目录里的
+                                   每个 *.jsonl 都会被读；带 script 的任务离线跑，其余的要一个模型。
+                                   全部通过以 0 退出，否则以 1。见 docs/EVAL.md
               --tools              打印可用的工具后退出
               --yolo               批准每一个工具调用，别名 --auto-approve
           -h, --help               打印这份帮助

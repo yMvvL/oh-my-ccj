@@ -37,6 +37,21 @@ public final class ToolRegistry {
     return specs;
   }
 
+  /**
+   * 这一整套工具在每个回合里要花掉多少估算 token：每个工具的名字、描述与手写 schema 加在一起。
+   *
+   * <p>它值得有一个方法，因为它不是一个装饰性的数字：工具表跟着这个请求每个回合都被重发一遍（提供方的前缀
+   * 缓存顶多把它变便宜，不会让它变小），而「加一个 MCP 服务器值多少 token」「把描述写短一点能省多少」是
+   * 两个只有先量得出来才答得上来的问题。{@code ccj --tools} 打印的就是它。
+   */
+  public int schemaTokens() {
+    int tokens = 0;
+    for (Tool tool : tools.values()) {
+      tokens += TokenEstimate.of(tool.name() + tool.description() + tool.parametersJson());
+    }
+    return tokens;
+  }
+
   public ToolResult execute(Message.ToolCall call, ToolContext ctx) {
     Tool tool = tools.get(call.name());
     if (tool == null) {

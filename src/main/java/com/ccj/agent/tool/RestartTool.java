@@ -30,6 +30,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class RestartTool implements Tool {
 
+  /**
+   * 这个工具的名字。
+   *
+   * <p>是一个常量，因为有一个地方必须<em>按名字排除它</em>：把工具提供给别的代理时（{@code --mcp-serve}），
+   * 它能把这个进程连同它的会话一起结束掉，而一个远端的调用者看到的只是连接断了。
+   */
+  public static final String NAME = "restart";
+
   /** 启动器运行的那个 jar，也是这个项目唯一发布的 jar。 */
   private static final String INSTALLED_JAR = "ccj.jar";
 
@@ -71,7 +79,7 @@ public final class RestartTool implements Tool {
 
   @Override
   public String name() {
-    return "restart";
+    return NAME;
   }
 
   @Override

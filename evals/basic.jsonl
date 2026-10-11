@@ -1,0 +1,17 @@
+# 一组离线的评测任务：每行一个 JSON 对象，`#` 开头的行为注释。
+#
+# 它们全部带 script，所以在没有模型、没有网络、没有密钥的情况下也跑得出同一份结果——CI 里跑的就是它们。
+# 需要真模型的任务不写 script，但它不会进这个文件：这一份必须是「什么时候跑都绿」，否则它就不是一道门，
+# 而是一次抽奖。要写那样的任务，见 docs/EVAL.md。
+#
+# 每一项都有它自己的一行数字（步数、工具调用、token、耗时），所以一个「还是对的，但多绕了一圈」的改动
+# 会在这张表上留下痕迹。
+{"id": "read-and-answer", "description": "读一个文件，并用它的内容回答问题", "prompt": "读 notes.txt，告诉我它说了什么", "files": {"notes.txt": "hello from the eval\n"}, "script": [{"tool": {"name": "read", "arguments": {"path": "notes.txt"}}}, {"text": "它说的是 hello from the eval。"}], "expect": {"finalTextContains": ["hello from the eval"], "tools": ["read"], "maxSteps": 3}}
+{"id": "create-a-file", "description": "按指示建一个新文件，内容一字不差", "prompt": "建一个 proof.txt，内容是 done", "script": [{"tool": {"name": "write", "arguments": {"path": "proof.txt", "content": "done\n"}}}, {"text": "建好了。"}], "expect": {"files": {"proof.txt": "done\n"}, "tools": ["write"], "maxSteps": 3}}
+{"id": "edit-one-line", "description": "用精确匹配的 edit 改一行，其余不动", "prompt": "把 notes.txt 里的 TODO 改成 DONE", "files": {"notes.txt": "first\nTODO\nlast\n"}, "script": [{"tool": {"name": "edit", "arguments": {"path": "notes.txt", "old_string": "TODO", "new_string": "DONE"}}}, {"text": "改好了。"}], "expect": {"files": {"notes.txt": "first\nDONE\nlast\n"}, "tools": ["edit"], "maxSteps": 3}}
+{"id": "run-a-command", "description": "用一条 shell 命令写文件，并把它读回来核对", "prompt": "用一条命令把 hi 写进 out.txt", "script": [{"tool": {"name": "bash", "arguments": {"command": "printf hi > out.txt"}}}, {"tool": {"name": "read", "arguments": {"path": "out.txt"}}}, {"text": "写好了，里面是 hi。"}], "expect": {"files": {"out.txt": "hi"}, "tools": ["bash", "read"], "maxSteps": 4}}
+{"id": "two-writes-in-one-turn", "description": "一次要求两个工具，两个都按顺序跑完", "prompt": "建两个文件：a.txt 与 b.txt", "script": [{"tools": [{"name": "write", "arguments": {"path": "a.txt", "content": "a\n"}}, {"name": "write", "arguments": {"path": "b.txt", "content": "b\n"}}]}, {"text": "两个都建好了。"}], "expect": {"files": {"a.txt": "a\n", "b.txt": "b\n"}, "tools": ["write", "write"], "maxSteps": 3}}
+{"id": "a-refused-command-changes-nothing", "description": "被拒绝的命令什么都不做，而回合照样收尾", "prompt": "删掉 victim.txt", "files": {"victim.txt": "keep me\n"}, "approve": false, "script": [{"tool": {"name": "bash", "arguments": {"command": "rm victim.txt"}}}, {"text": "没做，因为没人批准。"}], "expect": {"files": {"victim.txt": "keep me\n"}, "tools": ["bash"], "finalTextContains": ["没做"], "maxSteps": 3}}
+{"id": "a-missing-file-is-an-error-the-model-reads", "description": "工具失败变成一条错误结果，会话不被弄死", "prompt": "读 nowhere.txt", "script": [{"tool": {"name": "read", "arguments": {"path": "nowhere.txt"}}}, {"text": "那个文件不在。"}], "expect": {"tools": ["read"], "finalTextContains": ["不在"], "maxSteps": 3}}
+{"id": "an-unknown-tool-does-not-kill-the-turn", "description": "幻觉出来的工具名也是一条错误结果", "prompt": "用一个不存在的工具做点什么", "script": [{"tool": {"name": "summon-a-dragon", "arguments": {"where": "here"}}}, {"text": "那个工具不存在。"}], "expect": {"tools": ["summon-a-dragon"], "finalTextContains": ["不存在"], "maxSteps": 3}}
+{"id": "a-script-can-declare-what-the-model-spent", "description": "剧本可以写明模型报了多少 token，报告就去量它", "prompt": "说说这件事", "script": [{"tool": {"name": "read", "arguments": {"path": "notes.txt"}}, "usage": [1200, 60, 900]}, {"text": "念完了。", "usage": [1400, 30, 1100]}], "files": {"notes.txt": "x\n"}, "expect": {"finalTextContains": ["念完了"], "tools": ["read"], "maxSteps": 3}}

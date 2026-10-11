@@ -121,14 +121,28 @@ public final class AgentLoop {
     String finalText = "";
     int step = 0;
     worker.set(Thread.currentThread());
+    listener.onRunStart();
+    Result result = null;
+    Throwable failure = null;
     try {
-      return loop(userInput, finalText, step);
+      result = loop(userInput, finalText, step);
+    } catch (RuntimeException | Error e) {
+      // 一次失败的运行也要收尾：跑一段没有终点的 span 的观察者，会永远以为自己还在跑。
+      failure = e;
     } finally {
       worker.set(null);
       // 中止会打断这个线程，而中断状态会一直置位，直到有人清掉它。留着不管，它会破坏这个线程*接下来*要做的
       // 事——web 服务器会把这些线程交还给线程池——所以一次运行总是干干净净地离开。
       Thread.interrupted();
+      listener.onRunEnd(result, failure);
     }
+    if (failure instanceof RuntimeException runtime) {
+      throw runtime;
+    }
+    if (failure instanceof Error error) {
+      throw error;
+    }
+    return result;
   }
 
   private Result loop(String userInput, String finalText, int step) {

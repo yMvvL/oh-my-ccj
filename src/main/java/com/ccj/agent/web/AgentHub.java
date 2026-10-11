@@ -23,6 +23,11 @@ import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.core.VisionConfig;
 import com.ccj.agent.core.Workspace;
 import com.ccj.agent.core.ProviderDefinition;
+import com.ccj.agent.obs.MeteredApprover;
+import com.ccj.agent.obs.Metric;
+import com.ccj.agent.obs.Metrics;
+import com.ccj.agent.obs.Recorder;
+import com.ccj.agent.obs.RunTrace;
 import com.ccj.agent.tool.TaskTool;
 import com.ccj.agent.core.SessionRepair;
 import com.ccj.agent.provider.ModelCatalog;
@@ -148,11 +153,30 @@ public final class AgentHub implements AutoCloseable {
   /** 每个正在跑的回合一个：干着活的会话拿到自己的线程，而不是服务器的线程。 */
   private final ExecutorService turns = Executors.newVirtualThreadPerTaskExecutor();
 
+  /**
+   * 这个服务器的指标，`/metrics` 上暴露的就是它。
+   *
+   * <p>它住在这里，因为这里就是那个「只有一个」的地方：一个进程一个指标注册表，正如一个进程一个事件流。
+   * 按会话分开的话，面板没法回答任何跨会话的问题（现在有几个对话在干活、一共花了多少 token）。
+   */
+  private final Metrics metrics = new Metrics();
+
   /** 事件扇出：谁在听、重连可以重放哪一段、每条事件拿到哪个序号。 */
-  private final EventStream events = new EventStream();
+  private final EventStream events = new EventStream(metrics);
   /** 审批台：谁在等人类，以及一个请求能等多久。 */
   private final ApprovalDesk approvals;
   private final AtomicReference<Provider> provider = new AtomicReference<>();
+
+  /**
+   * 每个会话最近一次运行的 trace，`GET /api/trace` 读的就是它。
+   *
+   * <p>只留最近一次，而且只留在内存里：它回答的是「刚刚那个回合里到底发生了什么」——一次运行的形状与
+   * 它里面那几段耗时。一次运行一棵树，保留历史是另一件事，那件事由 {@link #setTraceSink} 指向的文件来做。
+   */
+  private final Map<String, RunTrace> lastTraces = new ConcurrentHashMap<>();
+
+  /** 每次运行的 trace 写到哪；null 表示不留。由调用方设置，因为只有它知道命令行给了什么。 */
+  private volatile Recorder.TraceSink traceSink;
 
   /**
    * 正在跑的回合，每个会话一个，以及每一个所属的对话。
@@ -225,6 +249,31 @@ public final class AgentHub implements AutoCloseable {
     ObjectNode node = statusFields();
     node.put("type", "status");
     return node;
+  }
+
+  /** 屏幕上那个会话的 id；没有打开的会话时是空串。 */
+  public String currentSessionId() {
+    return sessionIdOf(session());
+  }
+
+  /** 这个服务器的指标；`GET /metrics` 暴露的就是它。 */
+  public Metrics metrics() {
+    return metrics;
+  }
+
+  /**
+   * 每次运行的痕迹追加到哪。
+   *
+   * <p>由调用方设置，理由与 {@link #setApprovalRules} 相同：那是一个命令行 flag 指到的文件，而本类看不到
+   * 命令行。不设置就什么都不写——痕迹的另一个去处是 {@link #lastTrace}，在内存里，永远都在。
+   */
+  public void setTraceSink(Recorder.TraceSink sink) {
+    this.traceSink = sink;
+  }
+
+  /** 某个会话最近一次运行的痕迹；它还没跑过回合时为 null。 */
+  public RunTrace lastTrace(String sessionId) {
+    return sessionId == null ? null : lastTraces.get(sessionId);
   }
 
   /** 这条会话持有的待发送图片，或者 {@code null}。 */
@@ -352,7 +401,12 @@ public final class AgentHub implements AutoCloseable {
       directory = target.sessionsDir();
     }
     ArrayNode array = Json.mapper().createArrayNode();
-    for (SessionStore.Summary summary : SessionStore.list(directory)) {
+    // 列一次会话目录会重新推导刚被写入的那个会话（见 SessionIndex），而这发生在每个回合结束之后——所以
+    // 它值得有一个自己的数字，好让「侧栏开始变慢」这件事有地方冒出来。
+    long started = System.nanoTime();
+    List<SessionStore.Summary> sessions = SessionStore.list(directory);
+    metrics.observe(Metric.SESSION_LIST_SECONDS, (System.nanoTime() - started) / 1_000_000_000.0);
+    for (SessionStore.Summary summary : sessions) {
       ObjectNode node = array.addObject();
       node.put("id", summary.id());
       node.put("title", summary.title());
@@ -1720,15 +1774,41 @@ public final class AgentHub implements AutoCloseable {
             active.maxTokens(),
             active.reasoning(),
             active.maxContextTokens());
+    ToolRegistry registry = registryFor(conversation, current, options, active);
+    // 每个回合固定发出去的那一份有多大。它只有在这里才量得准：工具表里可能有 MCP 服务器带来的工具，而
+    // 系统提示里可能有项目自己的 CCJ.md。所以它是一个被观察的事实，不是从配置文件里读出来的一个数。
+    metrics.set(
+        Metric.PREFIX_TOKENS,
+        TokenEstimate.of(options.systemPrompt()) + registry.schemaTokens());
     ToolContext context =
-        new ToolContext(conversation.cwd(), approvals.gate(), active.outputLimitBytes());
+        new ToolContext(
+            conversation.cwd(),
+            // 审批不经过循环的回调（它发生在一次工具调用的里面），所以它自己带一层计时。
+            new MeteredApprover(metrics, approvals.gate()),
+            active.outputLimitBytes());
+    String sessionId = conversation.id();
     return new AgentLoop(
         current,
-        registryFor(conversation, current, options, active),
+        registry,
         conversation.session(),
         options,
         context,
-        new WebListener(conversation.id()));
+        new Recorder(metrics, sessionId, this::recordTrace, new WebListener(sessionId)));
+  }
+
+  /**
+   * 一次运行结束：最近的那棵树留在内存里供 {@code GET /api/trace} 读，另外（如果命令行给了文件）追加到
+   * 那份 JSONL 里。
+   *
+   * <p>两部分都要，因为它们的用处不同：内存里那棵回答「刚刚那一次到底发生了什么」，而在文件里的那些能被
+   * 拿走、被 diff、被另一个工具读——那正是「痕迹」这个词在这个项目里的意思。
+   */
+  private void recordTrace(RunTrace trace) {
+    lastTraces.put(trace.sessionId(), trace);
+    Recorder.TraceSink sink = traceSink;
+    if (sink != null) {
+      sink.accept(trace);
+    }
   }
 
   /**
@@ -2035,6 +2115,18 @@ public final class AgentHub implements AutoCloseable {
     ObjectNode node = statusFields();
     node.put("sessionId", sessionIdOf(session()));
     publish(sessionIdOf(session()), "status", node);
+    // 两个仪表跟着状态走：它们是全服务器的，而状态是这里发布得最频繁的东西（每个回合的一头一尾、每次
+    // 开关、每次切换）。给它们各自一条定时线程，是拿一个专门的调度器去换两个整数。
+    int queued = 0;
+    int running = 0;
+    for (Conversation conversation : conversations.values()) {
+      queued += conversation.queued().size();
+      if (conversation.running()) {
+        running++;
+      }
+    }
+    metrics.set(Metric.QUEUED_MESSAGES, queued);
+    metrics.set(Metric.RUNNING_CONVERSATIONS, running);
   }
 
   public void publishUsage() {
