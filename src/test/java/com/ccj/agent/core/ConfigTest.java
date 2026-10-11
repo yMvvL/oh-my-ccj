@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Map;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -221,6 +222,7 @@ class ConfigTest {
         AppPaths.fromEnv(Map.of("HOME", "/home/someone")).home());
   }
 
+  @Tag("posix")
   @Test
   void writeIntoPersistsManagedFieldsAndKeepsTheRest() throws IOException {
     Path file = tmp.resolve("nested/config.json");
@@ -443,6 +445,7 @@ class ConfigTest {
     assertEquals("OPENAI_API_KEY", reread.resolved().apiKeyEnv());
   }
 
+  @Tag("posix")
   @Test
   void theRememberedMapSurvivesTheFile() throws IOException {
     Path file = tmp.resolve("config.json");

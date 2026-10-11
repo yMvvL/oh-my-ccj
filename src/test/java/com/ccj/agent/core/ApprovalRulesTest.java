@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -172,6 +173,7 @@ class ApprovalRulesTest {
     assertFalse(Files.readString(file).contains("mvn"), "会话内的允许不会被写下来");
   }
 
+  @Tag("posix")
   @Test
   void allowAlwaysWritesExactlyTheCommandThatWasApproved() throws IOException {
     ApprovalRules rules = rules("{\"projects\": {\"%s\": {}}}");

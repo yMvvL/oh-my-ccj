@@ -14,6 +14,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -100,6 +101,7 @@ class WebTokenTest {
     assertNotEquals(WebToken.generate(), WebToken.generate());
   }
 
+  @Tag("posix")
   @Test
   void theFileIsNotReadableByAnyoneElse() throws Exception {
     WebToken.from(home);

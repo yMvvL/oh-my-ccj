@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.io.TempDir;
  * 选择器要外调一个桌面对话框，所以子进程那一套是用 {@code /bin/sh} 替身演练的：真对话框需要人
  * 点一下，但它周围的一切——解析答案、拒绝一个非目录、以及关掉一个没人应答的对话框——都不需要。
  */
+@Tag("posix")
 class NativeFolderChooserTest {
 
   @TempDir Path tmp;

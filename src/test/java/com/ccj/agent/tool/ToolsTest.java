@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -59,6 +60,7 @@ class ToolsTest {
     assertTrue(unknown.content().contains("未知工具 'nope'"), unknown.content());
   }
 
+  @Tag("posix")
   @Test
   void theConfiguredShellReachesBothPlacesThatRunAnything() throws Exception {
     // 三参形式存在的唯一理由，就是一次装配把同一个程序交给会跑命令的两处。两边各点一次名，因为接到一半

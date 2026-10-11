@@ -19,7 +19,7 @@ sandbox: the approval prompt is the only guard, and `--yolo` removes it.
 
 ---
 
-从零开始用纯 Java 21 写成的编码代理运行时——29.2k 行 Java 加一个 9.0k 行的原生页面，旁边还有 26.3k 行
+从零开始用纯 Java 21 写成的编码代理运行时——29.4k 行 Java 加一个 9.0k 行的原生页面，旁边还有 26.3k 行
 测试。它是每个编码代理都围绕的那个循环的一个小巧、可读的实现。
 
 ```
@@ -48,7 +48,7 @@ Added the check on line 42 and the suite passes.
 - **审批是唯一的防线，而它可以被记住。** 五个答案——拒绝 / 只允许这一次 / 本会话都允许 / 始终允许 / 以后
   都拒绝——两个「从现在起」各写一条规则，主语一模一样。子代理问的是同一个人，它的写入也一样要审批，而且
   它不能再往下委派：`task` 根本不在它的注册表里。[SECURITY.md](SECURITY.md)
-- **每个主张都带着它的测量结果。** 907 个测试离线跑，其中一条经 CDP 驱动一个**真浏览器**跑完一个回合；
+- **每个主张都带着它的测量结果。** 909 个测试离线跑，其中一条经 CDP 驱动一个**真浏览器**跑完一个回合；
   [CHANGELOG](docs/CHANGELOG.md) 记着每次改动的测量、代价，以及**没有**验证的部分。
 
 ## 两分钟跑起来
@@ -67,9 +67,10 @@ ln -sfn "$PWD/ccj" ~/.local/bin/ccj        # use `ccj` from anywhere
 `~/.oh-my-ccj/config.json` 并立即生效。启动器在 jar 过期时自己重建，会话也放在 `~/.oh-my-ccj` 下。
 
 **JDK 21+，Linux 或 macOS。** 不需要 Maven、不需要 Node（Node 只在跑页面用例时需要；缺席时那些用例被
-**报告**为跳过，而不是悄悄通过）。**Windows 的机制就位，但没有任何人验证过**——shell 可配置，`ccj.cmd`
-在仓库根，可 CI 上没有 Windows，所以「一个回合在 Windows 上跑起来」是目标而不是一次被观察到的运行。细节见
-[docs/USAGE.md](docs/USAGE.md)。
+**报告**为跳过，而不是悄悄通过）。**Windows 上跑的是不绑定 POSIX 的那部分**：CI 里有一个 `windows` 作业，
+它 `-DexcludedGroups=posix` 跑其余全部（文件权限与 `/bin/sh` 那几条带着具名的 `posix` 标签，而不是静默跳过），
+并跑一条真实的 CLI 回合、在日志里打印「一个回合跑起来了，shell 来自配置」。细节见
+[docs/USAGE.md](docs/USAGE.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 运行之前请先读这一节
 
@@ -91,7 +92,7 @@ ln -sfn "$PWD/ccj" ~/.local/bin/ccj        # use `ccj` from anywhere
 - 每个会话同时只有一个回合；同一工作区里多个对话的工具之间没有先后顺序。
 - 会话文件会无上限地增长：放不进上下文预算的内容只是被**省略**，不是被删掉。
 - 完整清单——缓存命中率的诚实报法、花费上限的语义、`abort` 停在哪里、密钥以明文存在一个 `0600` 文件里、
-  以及一条**未验证**的 Windows——见 [docs/USAGE.md](docs/USAGE.md)。
+  以及 Windows 上**只跑了一部分**（不绑定 POSIX 的那些）——见 [docs/USAGE.md](docs/USAGE.md)。
 
 ## 更多
 

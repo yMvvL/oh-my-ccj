@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.net.InetSocketAddress;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -49,6 +50,7 @@ class WebSettingsTest extends WebHarness {
     }
   }
 
+  @Tag("posix")
   @Test
   void savingSettingsSwitchesTheModelAndPersistsTheFile() throws Exception {
     Files.writeString(

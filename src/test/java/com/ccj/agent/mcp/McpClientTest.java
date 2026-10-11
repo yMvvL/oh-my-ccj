@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -121,6 +122,7 @@ class McpClientTest {
         || failure.getMessage().contains("不再运行"), failure.getMessage());
   }
 
+  @Tag("posix")
   @Test
   void aServerThatExitsDuringTheHandshakeNamesItselfAndWhy() {
     // 一条根本不是服务器的命令——配置文件里最容易写错的那个条目。

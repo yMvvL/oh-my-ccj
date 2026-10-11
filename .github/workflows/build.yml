@@ -6,8 +6,13 @@ name: build
 # 在开 pull request 之前知道自己的改动有没有弄坏什么。数量刻意不写进任何地方：每加一个测试它就会漂移，
 # 而注释里一个过期的数字比没有数字更糟——README 上方那个 badge 才是实时的答案。
 #
-# 刻意跑两个平台：shell 工具硬编码 /bin/bash，启动器用到 readlink，所以受支持的目标是 POSIX 系统——
-# 而在 Linux 和 macOS 上都跑，才让这句话是事实而不是愿望。
+# 刻意跑三个平台。Linux 与 macOS 跑**全量**；Windows 跑**不绑定 POSIX 的那部分**（见下面的 windows 作业），
+# 而那样分是因为有一类东西在 Windows 上没有对应物：文件权限（`PosixFilePermissions`）与 `/bin/sh`。那些用例
+# 带着 `posix` 标签，由 `-DexcludedGroups=posix` 排除——**具名排除**，而不是让它们静默跳过：一个"跳过"看起来
+# 和通过一模一样，而这里要的是"哪些东西没在 Windows 上跑"是一份写下来的名单。
+#
+# 这个作业还是 2.5 那句"shell 是可配置的"的证据。那份声明在它写下的那天是**没有人验证过**的：Windows 上跑
+# 一次才算数，而 ShellFromConfigTest 打印的那两行就是"跑过了"。
 
 on:
   push:
@@ -80,6 +85,65 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: surefire-reports-${{ matrix.os }}
+          path: target/surefire-reports/
+          if-no-files-found: ignore
+
+
+  # Windows：只跑不绑定 POSIX 的那部分。
+  #
+  # 这是 4.6 要的那份证据。它跑不了全量，而它**不假装**跑得了：`posix` 那一组被具名排除，名单在代码里
+  # （`@Tag("posix")`），不在这个文件里。
+  windows:
+    name: windows（不绑定 POSIX 的那部分）
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 设置 JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # 与另外两个平台同理：浏览器用例（src/test/js/*.mjs）在 node 下跑，没有 node 时它们被报告为*跳过*，
+      # 而一次"跳过"不能看起来像一次通过。
+      - name: 设置 Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # 真浏览器那一条不在 Windows 上跑：它要一个真的 Chromium 与 CDP 的引导，而那条路只在 Linux 与 macOS
+      # 上被验证过（它是 `--excludedGroups` 排除不掉的东西，所以按名字排除）。
+      - name: 构建并测试（具名排除 posix 那一组）
+        run: .\mvnw.cmd -B -ntp "-DexcludedGroups=posix" "-Dtest=!WebBrowserSmokeTest" test
+
+      # 那就是"一个回合跑起来了，shell 来自配置"：一个真实的 CLI 回合（--demo 只关掉模型），而它打印的两行
+      # 被这一步找出来——找不到就让作业失败，因为一句没人检查过的证据与没有证据是一回事。
+      - name: 证据——一个回合跑起来了，shell 来自配置
+        run: |
+          .\mvnw.cmd -B -ntp -Dtest=ShellFromConfigTest test | Tee-Object -FilePath evidence.txt
+          if (-not (Select-String -Quiet -Path evidence.txt -Pattern 'CI 证据')) {
+            throw "日志里没有那条证据"
+          }
+
+      - name: 失败的测试
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem target/surefire-reports/*.txt | ForEach-Object {
+            if (Select-String -Quiet -Path $_.FullName -Pattern '<<< (FAILURE|ERROR)') {
+              Write-Output ("===== " + $_.Name)
+              Get-Content $_.FullName | Write-Output
+            }
+          }
+
+      - name: 上传测试报告
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: surefire-reports-windows
           path: target/surefire-reports/
           if-no-files-found: ignore
 
