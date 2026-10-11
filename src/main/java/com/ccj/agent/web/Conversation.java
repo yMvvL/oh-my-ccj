@@ -84,7 +84,7 @@ final class Conversation {
    * 包内可见，而不是 private：把它放进来、画出来、丢掉它的那三处都在 hub 里（上传、发送、丢弃），而它们
    * 需要读这个引用本身，不是一个「有没有图片」的布尔。搬过来的时候这是一处放宽，其它一个字没动。
    */
-  final AtomicReference<Held> pendingPicture = new AtomicReference<>();
+  final AtomicReference<Held> pendingAttachment = new AtomicReference<>();
 
   Conversation(
       String id,
@@ -250,7 +250,7 @@ final class Conversation {
 
     /** 这条消息在对话里的开头，用户自己说的话接在它后面。 */
     String block() {
-      return pictureMessage(saved, description);
+      return attachmentMessage(saved, description);
     }
   }
 
@@ -265,12 +265,12 @@ final class Conversation {
    * <p>它住在图片被持有的这个地方：它是这条消息的形状，而不是某个前端要画的样式——会话文件、压缩、重放与
    * 恢复都读这一段文本，谁都不能自己拼一份。
    */
-  static String pictureMessage(AttachmentStore.Saved saved, String description) {
-    return "[picture "
+  static String attachmentMessage(AttachmentStore.Saved saved, String description) {
+    return "[attachment "
         + saved.path().getFileName()
         + "] "
         + description
-        + "\n\n(The picture this describes is saved at "
+        + "\n\n(The attachment this describes is saved at "
         + saved.path()
         + "; read it if a detail the description dropped matters.)";
   }

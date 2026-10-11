@@ -118,9 +118,9 @@ interface HubState {
    * <p>它是**推导**出来的，不是又一块状态：先找这个会话的对话，再问它手里有没有东西。所以它写成 default——
    * 一处实现，而不是每个实现各写一遍。
    */
-  default Conversation.Held heldPicture(FileSession current) {
+  default Conversation.Held heldAttachment(FileSession current) {
     Conversation conversation = current == null ? null : conversation(current.id());
-    return conversation == null ? null : conversation.pendingPicture.get();
+    return conversation == null ? null : conversation.pendingAttachment.get();
   }
 
   /** 会话列表，{@code workspace} 为 null 表示活动工作区。 */

@@ -103,9 +103,9 @@ class SessionExportTest {
     AttachmentStore.Saved saved = store.save("board.png", png(240, 160));
     session.append(
         new Message.User(
-            "[picture "
+            "[attachment "
                 + saved.path().getFileName()
-                + "] 白板上写着今天要做的事\n\n(The picture this describes is saved at "
+                + "] 白板上写着今天要做的事\n\n(The attachment this describes is saved at "
                 + saved.path()
                 + ")"));
 
@@ -121,16 +121,16 @@ class SessionExportTest {
     // 导出的输入是一段不可信的文本，而它唯一会碰到文件系统的地方就是解析这个名字。
     FileSession session = session();
     AttachmentStore.forSession(session.file()).save("real.png", png(60, 60));
-    session.append(new Message.User("[picture ../../../../etc/passwd] 试试看"));
+    session.append(new Message.User("[attachment ../../../../etc/passwd] 试试看"));
 
     String html = SessionExport.toHtml(session, Instant.parse("2026-10-11T12:00:00Z"));
 
     assertFalse(html.contains("data:"), "目录之外的任何文件都不该被读进来");
     assertTrue(html.contains("试试看"), "那段文字照常显示，什么都不猜");
-    assertEquals("real.png", SessionExport.pictureName("[picture real.png] 描述"));
-    assertNull(SessionExport.pictureName("这根本不是一条图片消息"));
-    assertNull(SessionExport.pictureName("[picture ] 没有名字"));
-    assertNull(SessionExport.pictureName("[picture 缺一个方括号"));
+    assertEquals("real.png", SessionExport.attachmentName("[attachment real.png] 描述"));
+    assertNull(SessionExport.attachmentName("这根本不是一条图片消息"));
+    assertNull(SessionExport.attachmentName("[attachment ] 没有名字"));
+    assertNull(SessionExport.attachmentName("[attachment 缺一个方括号"));
   }
 
   @Test
@@ -154,7 +154,7 @@ class SessionExportTest {
     FileSession session = session();
     AttachmentStore store = AttachmentStore.forSession(session.file());
     AttachmentStore.Saved saved = store.save("board.png", png(80, 80));
-    session.append(new Message.User("[picture " + saved.path().getFileName() + "] 一张图"));
+    session.append(new Message.User("[attachment " + saved.path().getFileName() + "] 一张图"));
     session.append(Message.Assistant.text("看到了。"));
 
     List<String> before = snapshot(session.file(), store.directory());

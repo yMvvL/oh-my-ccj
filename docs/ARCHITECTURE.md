@@ -46,7 +46,7 @@ HubState        23 个名字：settings、config 的读与写、聊天里的会�
   +-- HubForms        模型 / 提供方 / 工作区 / 配置这几张表单的往返（会写文件、会换提供方）
   +-- HubViews        状态表、会话列表、用量、收据、导出、转录回放（渲染并发布，不写）
   +-- HubSessions     会话的新建 / 恢复 / 删除 / 切换，以及"哪一个是屏幕上的那个"
-  +-- HubAttachments  一个文件怎么进对话：独立描述 → 文本 → 描述进对话，文件留在会话旁边
+  +-- HubAttachments  一个文件怎么进对话：文本本地概括（`session/TextPreview`）／图片与其余字节交给视觉模型 → 描述进对话，文件留在旁边
   +-- HubTurns        回合的执行：submit / runTurn / abort / 压缩 / 收回；它自己带着线程池与检查点
 ```
 

@@ -28,17 +28,17 @@ class WebPictureMessageTest {
   void theRendererOnlyLaysTheTextOutAndNeverRewritesIt() {
     String script = WebSessionRowTest.appSourceOrSkip();
 
-    // 会话文件、重放与压缩靠的都是那段文本，所以渲染层只允许**读**它：`[picture ` 在这里是一个
+    // 会话文件、重放与压缩靠的都是那段文本，所以渲染层只允许**读**它：`[attachment ` 在这里是一个
     // 被查找的模式，而不是被拼接出去的字符串。把这条区别钉住，是因为「渲染时补上标记」正是那段
     // 文本会开始漂移的地方——而它漂了，会话文件、重放和压缩就各拿到不一样的东西。
-    int parser = script.indexOf("function pictureParts(");
+    int parser = script.indexOf("function attachmentParts(");
     assertTrue(parser > 0, "解析器在");
     int next = script.indexOf("function appendUser(", parser);
     String slice = script.substring(parser, next > parser ? next : script.length());
-    assertTrue(slice.contains("text.indexOf('[picture ')"), "标记是被查找的");
-    assertTrue(slice.contains("indexOf(PICTURE_TRAILER)"), "按那句文件说明切开");
+    assertTrue(slice.contains("text.indexOf('[attachment ')"), "标记是被查找的");
+    assertTrue(slice.contains("indexOf(ATTACHMENT_TRAILER)"), "按那句文件说明切开");
     assertTrue(
-        !slice.contains("'[picture ' +") && !slice.contains("+ '[picture '"),
+        !slice.contains("'[attachment ' +") && !slice.contains("+ '[attachment '"),
         "而它从不被拼接出去");
   }
 

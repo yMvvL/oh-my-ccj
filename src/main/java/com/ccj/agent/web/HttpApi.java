@@ -272,14 +272,14 @@ public final class HttpApi implements AutoCloseable {
     String text = posted.path("text").asText("");
     // 图片是可选的，而且它必须是这条会话已经持有的那一张：上传就是「我要发它」，所以这个名字是一次一致性
     // 检查而不是一个文件名参数。正文只有在没有图片时才必须存在。
-    String picture = posted.path("picture").asText("");
-    if (text.isBlank() && picture.isBlank()) {
+    String attachment = posted.path("attachment").asText("");
+    if (text.isBlank() && attachment.isBlank()) {
       error(exchange, 400, "字段 'text' 是必需的");
       return;
     }
     // 两种情况下都是 202：消息被接受了，无论它是开启了一个回合，还是在正在跑的那个后面排队。页面会说清
     // 是哪一种，而输入框在两种情况下都保持可用。
-    AgentHub.Submit submit = hub.submit(text, picture);
+    AgentHub.Submit submit = hub.submit(text, attachment);
     respond(
         exchange,
         202,
@@ -300,9 +300,9 @@ public final class HttpApi implements AutoCloseable {
    */
   private void attachment(HttpExchange exchange) throws IOException {
     if ("DELETE".equals(exchange.getRequestMethod())) {
-      // 丢掉这张待发送的图片。DELETE，不是 POST /api/attachment/discard：被丢掉的就是这个资源本身，而
+      // 丢掉这个待发送的附件。DELETE，不是 POST /api/attachment/discard：被丢掉的就是这个资源本身，而
       // 它没有别的东西可读。
-      String dropped = hub.discardPicture();
+      String dropped = hub.discardAttachment();
       respond(exchange, 200, Json.object().put("discarded", dropped == null ? null : dropped));
       return;
     }
@@ -321,7 +321,7 @@ public final class HttpApi implements AutoCloseable {
       error(exchange, 413, e.getMessage());
       return;
     }
-    respond(exchange, 202, hub.describePicture(queryParam(exchange, "name"), bytes));
+    respond(exchange, 202, hub.describeAttachment(queryParam(exchange, "name"), bytes));
   }
 
   /**
@@ -417,24 +417,24 @@ public final class HttpApi implements AutoCloseable {
       error(exchange, 405, "需要 GET");
       return;
     }
-    AgentHub.PictureFile picture;
+    AgentHub.Thumbnail thumbnail;
     try {
-      picture = hub.attachmentThumbnail(queryParam(exchange, "name"));
+      thumbnail = hub.attachmentThumbnail(queryParam(exchange, "name"));
     } catch (IllegalArgumentException e) {
       error(exchange, 400, e.getMessage());
       return;
     }
-    if (picture == null) {
-      error(exchange, 404, "这条会话里没有这张图片");
+    if (thumbnail == null) {
+      error(exchange, 404, "这条会话里没有这个文件");
       return;
     }
-    exchange.getResponseHeaders().add("Content-Type", picture.mediaType());
+    exchange.getResponseHeaders().add("Content-Type", thumbnail.mediaType());
     // 图片在同一秒里不会变两次，但它**会**变：同一个名字在被取代之后可能是另一张图。所以让它每次
     // 都问一次——这些字节是本机磁盘上的，代价比一个陈旧的缩略图小。
     exchange.getResponseHeaders().add("Cache-Control", "no-cache");
-    exchange.sendResponseHeaders(200, picture.bytes().length);
+    exchange.sendResponseHeaders(200, thumbnail.bytes().length);
     try (OutputStream out = exchange.getResponseBody()) {
-      out.write(picture.bytes());
+      out.write(thumbnail.bytes());
     }
   }
 

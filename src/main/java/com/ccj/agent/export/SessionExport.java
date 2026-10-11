@@ -40,8 +40,8 @@ public final class SessionExport {
   private static final DateTimeFormatter TIMESTAMP =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
 
-  /** 一张图片消息的开头：{@code [picture name.png] 描述…}，与转录里那段文本、压缩、重放用的是同一个形状。 */
-  private static final String PICTURE_PREFIX = "[picture ";
+  /** 一张图片消息的开头：{@code [attachment name.png] 描述…}，与转录里那段文本、压缩、重放用的是同一个形状。 */
+  private static final String PICTURE_PREFIX = "[attachment ";
 
   private SessionExport() {}
 
@@ -154,13 +154,13 @@ public final class SessionExport {
    * 一条用户消息；如果它是带着图片的那一条，图片以缩略图内联进来。
    *
    * <p>名字按附件目录里的一张**平面**文件来解析（{@code ../}、绝对路径、跑到目录之外的符号链接都当没有
-   * 这张图片）——导出的输入是不可信的文本，而它唯一会碰到文件系统的地方就是这里。解析不出来时那段文字照常
+   * 这个文件）——导出的输入是不可信的文本，而它唯一会碰到文件系统的地方就是这里。解析不出来时那段文字照常
    * 显示，什么都不猜。
    */
   private static void appendUser(StringBuilder out, Message.User user, Path attachments) {
     out.append("<section class=\"msg msg-user\">\n<h2>用户</h2>\n");
     String text = user.text() == null ? "" : user.text();
-    String picture = pictureName(text);
+    String picture = attachmentName(text);
     if (picture != null && attachments != null) {
       String inlined = inlineThumbnail(attachments, picture);
       if (inlined != null) {
@@ -173,7 +173,7 @@ public final class SessionExport {
   }
 
   /** 那段文本里点名的图片名；不是一条图片消息时为 null。 */
-  static String pictureName(String text) {
+  static String attachmentName(String text) {
     if (!text.startsWith(PICTURE_PREFIX)) {
       return null;
     }

@@ -319,8 +319,8 @@ public final class AgentHub implements AutoCloseable {
     return views.historyJson();
   }
 
-  private Conversation.Held heldPicture(FileSession current) {
-    return views.heldPicture(current);
+  private Conversation.Held heldAttachment(FileSession current) {
+    return views.heldAttachment(current);
   }
   // ---- 表单往返：搬到了 HubForms（4.8），这里只剩下委托
 
@@ -386,8 +386,8 @@ public final class AgentHub implements AutoCloseable {
     return turns.submit(text);
   }
 
-  public Submit submit(String text, String pictureName) {
-    return turns.submit(text, pictureName);
+  public Submit submit(String text, String attachmentName) {
+    return turns.submit(text, attachmentName);
   }
 
   public ObjectNode undoPreview() {
@@ -442,23 +442,23 @@ public final class AgentHub implements AutoCloseable {
    * 的拼写有太多写法。
    */
   /** 一张图片的字节，以及它们是什么类型。 */
-  public record PictureFile(byte[] bytes, String mediaType) {}
+  public record Thumbnail(byte[] bytes, String mediaType) {}
 
 
 
 
   // ---- 附件那条路：搬到了 HubAttachments（4.8），这里只剩下委托
 
-  public ObjectNode describePicture(String name, byte[] bytes) {
-    return attachments.describePicture(name, bytes);
+  public ObjectNode describeAttachment(String name, byte[] bytes) {
+    return attachments.describeAttachment(name, bytes);
   }
 
-  public PictureFile attachmentThumbnail(String name) {
+  public Thumbnail attachmentThumbnail(String name) {
     return attachments.attachmentThumbnail(name);
   }
 
-  public String discardPicture() {
-    return attachments.discardPicture();
+  public String discardAttachment() {
+    return attachments.discardAttachment();
   }
 
 

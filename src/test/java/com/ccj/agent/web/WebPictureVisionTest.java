@@ -46,7 +46,7 @@ class WebPictureVisionTest extends WebHarness {
     JsonNode response;
 
     try (Sse sse = watch()) {
-      HttpResponse<String> posted = postPicture("whiteboard.png", pngBytes());
+      HttpResponse<String> posted = postAttachment("whiteboard.png", pngBytes());
       assertEquals(202, posted.statusCode(), posted.body());
       response = Json.parse(posted.body());
       assertEquals(
@@ -60,7 +60,7 @@ class WebPictureVisionTest extends WebHarness {
       JsonNode status = Json.parse(get("/api/status").body());
       assertEquals(
           "whiteboard.png",
-          status.path("picture").path("name").asText(),
+          status.path("attachment").path("name").asText(),
           "status 把它报成「待发送」，所以刷新之后那条缩略条还在");
       assertTrue(
           sse.forSession(status.path("sessionId").asText()).stream()
@@ -74,7 +74,7 @@ class WebPictureVisionTest extends WebHarness {
 
       JsonNode user = sse.await("user", 5000);
       String text = user.path("text").asText();
-      assertTrue(text.startsWith("[picture whiteboard.png]"), text);
+      assertTrue(text.startsWith("[attachment whiteboard.png]"), text);
       assertTrue(text.contains("a whiteboard with a red arrow"), text);
       assertTrue(text.contains(response.path("attachment").asText()),
           "描述漏掉的细节还能用 read 读回来：" + text);
@@ -91,7 +91,7 @@ class WebPictureVisionTest extends WebHarness {
       assertFalse(toMainModel.contains("base64"), "图片本身留在对话之外");
 
       // 它跟着那句话走了，所以它不再等着。
-      assertTrue(Json.parse(get("/api/status").body()).path("picture").isNull(),
+      assertTrue(Json.parse(get("/api/status").body()).path("attachment").isNull(),
           "发出去之后就没有待发送的图片了");
     }
 
@@ -118,7 +118,7 @@ class WebPictureVisionTest extends WebHarness {
     restartWithVision();
 
     try (Sse sse = watch()) {
-      assertEquals(202, postPicture("receipt.png", pngBytes()).statusCode());
+      assertEquals(202, postAttachment("receipt.png", pngBytes()).statusCode());
       assertEquals(202, post("/api/message", "{\"text\":\"这个多少钱\"}").statusCode());
       String text = sse.await("user", 5000).path("text").asText();
       assertTrue(text.contains("a receipt with a total of 42"), text);
@@ -135,10 +135,10 @@ class WebPictureVisionTest extends WebHarness {
     restartWithVision();
 
     HttpResponse<String> posted =
-        post("/api/message", "{\"text\":\"看图\",\"picture\":\"other.png\"}");
+        post("/api/message", "{\"text\":\"看图\",\"attachment\":\"other.png\"}");
 
     assertEquals(400, posted.statusCode(), posted.body());
-    assertTrue(posted.body().contains("请重新选一张"), posted.body());
+    assertTrue(posted.body().contains("请重新选一个"), posted.body());
     assertEquals(List.of(), provider.requests(), "两端不一致时什么都不发");
   }
 
@@ -149,12 +149,12 @@ class WebPictureVisionTest extends WebHarness {
     restartWithVision();
 
     try (Sse sse = watch()) {
-      assertEquals(202, postPicture("cat.png", pngBytes()).statusCode());
+      assertEquals(202, postAttachment("cat.png", pngBytes()).statusCode());
 
       HttpResponse<String> dropped = delete("/api/attachment");
       assertEquals(200, dropped.statusCode(), dropped.body());
       assertEquals("cat.png", Json.parse(dropped.body()).path("discarded").asText());
-      assertTrue(Json.parse(get("/api/status").body()).path("picture").isNull());
+      assertTrue(Json.parse(get("/api/status").body()).path("attachment").isNull());
 
       assertEquals(202, post("/api/message", "{\"text\":\"刚才那张图呢\"}").statusCode());
       String text = sse.await("user", 5000).path("text").asText();
@@ -171,37 +171,61 @@ class WebPictureVisionTest extends WebHarness {
     restartWithVision();
 
     try (Sse sse = watch()) {
-      assertEquals(202, postPicture("first.png", pngBytes()).statusCode());
-      JsonNode second = Json.parse(postPicture("second.png", pngBytes()).body());
+      assertEquals(202, postAttachment("first.png", pngBytes()).statusCode());
+      JsonNode second = Json.parse(postAttachment("second.png", pngBytes()).body());
       assertTrue(second.path("replaced").asBoolean(), "第二次上传说的是它取代了什么");
       assertEquals("second.png",
-          Json.parse(get("/api/status").body()).path("picture").path("name").asText(),
+          Json.parse(get("/api/status").body()).path("attachment").path("name").asText(),
           "拿着的是第二次上传的那一张");
 
       assertEquals(202, post("/api/message", "{\"text\":\"这一张\"}").statusCode());
       String text = sse.await("user", 5000).path("text").asText();
       // 标记里带着文件名，所以即使两段描述是同一段桩文本，也能看出走的是哪一张。
-      assertTrue(text.startsWith("[picture second.png]"), text);
+      assertTrue(text.startsWith("[attachment second.png]"), text);
       assertTrue(text.endsWith("这一张"), text);
-      assertTrue(Json.parse(get("/api/status").body()).path("picture").isNull(),
+      assertTrue(Json.parse(get("/api/status").body()).path("attachment").isNull(),
           "发出去之后就没有待发送的图片了");
     }
     assertEquals(2, visionCalls.get(), "两张图片各描述一次：上传即描述，没有别的时机");
   }
 
   @Test
-  void aPngThatIsNotAPngIsRefusedWithoutAskingTheVisionModel() throws Exception {
+  void aTextFileNamedPngIsDescribedLocallyAndTheVisionModelIsNeverAsked() throws Exception {
     AtomicInteger visionCalls = new AtomicInteger();
     startVision("never asked", visionCalls, new CopyOnWriteArrayList<>());
     restartWithVision();
 
     HttpResponse<String> posted =
-        postPicture("receipt.png", "this is not a png".getBytes(StandardCharsets.UTF_8));
+        postAttachment("receipt.png", "this is not a png".getBytes(StandardCharsets.UTF_8));
 
-    assertEquals(400, posted.statusCode(), posted.body());
-    assertTrue(posted.body().contains("magic number"), posted.body());
-    assertEquals(0, visionCalls.get(), "是字节说了算，而且是在问视觉端点之前");
-    assertEquals(List.of(), attachmentDirectories(), "什么都没写");
+    // 4.7：名字里那个 .png 不算数，而"不是图片"也不再等于"没法描述"。字节是文本，于是它由本地那段
+    // 概括来读——行数、字节数、开头——而视觉端点一次都没被问到，因为它对一份日志没有更多可说。
+    assertEquals(202, posted.statusCode(), posted.body());
+    JsonNode body = Json.parse(posted.body());
+    assertEquals("text/plain", body.path("mediaType").asText(), posted.body());
+    assertTrue(body.path("description").asText().contains("文本文件：1 行"), posted.body());
+    assertTrue(body.path("description").asText().contains("this is not a png"), posted.body());
+    assertEquals(0, visionCalls.get(), "文本不需要模型");
+    assertEquals(1, attachmentDirectories().size(), "它被存下来了，等着被送出去");
+
+    // 和图片那条完全一样的下一步：描述与用户那句话是*一条*消息，描述在前——主模型收到的是它，
+    // 而不是那 17 个字节。
+    provider.reply(Message.Assistant.text("好"));
+    try (Sse sse = watch()) {
+      // 名字要用服务器**存下来的**那一个：一次上传被存成 receipt.txt，因为类型是文本——页面也知道这一点，
+      // 它读的正是返回里那个 attachment。
+      assertEquals(
+          202,
+          post("/api/message", "{\"text\":\"看看这段\",\"attachment\":\"receipt.txt\"}")
+              .statusCode());
+      JsonNode user = sse.await("user", 5000);
+      String text = user.path("text").asText();
+      assertTrue(text.startsWith("[attachment receipt.txt]"), text);
+      assertTrue(text.contains("文本文件：1 行"), text);
+      assertTrue(text.contains("this is not a png"), text);
+      assertTrue(text.contains("read 读回来") || text.contains("read it"), text);
+      assertTrue(text.endsWith("看看这段"), text);
+    }
   }
 
   @Test
@@ -217,7 +241,7 @@ class WebPictureVisionTest extends WebHarness {
     byte[] big = new byte[(int) AttachmentStore.MAX_BYTES + 1];
     System.arraycopy(pngBytes(), 0, big, 0, 8);
 
-    HttpResponse<String> posted = postPicture("huge.png", big);
+    HttpResponse<String> posted = postAttachment("huge.png", big);
 
     assertEquals(413, posted.statusCode(), posted.body());
     assertTrue(posted.body().contains("8 MB"), posted.body());
@@ -238,30 +262,30 @@ class WebPictureVisionTest extends WebHarness {
 
     try (Sse sse = watch()) {
       assertEquals(202, post("/api/message", "{\"text\":\"first\"}").statusCode());
-      HttpResponse<String> posted = postPicture("photo.png", pngBytes());
+      HttpResponse<String> posted = postAttachment("photo.png", pngBytes());
       assertEquals(202, posted.statusCode(), posted.body());
       assertEquals("photo.png",
-          Json.parse(get("/api/status").body()).path("picture").path("name").asText(),
+          Json.parse(get("/api/status").body()).path("attachment").path("name").asText(),
           "它就在那里等着那个回合结束");
 
       provider.release();
       sse.await("done", 5000);
     }
     assertEquals(1, visionCalls.get(), "描述发生了，因为描述不需要那个回合腾出位置");
-    // 在跑的那个回合不受影响：它只发出过一次请求，而里面没有这张图片。
+    // 在跑的那个回合不受影响：它只发出过一次请求，而里面没有这个文件。
     assertEquals(1, provider.requests().size());
     assertFalse(provider.requests().get(0).messages().toString().contains("a sticky note"),
-        "正在跑的回合不会中途长出这张图片");
+        "正在跑的回合不会中途长出这个文件");
   }
 
   @Test
   void withoutAVisionModelAPictureIsRefusedWithWhatToSet() throws Exception {
     // 默认的测试配置没有 vision 块：这个功能报告自己是关的，而拒绝会点名那个块和打开它的那些
     // flag，而不是含混地失败。
-    HttpResponse<String> posted = postPicture("photo.png", pngBytes());
+    HttpResponse<String> posted = postAttachment("photo.png", pngBytes());
 
     assertEquals(409, posted.statusCode(), posted.body());
-    assertTrue(posted.body().contains("没有配置视觉模型，所以图片没法被描述——请设置 " + configFile + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
+    assertTrue(posted.body().contains("没有配置视觉模型，所以这个文件没法被描述——请设置 " + configFile + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
     assertTrue(posted.body().contains("--vision-base-url"), posted.body());
     assertEquals(List.of(), attachmentDirectories(), "而且什么都没写");
   }
@@ -294,7 +318,7 @@ class WebPictureVisionTest extends WebHarness {
         Json.parse(Files.readString(configFile)).path("vision").path("model").asText(),
         "而且它在文件里，不只在内存里");
 
-    assertEquals(202, postPicture("whiteboard.png", pngBytes()).statusCode());
+    assertEquals(202, postAttachment("whiteboard.png", pngBytes()).statusCode());
     assertEquals(1, visionCalls.get(), "图片去了表单保存的那个模型");
   }
 
@@ -339,9 +363,9 @@ class WebPictureVisionTest extends WebHarness {
     assertFalse(json("/api/config").path("vision").path("configured").asBoolean());
     assertFalse(Files.readString(configFile).contains("\"vision\""), "那个块从文件里没了");
 
-    HttpResponse<String> posted = postPicture("photo.png", pngBytes());
+    HttpResponse<String> posted = postAttachment("photo.png", pngBytes());
     assertEquals(409, posted.statusCode(), posted.body());
-    assertTrue(posted.body().contains("没有配置视觉模型，所以图片没法被描述——请设置 " + configFile + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
+    assertTrue(posted.body().contains("没有配置视觉模型，所以这个文件没法被描述——请设置 " + configFile + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
   }
 
   /** 一个 loopback 上的替身视觉端点：一句备好的描述，外加调用计数。 */
@@ -443,7 +467,7 @@ class WebPictureVisionTest extends WebHarness {
     }
   }
 
-  private HttpResponse<String> postPicture(String name, byte[] bytes) throws Exception {
+  private HttpResponse<String> postAttachment(String name, byte[] bytes) throws Exception {
     return client.send(
         HttpRequest.newBuilder(
                 URI.create(

@@ -143,11 +143,11 @@ final class HubTurns {
    * <p>这就是「上传」和「发送」重新合成一条消息的地方：描述放在前面，用户说的话放在后面，于是模型一次
    * 收到的是「这是图片里有什么」和「照这个做」——而不是先收到前半句、自己决定后半句。
    *
-   * <p>{@code pictureName} 是一次一致性检查，不是指令：图片就是这条会话持有的那一张（上传即「我要发它」），
+   * <p>{@code attachmentName} 是一次一致性检查，不是指令：文件就是这条会话持有的那一个（上传即「我要发它」），
    * 而页面如果在命名另一张，那就是页面和服务器对不上了，值得说清楚而不是猜。名字不对时什么都不发送，
    * 图片也仍然留着——一次重命名竞争不该花掉用户的一次上传。
    */
-  public AgentHub.Submit submit(String text, String pictureName) {
+  public AgentHub.Submit submit(String text, String attachmentName) {
     if (state.closed()) {
       throw new IllegalStateException("web 会话正在关闭");
     }
@@ -157,18 +157,18 @@ final class HubTurns {
     }
     Conversation conversation =
         state.conversationFor(current);
-    Conversation.Held held = conversation.pendingPicture.get();
+    Conversation.Held held = conversation.pendingAttachment.get();
     String name = held == null ? null : held.saved().path().getFileName().toString();
-    if (pictureName != null && !pictureName.isBlank() && held != null) {
+    if (attachmentName != null && !attachmentName.isBlank() && held != null) {
       boolean named =
-          pictureName.equals(name) || pictureName.equals(held.saved().path().toString());
+          attachmentName.equals(name) || attachmentName.equals(held.saved().path().toString());
       if (!named) {
         throw new IllegalArgumentException(
-            "这张会话里待发送的图片是 " + name + "，不是 " + pictureName + "——请重新选一张");
+            "这条会话里待发送的附件是 " + name + "，不是 " + attachmentName + "——请重新选一个");
       }
     }
-    if (pictureName != null && !pictureName.isBlank() && held == null) {
-      throw new IllegalArgumentException("这条会话里已经没有待发送的图片了——请重新选一张");
+    if (attachmentName != null && !attachmentName.isBlank() && held == null) {
+      throw new IllegalArgumentException("这条会话里已经没有待发送的附件了——请重新选一个");
     }
     // 空白的正文只有在它带着一张图片时才是可以接受的：那时候这条消息说的就是图片本身，也就是过去上传
     // 独自达成的效果，只不过现在是用户要求的。
@@ -190,7 +190,7 @@ final class HubTurns {
     String composed =
         held == null ? text.strip() : held.block() + (text.isBlank() ? "" : "\n\n" + text.strip());
     if (conversation.begin()) {
-      conversation.pendingPicture.compareAndSet(held, null);
+      conversation.pendingAttachment.compareAndSet(held, null);
       startTurn(conversation, composed);
       return AgentHub.Submit.STARTED;
     }
@@ -204,8 +204,8 @@ final class HubTurns {
     }
     // 图片跟着这句话走了，所以它不再等着。入队失败时上面就已经抛出，而图片仍在原处：队列满了是稍后重试，
     // 不是丢掉一次上传。
-    conversation.pendingPicture.compareAndSet(held, null);
-    state.publish(conversation.id(), "picture", Json.object().putNull("name"));
+    conversation.pendingAttachment.compareAndSet(held, null);
+    state.publish(conversation.id(), "attachment", Json.object().putNull("name"));
     state.publishStatus();
     return AgentHub.Submit.QUEUED;
   }
@@ -229,7 +229,7 @@ final class HubTurns {
   }
 
   /**
-   * 丢掉这张待发送的图片，它没有跟着任何一句话走。
+   * 丢掉这个待发送的附件，它没有跟着任何一句话走。
    *
    * <p>返回丢掉的是哪一个的名字，或者 {@code null}：页面说得出「移除了 photo.png」，而点名一张从来
    * 不在那里的图片是一次会撒谎的成功。

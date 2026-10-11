@@ -844,10 +844,10 @@
     // 屏幕上那个回合背后还等着什么，好让输入框说出来。
     applyQueued(status.queued);
     // 刷新之后那张缩略条必须回来：它描述的是服务器*持有*的东西，而不是这个页面记得的东西。
-    if ('picture' in status) {
-      setPendingPicture(status.picture ? {
-        name: str(status.picture.name),
-        description: str(status.picture.description)
+    if ('attachment' in status) {
+      setPendingAttachment(status.attachment ? {
+        name: str(status.attachment.name),
+        description: str(status.attachment.description)
       } : null);
     }
     setBusy(!!status.busy || pendingApprovals() > 0);
@@ -1555,9 +1555,9 @@
 
   /* 一条带着图片的消息在会话文件里长这样：
    *
-   *   [picture 白板.png] <视觉模型写的描述>
+   *   [attachment 白板.png] <视觉模型写的描述>
    *
-   *   (The picture this describes is saved at …; read it if a detail the description dropped matters.)
+   *   (The attachment this describes is saved at …; read it if a detail the description dropped matters.)
    *
    *   用户自己说的话
    *
@@ -1565,32 +1565,32 @@
    * 没了。所以这里只做摆放：同一段文本在屏幕上变成一条缩略条、一段可以展开的描述，然后是用户说的
    * 那句话。解析不出来（旧格式、人手打的消息）时原样当文本显示，而不是猜。
    */
-  const PICTURE_TRAILER = '\n\n(The picture this describes is saved at ';
-  const PICTURE_TRAILER_END = 'matters.)';
+  const ATTACHMENT_TRAILER = '\n\n(The attachment this describes is saved at ';
+  const ATTACHMENT_TRAILER_END = 'matters.)';
 
-  function pictureParts(text) {
-    if (text.indexOf('[picture ') !== 0) {
+  function attachmentParts(text) {
+    if (text.indexOf('[attachment ') !== 0) {
       return null;
     }
-    const close = text.indexOf('] ', '[picture '.length);
+    const close = text.indexOf('] ', '[attachment '.length);
     if (close < 0) {
       return null;
     }
-    const name = text.slice('[picture '.length, close);
+    const name = text.slice('[attachment '.length, close);
     let rest = text.slice(close + 2);
     let said = '';
-    const trailer = rest.indexOf(PICTURE_TRAILER);
+    const trailer = rest.indexOf(ATTACHMENT_TRAILER);
     if (trailer >= 0) {
-      const end = rest.indexOf(PICTURE_TRAILER_END, trailer);
+      const end = rest.indexOf(ATTACHMENT_TRAILER_END, trailer);
       if (end >= 0) {
-        said = rest.slice(end + PICTURE_TRAILER_END.length).replace(/^\s+/, '');
+        said = rest.slice(end + ATTACHMENT_TRAILER_END.length).replace(/^\s+/, '');
         rest = rest.slice(0, trailer);
       }
     }
     return { name: name, description: rest.trim(), said: said.trim() };
   }
 
-  function pictureBubble(picture) {
+  function attachmentBubble(picture) {
     const wrap = el('div', 'bubble bubble-picture');
     const head = el('div', 'picture-head');
 
@@ -1602,7 +1602,18 @@
 
     const label = el('div', 'picture-label');
     label.appendChild(el('div', 'picture-name', picture.name));
-    label.appendChild(el('div', 'picture-hint', '图片 · 由视觉模型描述'));
+    // 一行小字说清楚**这是什么、谁来读的**。4.7 之后上传的不一定是图片，所以那句"图片 · 由视觉模型描述"
+    // 不能对所有东西都说：一份日志是本地概括的，而回放出来的一条消息只知道它是个附件。
+    const mediaType = picture.mediaType || '';
+    const hint =
+      mediaType.indexOf('image/') === 0
+        ? '图片 · 由视觉模型描述'
+        : mediaType === 'text/plain'
+          ? '文本 · 在本地概括'
+          : mediaType
+            ? '附件 · 由视觉模型描述'
+            : '附件';
+    label.appendChild(el('div', 'picture-hint', hint));
     head.appendChild(label);
     wrap.appendChild(head);
 
@@ -1623,8 +1634,8 @@
 
   function appendUser(text) {
     const row = el('div', 'ev ev-user');
-    const picture = pictureParts(text);
-    row.appendChild(picture ? pictureBubble(picture) : el('div', 'bubble', text));
+    const picture = attachmentParts(text);
+    row.appendChild(picture ? attachmentBubble(picture) : el('div', 'bubble', text));
     state.block = null;
     appendToTranscript(row);
   }
@@ -2170,9 +2181,9 @@
       case 'approval': breakBlock(); onApproval(ev); break;
       case 'approval-closed': onApprovalClosed(ev); break;
       case 'notice': breakBlock(); appendNotice(str(ev.text)); break;
-      case 'picture':
+      case 'attachment':
         // 服务器才是这张待发送图片的权威：上传、移除、以及别处（另一个标签页）碰它，都会到这里。
-        setPendingPicture(ev.name ? { name: str(ev.name), description: str(ev.description) } : null);
+        setPendingAttachment(ev.name ? { name: str(ev.name), description: str(ev.description) } : null);
         break;
       case 'summary': breakBlock(); appendSummary(ev); break;
       case 'usage': renderUsage(ev); break;
@@ -4914,7 +4925,7 @@
     // 在这里拒绝曾是服务器过去用 409 回答时页面这边的对应动作，而在一个长回合里
     // 打出来的想法值得留着。
     const text = dom.input.value.trim();
-    // 一张待发送的图片本身就可以是一条消息，所以空正文在它存在时是可以的。
+    // 一个待发送的附件本身就可以是一条消息，所以空正文在它存在时是可以的。
     if (!text && !state.picture) { return; }
     const picture = state.picture ? state.picture.name : '';
     dom.input.value = '';
@@ -4934,7 +4945,7 @@
       }
       /* 它跟着这句话走了，所以缩略条该消失了——而且要由本地清掉，不能等 status：图片
        * 已经不在了，而下一个 status 正是被这条消息触发的。 */
-      if (picture) { setPendingPicture(null); }
+      if (picture) { setPendingAttachment(null); }
     } catch (err) {
       // 409 留给它现在仍然表示的意思：队列满了，或者没有配置模型。两件都是用户必须处理的
       // 事，而两件都不是「有回合正在运行」。
@@ -4953,7 +4964,7 @@
    * 文本，旁边是磁盘上的一个文件。
    *
    * 描述就是在这个请求里要到的，这就是这里不把输入框置为忙碌的原因：服务器自己的 status
-   * 事件会说明回合什么时候真的在跑。一个连不上的视觉模型会带着理由拒绝这张图片，而不是让
+   * 事件会说明回合什么时候真的在跑。一个连不上的视觉模型会带着理由拒绝这个文件，而不是让
    * 页面一直等一个从未开始的回合，而在此期间也没有任何东西发给主模型。
    */
   async function sendPhoto(file) {
@@ -4968,12 +4979,12 @@
       });
       /* 描述回来了，而它要停在这里等你写下一句话。本地缩略图来自你刚交给我们的那个
        * File——服务器上的那份文件是它的副本，不是这个对象。 */
-      setPendingPicture({
+      setPendingAttachment({
         name: res && res.attachment ? res.attachment.split(/[\\/]/).pop() : file.name,
         description: res ? str(res.description) : '',
         localUrl: URL.createObjectURL(file)
       });
-      if (res && res.replaced) { appendNotice('这张图片取代了上一张还没发出去的图片'); }
+      if (res && res.replaced) { appendNotice('这个文件取代了上一张还没发出去的图片'); }
       setPhotoHint('已描述，发送时会跟着你的话一起发出去');
       dom.input.focus();
     } catch (err) {
@@ -4985,7 +4996,7 @@
 
   /* 待发送的图片只有一份，因为一次只有一张会跟着消息走。它是可见的、可移除的，而且
    * 服务器也这么认为——刷新页面后服务器会用 status 把同一条缩略条重新送回来。 */
-  function setPendingPicture(picture) {
+  function setPendingAttachment(picture) {
     const previous = state.picture;
     /* 同一个上传的两条路径会先后到达：这个请求的响应（它带着页面手上那个 File，所以有一张真的
      * 缩略图）和服务器随后发布的事件（它没有）。名字一样就是同一张图片，所以本地那张缩略图跟着
@@ -5025,7 +5036,7 @@
     } catch (err) {
       appendError('移除图片：' + err.message);
     }
-    setPendingPicture(null);
+    setPendingAttachment(null);
     refreshStatus();
   }
 

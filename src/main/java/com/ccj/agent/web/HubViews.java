@@ -134,12 +134,12 @@ final class HubViews {
   }
 
   /** 这条会话持有的待发送图片，或者 {@code null}。 */
-  Conversation.Held heldPicture(FileSession current) {
+  Conversation.Held heldAttachment(FileSession current) {
     if (current == null) {
       return null;
     }
     Conversation conversation = state.conversation(current.id());
-    return conversation == null ? null : conversation.pendingPicture.get();
+    return conversation == null ? null : conversation.pendingAttachment.get();
   }
 
   ObjectNode statusFields() {
@@ -177,13 +177,13 @@ final class HubViews {
     } else {
       node.put("maxTotalTokens", state.config().maxTotalTokens());
     }
-    // 一张已经描述好、还没走的图片：刷新之后那条缩略条还在，而不是变成一张看不见、却会跟着下一句话发
+    // 一个已经描述好、还没走的文件：刷新之后那条缩略条还在，而不是变成一张看不见、却会跟着下一句话发
     // 出去的图片。
-    Conversation.Held held = state.heldPicture(current);
+    Conversation.Held held = state.heldAttachment(current);
     if (held == null) {
-      node.putNull("picture");
+      node.putNull("attachment");
     } else {
-      node.set("picture", AttachmentViews.pending(held.saved(), held.description(), held.mediaType()));
+      node.set("attachment", AttachmentViews.pending(held.saved(), held.description(), held.mediaType()));
     }
     node.put("subAgents", state.subAgents());
     // "busy" 回答的是屏幕上那个对话：页面的输入框针对的是它显示的转录，别处正在跑的回合不能把它禁用掉。

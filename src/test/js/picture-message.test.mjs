@@ -5,7 +5,7 @@
  * 是同一个手法。
  *
  * 它钉住的是两件事。一，**解析不出东西时必须原样显示**：旧格式的消息、或者人手打的一段以
- * `[picture ` 开头的普通文本，都不能被吃掉或改写。二，**描述与用户那句话必须分开摆**：描述常常
+ * `[attachment ` 开头的普通文本，都不能被吃掉或改写。二，**描述与用户那句话必须分开摆**：描述常常
  * 有一千多字符，它要读得到，但不能把「你说的话」淹掉。文本本身一个字都不改 —— 会话文件、重放和
  * 压缩靠的就是它。
  *
@@ -24,7 +24,7 @@ const START = '  /* 一条带着图片的消息在会话文件里长这样：';
 const END = '  function clearTranscript() {';
 const from = src.indexOf(START);
 const to = src.indexOf(END);
-if (from < 0 || to < 0 || to < from) { throw new Error('could not locate the picture renderer'); }
+if (from < 0 || to < 0 || to < from) { throw new Error('could not locate the attachment renderer'); }
 const code = src.slice(from, to);
 
 // ------------------------------------------------------------------ DOM 桩
@@ -46,7 +46,7 @@ function node(tag, cls) {
 
 const dom = { transcript: node('div') };
 const api = new Function('str', 'dom', 'document', 'state', 'el', 'appendToTranscript',
-  code + '\nreturn {appendUser, pictureParts};')(
+  code + '\nreturn {appendUser, attachmentParts};')(
   (v) => (v === undefined || v === null ? '' : String(v)),
   dom,
   { createElement: (tag) => node(tag) },
@@ -80,14 +80,14 @@ function ok(name, cond, detail) {
 }
 
 const DESCRIPTION = 'a whiteboard with a red arrow and the words "ship it"';
-const TRAILER = '(The picture this describes is saved at /home/you/.oh-my-ccj/sessions/x.attachments/whiteboard.png; read it if a detail the description dropped matters.)';
-const COMPOSED = '[picture whiteboard.png] ' + DESCRIPTION + '\n\n' + TRAILER + '\n\n把箭头指出来';
+const TRAILER = '(The attachment this describes is saved at /home/you/.oh-my-ccj/sessions/x.attachments/whiteboard.png; read it if a detail the description dropped matters.)';
+const COMPOSED = '[attachment whiteboard.png] ' + DESCRIPTION + '\n\n' + TRAILER + '\n\n把箭头指出来';
 
 // 1. 一张图片加一句话：三样东西各就各位 —— 缩略条、可展开的描述、用户说的那句话。
 {
   api.appendUser(COMPOSED);
   const bubble = lastBubble();
-  ok('气泡带着图片的类名', (bubble.className || '').indexOf('bubble-picture') >= 0, bubble.className);
+  ok('气泡带着附件的类名', (bubble.className || '').indexOf('bubble-picture') >= 0, bubble.className);
 
   const thumbs = find(bubble, 'picture-thumb');
   eq('有一张缩略图', thumbs.length, 1);
@@ -110,17 +110,17 @@ const COMPOSED = '[picture whiteboard.png] ' + DESCRIPTION + '\n\n' + TRAILER + 
 
 // 2. 只有图片、没有别的话：仍然是一张图，而不是一个空气泡。
 {
-  api.appendUser('[picture shot.png] a red square\n\n' + TRAILER);
+  api.appendUser('[attachment shot.png] a red square\n\n' + TRAILER);
   const bubble = lastBubble();
   eq('描述还在', find(bubble, 'picture-text')[0].text, 'a red square');
   eq('没有多出一句用户的话', find(bubble, 'picture-said').length, 0);
 }
 
-// 3. 旧格式／人手打的以 `[picture ` 开头的普通文本：**原样显示**，不要猜。
+// 3. 旧格式／人手打的以 `[attachment ` 开头的普通文本：**原样显示**，不要猜。
 {
-  api.appendUser('[picture 这不是一条消息，只是一段以方括号开头的文字');
+  api.appendUser('[attachment 这不是一条消息，只是一段以方括号开头的文字');
   const bubble = lastBubble();
-  eq('没有图片类名', (bubble.className || '').indexOf('bubble-picture'), -1);
+  eq('没有附件类名', (bubble.className || '').indexOf('bubble-picture'), -1);
   ok('原样当文本显示', bubble.text.indexOf('这不是一条消息') >= 0, bubble.text);
 }
 
@@ -134,11 +134,11 @@ const COMPOSED = '[picture whiteboard.png] ' + DESCRIPTION + '\n\n' + TRAILER + 
 
 // 5. 解析器自己也值得钉一下：文件说明与用户那句话之间必须切开。
 {
-  const parts = api.pictureParts(COMPOSED);
+  const parts = api.attachmentParts(COMPOSED);
   eq('文件名', parts.name, 'whiteboard.png');
   eq('描述', parts.description, DESCRIPTION);
   eq('用户的话', parts.said, '把箭头指出来');
-  eq('解析不出来的返回 null', api.pictureParts('普通消息'), null);
+  eq('解析不出来的返回 null', api.attachmentParts('普通消息'), null);
 }
 
 // -------------------------------------------------------------------- 报告

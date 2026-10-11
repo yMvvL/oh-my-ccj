@@ -8,6 +8,10 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 
 /**
@@ -41,7 +45,7 @@ public final class AttachmentStore {
   private static final int CHUNK_BYTES = 8 * 1024;
 
   /** 一个名字洗净之后没有可用字符剩下时的默认值。 */
-  private static final String DEFAULT_STEM = "image";
+  private static final String DEFAULT_STEM = "file";
 
   /**
    * 存储时最长的基本名，不含 {@code -n} 后缀和媒体类型自带的扩展名。
@@ -53,6 +57,13 @@ public final class AttachmentStore {
 
   /** 在一个名字上放弃之前要试多少个 {@code -n} 后缀。 */
   private static final int MAX_NAME_ATTEMPTS = 1000;
+
+  /** 看起来是文本（合法 UTF-8、没有 NUL、几乎没有控制字符）的字节。 */
+  public static final String TEXT = "text/plain";
+  /** 其余一切：字节说了算，但本地读不出它是什么。 */
+  public static final String OCTET = "application/octet-stream";
+  private static final String PDF = "application/pdf";
+  private static final byte[] PDF_MAGIC = {'%', 'P', 'D', 'F', '-'};
 
   private static final String PNG = "image/png";
   private static final String JPEG = "image/jpeg";
@@ -112,7 +123,7 @@ public final class AttachmentStore {
    * 为 null。
    *
    * <p>「平面」是刻意的：上传的名字里从来没有过目录，所以一个带分隔符的名字不是一次失误就是一次试探，两者
-   * 都按「没有这张图片」处理。
+   * 都按「没有这个文件」处理。
    */
   public Path resolve(String name) {
     if (name == null || name.isBlank()) {
@@ -148,7 +159,7 @@ public final class AttachmentStore {
    * {@code CREATE_NEW}，撞上的那次尝试带后缀重试。这是文件系统对名字的一次占用，而不是先检查再写入，
    * 后者在两次上传同时到达时会双双通过。
    *
-   * @throws IllegalArgumentException 当没有字节可供识别，或字节不是 PNG、JPEG、WebP、GIF 时
+   * @throws IllegalArgumentException 当没有字节可供识别时
    * @throws UncheckedIOException 当字节写不出去时
    */
   public Saved save(String name, byte[] bytes) {
@@ -156,16 +167,7 @@ public final class AttachmentStore {
       throw new IllegalArgumentException(
           "无法存储 '" + name + "'：它没有字节，因此没有可识别的东西");
     }
-    String mediaType = sniff(bytes);
-    if (mediaType == null) {
-      throw new IllegalArgumentException(
-          "无法存储 '"
-              + name
-              + "'：上传以 "
-              + HEX.formatHex(bytes, 0, Math.min(bytes.length, 8))
-              + " 开头，这不是 PNG、JPEG、WebP 或 GIF 图像的 magic number（类型是从字节读出来的，"
-              + "不是从名字或 Content-Type）");
-    }
+    String mediaType = mediaTypeOf(bytes);
     String stem = sanitizedStem(name);
     String extension = extensionFor(mediaType);
     try {
@@ -232,21 +234,71 @@ public final class AttachmentStore {
     }
   }
 
-  /** {@code bytes} 的媒体类型，不是这个类存储的类型时为 null。 */
+  /**
+   * 一次上传是什么类型：**从字节读出来**，不是从名字，也不是从 {@code Content-Type}。
+   *
+   * <p>四类，而顺序有意义：图片按 magic number 认；{@code %PDF-} 之后是 PDF；再往后是看起来像文本的
+   * 字节（见 {@link #looksLikeText}）；其余都算 {@link #OCTET}。从"只认四种图片"改成"分类"，是因为一个
+   * 日志文件不再是非法上传——它是另一条描述路径的输入（见 4.7）。
+   */
   public static String mediaTypeOf(byte[] bytes) {
     if (bytes == null || bytes.length == 0) {
       throw new IllegalArgumentException(
           "无法识别一次没有字节的上传，因此没有东西可存");
     }
-    String mediaType = sniff(bytes);
-    if (mediaType == null) {
-      throw new IllegalArgumentException(
-          "上传以 "
-              + HEX.formatHex(bytes, 0, Math.min(bytes.length, 8))
-              + " 开头，这不是 PNG、JPEG、WebP 或 GIF 图像的 magic number（类型是从字节读出来的，"
-              + "不是从名字或 Content-Type）");
+    String image = sniff(bytes);
+    if (image != null) {
+      return image;
     }
-    return mediaType;
+    if (matches(bytes, 0, PDF_MAGIC)) {
+      return PDF;
+    }
+    return looksLikeText(bytes) ? TEXT : OCTET;
+  }
+
+  /** 这个类型是图片吗：是的话，描述它要靠视觉模型。 */
+  public static boolean isImage(String mediaType) {
+    return mediaType != null && mediaType.startsWith("image/");
+  }
+
+  /** 这个类型是文本吗：是的话，一句话就能在本地概括出来，不需要任何模型。 */
+  public static boolean isText(String mediaType) {
+    return TEXT.equals(mediaType);
+  }
+
+  /**
+   * 这些字节看起来像文本吗。
+   *
+   * <p>两条判据，都是"能不能当文字读"的直接翻译：必须是**合法的 UTF-8**（截断的字节序列说明这其实是一段
+   * 二进制），而且除了换行、回车、制表符之外几乎没有控制字符（终端里一段彩色输出会带几个 ANSI 转义，所以
+   * 允许零星出现，但不是整段都是）。
+   */
+  private static boolean looksLikeText(byte[] bytes) {
+    for (byte b : bytes) {
+      if (b == 0) {
+        return false;
+      }
+    }
+    String text;
+    try {
+      text =
+          StandardCharsets.UTF_8
+              .newDecoder()
+              .onMalformedInput(CodingErrorAction.REPORT)
+              .onUnmappableCharacter(CodingErrorAction.REPORT)
+              .decode(ByteBuffer.wrap(bytes))
+              .toString();
+    } catch (CharacterCodingException notText) {
+      return false;
+    }
+    int odd = 0;
+    for (int i = 0; i < text.length(); i++) {
+      char c = text.charAt(i);
+      if (c < 0x20 && c != '\n' && c != '\r' && c != '\t') {
+        odd++;
+      }
+    }
+    return odd * 100 <= Math.max(1, text.length());
   }
 
   /** {@link #mediaTypeOf} 背后读 magic number 的那一步：那些字节对应的类型，或 null。 */
@@ -286,7 +338,10 @@ public final class AttachmentStore {
       case JPEG -> ".jpg";
       case GIF -> ".gif";
       case WEBP -> ".webp";
-      default -> throw new IllegalStateException("没有对应 " + mediaType + " 的扩展名");
+      case PDF -> ".pdf";
+      case TEXT -> ".txt";
+      // 认不出来的那些也存下来，扩展名就说实话：这是一个字节流，不是一个被错认的文件。
+      default -> ".bin";
     };
   }
 

@@ -55,26 +55,33 @@ class AttachmentStoreTest {
   }
 
   @Test
-  void textNamedPngIsRefusedAndWritesNothing() throws Exception {
+  void textNamedPngIsStoredAsTextBecauseTheBytesSaySo() throws Exception {
     AttachmentStore store = AttachmentStore.forSession(SessionStore.create(dir).file());
     byte[] text = "this is text, not a picture".getBytes(StandardCharsets.UTF_8);
 
-    IllegalArgumentException refusal =
-        assertThrows(IllegalArgumentException.class, () -> store.save("receipt.png", text));
+    // 名字里那个 .png 不算数：类型是从字节读出来的，所以它被存成 .txt，而且能读回来。4.7 之前这里
+    // 是一条拒绝——那时"不是四种图片之一"等于"非法上传"，而现在日志与 CSV 是另一条描述路径的输入。
+    AttachmentStore.Saved saved = store.save("receipt.png", text);
 
-    assertTrue(refusal.getMessage().contains("74 68 69 73"), refusal.getMessage());
-    assertTrue(refusal.getMessage().contains("PNG"), refusal.getMessage());
-    assertFalse(Files.exists(store.directory()), "被拒绝的上传不能创建目录");
-    assertEquals(List.of(), entries(dir));
+    assertEquals(AttachmentStore.TEXT, saved.mediaType());
+    assertTrue(saved.path().getFileName().toString().endsWith(".txt"), saved.path().toString());
+    assertEquals("this is text, not a picture", Files.readString(saved.path()));
   }
 
   @Test
-  void riffContainerThatIsNotWebpIsRefused() {
+  void riffContainerThatIsNotWebpIsNotCalledWebp() {
     AttachmentStore store = AttachmentStore.forSession(SessionStore.create(dir).file());
-    // 一个 RIFF 容器，但是 WAVE 而不是 WEBP：偏移 8 处的四个字节才作数。
+    // 一个 RIFF 容器，但是 WAVE 而不是 WEBP：偏移 8 处的四个字节才作数。它仍然是一个合法的上传
+    // （存下来，扩展名说实话），只是不会被当成图片。
     byte[] wave = "RIFF\0\0\0\0WAVEfmt ".getBytes(StandardCharsets.ISO_8859_1);
 
-    assertThrows(IllegalArgumentException.class, () -> store.save("sound.webp", wave));
+    assertEquals(AttachmentStore.OCTET, AttachmentStore.mediaTypeOf(wave));
+
+    AttachmentStore.Saved saved = store.save("sound.webp", wave);
+
+    assertEquals(AttachmentStore.OCTET, saved.mediaType());
+    assertTrue(saved.path().getFileName().toString().endsWith(".bin"), saved.path().toString());
+    assertFalse(AttachmentStore.isImage(saved.mediaType()), "它不是一张图片");
   }
 
   @Test
