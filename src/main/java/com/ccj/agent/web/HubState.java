@@ -80,6 +80,22 @@ interface HubState {
   /** 每次运行的 trace 写到哪；null 表示不留。 */
   void setTraceSink(Recorder.TraceSink sink);
 
+  /**
+   * 记住刚刚那次运行。
+   *
+   * <p>只有最近一次，而且只在内存里：它回答「刚刚那个回合里到底发生了什么」，而保留历史是另一件事，那件事
+   * 由 {@link #setTraceSink} 指向的文件做。
+   */
+  void recordTrace(RunTrace trace);
+
+  /**
+   * 这个项目声明的编辑后检查。
+   *
+   * <p>工具表另有一份、用来决定编辑之后跑什么；这一份只回答收据里的一个问题：「这个文件被改过，可是有没有
+   * 东西检查过它」。
+   */
+  Checks checks();
+
   /** 这个项目声明的编辑后检查；{@code null} 与「什么都没有」是一回事（见 {@link Checks#none}）。 */
   void setChecks(Checks rules);
 
