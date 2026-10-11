@@ -86,6 +86,35 @@ edit-one-line                                FAIL  scripted       2     1       
 
 退出码：全过是 0，有失败是 1（`--eval` 因此可以直接当 CI 的一步），参数或任务文件本身有问题则是 2。
 
+## 两次评测放在一起看（A/B）
+
+一次评测回答「它还是对的吗」；**两次评测回答「哪一版更好」**——而换模型、改提示词时真正要问的是后者。
+
+```bash
+./ccj --eval evals/real.jsonl --model gpt-4o      --eval-json /tmp/before.json
+./ccj --eval evals/real.jsonl --model claude-sonnet-4-5 --eval-compare /tmp/before.json
+```
+
+第一个命令跑一遍并把报告存下来（报告里带着它自己的名字，也就是 `--model` 给了什么），第二个命令在另一次运行里
+读回它，逐任务对比：
+
+```
+对比：openai/gpt-4o vs anthropic/claude-sonnet-4-5（12 个任务，3 个不一样）
+────────────────────────────────────────────────────────────────────────
+任务                                 openai/gpt-4o  anthropic/…    判断
+edit-one-line                      ok 2 步 1140t   ok 2 步 980t   anthropic/… 少 160 token
+find-the-bug                       FAIL 4 步 3200t ok 3 步 2100t   anthropic/… 通过、openai/gpt-4o 没通过
+a-task-only-in-the-new-set         —               ok 2 步 900t   只在 anthropic/… 里有（openai/gpt-4o 没跑它）
+
+合计：openai/gpt-4o 10/12 通过、18400 token；anthropic/claude-sonnet-4-5 11/12 通过、17200 token
+```
+
+**比的顺序是刻意的**：先比通过与否，通过率一样时再比步数与 token。一个少走两步但答错的版本不是「更好」，而一个
+通过的版本不该因为多花了一百 token 被判输——这两件事在只看一张表的时候很容易读反。
+
+两份报告的对比本身也可以存下来（`EvalComparison.toJson`），所以一段时间之后的第三次、第四次运行可以拿来跟
+第一次比，而不是只能跟上一次比。
+
 ## 几条自己定下来的规矩
 
 - **任务是代码。** 它们会真的跑工具，包括 shell——`approve` 默认是「什么都批准」，因为它们必须跑得动。它们

@@ -54,6 +54,8 @@ public record CliOptions(
     String trace,
     String eval,
     String export,
+    String evalJson,
+    String evalCompare,
     boolean mcpServe,
     Map<String, String> subAgentModels,
     Map<String, String> subAgentReasonings,
@@ -164,6 +166,8 @@ public record CliOptions(
     String trace = null;
     String eval = null;
     String export = null;
+    String evalJson = null;
+    String evalCompare = null;
     boolean mcpServe = false;
     Map<String, String> subAgentModels = new LinkedHashMap<>();
     Map<String, String> subAgentReasonings = new LinkedHashMap<>();
@@ -348,6 +352,14 @@ public record CliOptions(
           export = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
+        case "--eval-json" -> {
+          evalJson = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
+        case "--eval-compare" -> {
+          evalCompare = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
         case "--mcp-serve" -> {
           mcpServe = true;
           i += 1;
@@ -416,6 +428,8 @@ public record CliOptions(
         trace,
         eval,
         export,
+        evalJson,
+        evalCompare,
         mcpServe,
         subAgentModels,
         subAgentReasonings,
@@ -502,6 +516,10 @@ public record CliOptions(
               --eval <file|dir>    跑一组评测任务并打印报告后退出：每行一个 JSON 任务，目录里的
                                    每个 *.jsonl 都会被读；带 script 的任务离线跑，其余的要一个模型。
                                    全部通过以 0 退出，否则以 1。见 docs/EVAL.md
+              --eval-json <file>   把这次的报告写到这份文件里（A/B 对比的左半边）
+              --eval-compare <file>
+                                   读回一份 --eval-json 写下的报告，与这次的结果逐任务对比：先比
+                                   通过与否，通过率一样时再比步数与 token
               --tools              打印可用的工具后退出
               --yolo               批准每一个工具调用，别名 --auto-approve
           -h, --help               打印这份帮助

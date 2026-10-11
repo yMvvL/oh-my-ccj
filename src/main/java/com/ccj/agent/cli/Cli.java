@@ -27,6 +27,7 @@ import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.demo.DemoProvider;
 import com.ccj.agent.retrieval.EmbeddingConfig;
 import com.ccj.agent.retrieval.RetrievalIndex;
+import com.ccj.agent.eval.EvalComparison;
 import com.ccj.agent.eval.EvalReport;
 import com.ccj.agent.eval.EvalRunner;
 import com.ccj.agent.eval.EvalTask;
@@ -63,6 +64,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import com.ccj.agent.core.Json;
+import com.fasterxml.jackson.databind.JsonNode;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -288,7 +291,18 @@ public final class Cli {
       }
       // 评测跑在自己的临时目录里，所以它不需要一个可用的工作目录——它也不该因为用户碰巧站在一个被删掉的
       // 目录里而失败。
-      return runEval(options.eval(), provider, out, err);
+      // 这一版的「名字」：既进报告（所以 A/B 对比里两边都说得清自己是谁），也进对比表。
+      String label =
+          (config.provider() == null ? "" : config.provider() + "/")
+              + (options.demo() ? "demo" : config.model() == null ? "（提供方默认）" : config.model());
+      return runEval(
+          options.eval(),
+          provider,
+          options.evalJson(),
+          options.evalCompare(),
+          label,
+          out,
+          err);
     }
 
     if (!Files.isDirectory(cwd)) {
@@ -515,7 +529,14 @@ public final class Cli {
    * <p>退出码是这一项的全部意义所在：一个只在人看着的时候跑的评测套件，与一个有断言的评测套件是两件事，
    * 而 CI 只读得懂退出码。见 {@code evals/} 与 docs/EVAL.md。
    */
-  private int runEval(String target, Provider provider, PrintStream out, PrintStream err) {
+  private int runEval(
+      String target,
+      Provider provider,
+      String jsonOut,
+      String compareWith,
+      String label,
+      PrintStream out,
+      PrintStream err) {
     List<EvalTask> tasks;
     try {
       tasks = EvalTask.read(Path.of(target));
@@ -527,6 +548,42 @@ public final class Cli {
     try {
       EvalReport report = EvalRunner.run(tasks, provider);
       out.print(report.render());
+      if (jsonOut != null) {
+        // 存一份报告：A/B 对比就是「跑两次、把两份报告放在一起看」，所以这个文件是对比那一半的输入。
+        // 名字（哪一版模型、哪一版提示词）跟着报告一起存——一份不知道自己是谁的报告，读回来之后只能靠文件
+        // 名去猜它。
+        com.fasterxml.jackson.databind.node.ObjectNode stored = report.toJson();
+        stored.put("label", label);
+        Path file = Path.of(jsonOut);
+        try {
+          java.nio.file.Files.writeString(
+              file, Json.writePretty(stored) + "\n", java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+          err.println("error: 写不出报告 " + file + "：" + e.getMessage());
+          err.flush();
+          return 1;
+        }
+        out.println("报告已写到 " + file);
+      }
+      if (compareWith != null) {
+        Path file = Path.of(compareWith);
+        JsonNode previous;
+        try {
+          previous = Json.parse(java.nio.file.Files.readString(file, java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+          err.println("error: 读不出上一份报告 " + file + "：" + e.getMessage());
+          err.flush();
+          return 1;
+        }
+        out.println();
+        out.print(
+            new EvalComparison(
+                    previous.path("label").asText(file.toString()),
+                    EvalComparison.read(previous),
+                    label,
+                    report)
+                .render());
+      }
       out.flush();
       return report.allPassed() ? 0 : 1;
     } catch (IllegalArgumentException e) {

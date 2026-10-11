@@ -44,6 +44,7 @@ public final class EvalReport {
     public ObjectNode toJson() {
       ObjectNode node = Json.object();
       node.put("id", id);
+      node.put("description", description);
       node.put("ok", ok);
       node.put("mode", mode);
       node.put("steps", steps);
