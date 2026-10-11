@@ -1,6 +1,7 @@
 package com.ccj.agent.session;
 
 import com.ccj.agent.core.Json;
+import com.ccj.agent.core.Receipt;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -232,27 +233,45 @@ public final class CheckpointStore {
    *     files 为空、turns 为 0。turns 包括这一次在内：它和 {@link #undoableTurns} 说的是同一个数
    */
   public ObjectNode previewUndo(Path sessionFile, Path project) {
-    Path directory = directoryFor(sessionFile);
-    List<Integer> turns = directory == null ? List.of() : turnNumbers(directory);
     ObjectNode preview = Json.object();
     ArrayNode files = preview.putArray("files");
-    if (!turns.isEmpty()) {
-      // 取的是 undoLastTurn 会动手的那个回合：预览说的必须就是下一次退回真会做的那件事。
-      int newest = turns.get(turns.size() - 1);
-      JsonNode manifest = readManifest(directory.resolve(Integer.toString(newest)));
-      if (manifest != null) {
-        for (JsonNode entry : manifest.path("files")) {
-          if (targetOf(entry, project) == null) {
-            continue; // 退回不照做的东西，预览也不该承诺
-          }
-          ObjectNode file = files.addObject();
-          file.put("path", entry.path("path").asText());
-          file.put("action", actionOf(entry));
-        }
-      }
+    for (Receipt.FileChange change : lastTurnFiles(sessionFile, project)) {
+      files.addObject().put("path", change.path()).put("action", change.action());
     }
-    preview.put("turns", turns.size());
+    Path directory = directoryFor(sessionFile);
+    preview.put("turns", directory == null ? 0 : turnNumbers(directory).size());
     return preview;
+  }
+
+  /**
+   * 上一个回合动过的文件，以及把它放回去会做的那件事。
+   *
+   * <p>与 {@link #previewUndo} 是同一份数据、同一段读取代码，这是刻意的：一个回合的收据里那份文件清单，
+   * 必须与「退回」按钮承诺的那件事逐字一致。两处各读一遍清单，迟早会有一处先漂——而漂掉的那一处，恰恰是
+   * 用户用来判断「刚才改了什么」的那一处。
+   */
+  public List<Receipt.FileChange> lastTurnFiles(Path sessionFile, Path project) {
+    Path directory = directoryFor(sessionFile);
+    if (directory == null) {
+      return List.of();
+    }
+    // 取的是 undoLastTurn 会动手的那个回合：预览说的必须就是下一次退回真会做的那件事。
+    List<Integer> turns = turnNumbers(directory);
+    if (turns.isEmpty()) {
+      return List.of();
+    }
+    JsonNode manifest = readManifest(directory.resolve(Integer.toString(turns.get(turns.size() - 1))));
+    if (manifest == null) {
+      return List.of();
+    }
+    List<Receipt.FileChange> files = new ArrayList<>();
+    for (JsonNode entry : manifest.path("files")) {
+      if (targetOf(entry, project) == null) {
+        continue; // 退回不照做的东西，预览也不该承诺
+      }
+      files.add(new Receipt.FileChange(entry.path("path").asText(), actionOf(entry)));
+    }
+    return List.copyOf(files);
   }
 
   /** 有多少个回合可以撤销，最新的在前，给想说这句话的调用方用。 */

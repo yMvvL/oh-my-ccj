@@ -216,11 +216,12 @@ async function main() {
   try {
     cdp = await connect(await chrome.endpoint(deadline), deadline);
     await openPage(cdp, options.url, deadline);
-    const answer = await driveTurn(cdp, options, deadline);
+    const driven = await driveTurn(cdp, options, deadline);
     console.log('浏览器冒烟通过（' + runtime.chrome.path + '，' + runtime.chrome.version + '）：');
     console.log('  页面 ' + options.url + ' 上：输入框和发送按钮出现，/api/status 渲染出工具列表');
     console.log('  敲进 ' + JSON.stringify(options.prompt) + '，真的按了一下 #send');
-    console.log('  助手的回答：' + summarise(answer, 200));
+    console.log('  助手的回答：' + summarise(driven.answer, 200));
+    console.log('  再点一下 #btn-receipt：面板里出现了上一回合的收据 — ' + summarise(driven.receipt, 160));
     if (options.expect) {
       console.log('  断言：回答里有 ' + JSON.stringify(options.expect) + '（那是磁盘上的东西，页面编不出来）');
     }
@@ -605,7 +606,26 @@ async function driveTurn(cdp, options, deadline) {
       : '转录里出现助手的回答',
     deadline,
   );
-  return answer;
+
+  // 6. 收据面板：真的点一下 #btn-receipt，真的从 /api/receipt 取回上一回合的收据，真的把它画出来。
+  //    这条路径上有三处会各自安静地坏掉——按钮的 id 与脚本认领的名字对不上、脚本请求的路径写错、
+  //    服务器给的正文没有落到那个 <pre> 里——而它们在浏览器里看起来都是「点了没反应」。
+  await click(cdp, '#btn-receipt');
+  const receipt = await waitFor(
+    cdp,
+    `(() => {
+      const overlay = document.getElementById('receipt-overlay');
+      const text = document.getElementById('receipt-text');
+      if (!overlay || overlay.hidden || !text) { return ''; }
+      const shown = text.textContent || '';
+      return shown.includes('收据 · 会话') && shown.includes('没有验证') ? shown : '';
+    })()`,
+    '点一下收据按钮之后，面板里出现上一回合的收据（含「没有验证」那一节）',
+    deadline,
+  );
+  // 关掉它，好让下一次点击（以及失败时的证据）看到的是同一张页面。
+  await click(cdp, '#receipt-close');
+  return { answer: answer, receipt: receipt };
 }
 
 /* 在页面里找一段满足条件的助手回答，找到就把它的正文交出来。

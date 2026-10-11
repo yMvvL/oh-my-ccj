@@ -67,6 +67,9 @@ class ConventionsTest {
       "accent-color",
       "currentColor",
       "color-scheme",
+      // CSS 的函数名也是平台拥有的：`color-mix()` 是浏览器的一个函数，而它里面那个 `color` 是它自己
+      // 的名字，不是这棵树选的词。
+      "color-mix(",
       "getColor",
       "setColor",
       "color:");

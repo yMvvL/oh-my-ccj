@@ -137,6 +137,12 @@
     photoPendingName: $('photo-pending-name'),
     btnPhotoDrop: $('photo-pending-drop'),
     btnUndo: $('btn-undo'),
+    btnReceipt: $('btn-receipt'),
+    btnExport: $('btn-export'),
+    receiptOverlay: $('receipt-overlay'),
+    receiptText: $('receipt-text'),
+    receiptHint: $('receipt-hint'),
+    receiptClose: $('receipt-close'),
     undoConfirm: $('undo-confirm'),
     undoConfirmText: $('undo-confirm-text'),
     undoConfirmYes: $('undo-confirm-yes'),
@@ -557,6 +563,14 @@
       const label = id ? clip(id, 26) : '无会话';
       dom.chipSession.textContent = label + (isFinite(count) ? ' · ' + count + ' 条消息' : '');
       dom.chipSession.title = '会话：' + (id || '无') + (isFinite(count) ? '（' + count + ' 条消息）' : '');
+      // 导出是一次普通的 GET，所以它是一个链接而不是一段脚本：目标是*屏幕上这条*会话，而
+      // 服务器就是从 status 里告诉页面它是哪一条的。
+      //
+      // 还没有消息的会话没有文件可导（空会话不落盘），所以那个链接只在这条会话真的说过话之后才出现
+      // ——一个点下去只会拿到一句「没有这个会话」的按钮，比没有按钮更糟。
+      const exportable = !!id && count > 0;
+      dom.btnExport.hidden = !exportable;
+      if (exportable) { dom.btnExport.href = '/api/export?id=' + encodeURIComponent(id); }
     }
   }
 
@@ -5089,6 +5103,51 @@
       appendError('退回：' + err.message);
     }
   }
+
+  /* ------------------------------------------------------- 收据 */
+
+  /* 收据的正文由服务器渲染好（`receipt.text`），页面只把它放进一个 <pre>：怎么排版只有一处
+   * 说法，而那一处就是终端里打印同一份东西的那一处。 */
+  async function openReceipt() {
+    dom.receiptOverlay.hidden = false;
+    dom.receiptText.textContent = '正在取这一轮的收据…';
+    dom.receiptHint.textContent = '';
+    try {
+      const data = await request('/api/receipt');
+      const receipt = data && data.receipt;
+      if (!receipt) {
+        dom.receiptText.textContent = '';
+        dom.receiptHint.textContent = '这个进程里还没有跑过回合，所以还没有收据可看。';
+        return;
+      }
+      dom.receiptText.textContent = str(receipt.text) || '';
+      const changed = Array.isArray(receipt.changed) ? receipt.changed.length : 0;
+      const commands = Array.isArray(receipt.commands) ? receipt.commands.length : 0;
+      dom.receiptHint.textContent = '这一轮 ' + (receipt.steps || 0) + ' 步，'
+        + changed + ' 个文件，' + commands + ' 条命令。点一下正文可以全选，原文件没有被改动。';
+    } catch (err) {
+      dom.receiptText.textContent = '';
+      dom.receiptHint.textContent = '取收据失败：' + str(err && err.message ? err.message : err);
+    }
+  }
+
+  function closeReceipt() {
+    dom.receiptOverlay.hidden = true;
+  }
+
+  dom.btnReceipt.addEventListener('click', openReceipt);
+  dom.receiptClose.addEventListener('click', closeReceipt);
+  dom.receiptOverlay.addEventListener('click', function (event) {
+    if (event.target === dom.receiptOverlay) { closeReceipt(); }
+  });
+  dom.receiptText.addEventListener('click', function () {
+    // 手机上点一下就全选，比让人用光标去划一段 ASCII 表格现实得多。
+    const selection = window.getSelection();
+    if (selection) { selection.selectAllChildren(dom.receiptText); }
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !dom.receiptOverlay.hidden) { closeReceipt(); }
+  });
 
   dom.btnUndo.addEventListener('click', undoLastTurn);
   dom.undoConfirmYes.addEventListener('click', undoConfirmed);

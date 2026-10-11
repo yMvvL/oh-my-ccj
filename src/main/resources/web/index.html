@@ -226,6 +226,12 @@
           <button type="button" class="btn ghost sm" id="btn-undo" aria-label="退回上一回合的文件改动"
                   title="把上一回合改动过的文件放回去。每个回合可以退回一次；保留最近二十个回合。">
             <span class="btn-glyph" aria-hidden="true">↺</span><span class="btn-label">退回</span></button>
+          <button type="button" class="btn ghost sm" id="btn-receipt" aria-label="上一回合的收据"
+                  title="这一轮回合改了什么、跑了什么、花了多少 token，以及哪些事没有验证。">
+            <span class="btn-glyph" aria-hidden="true">▤</span><span class="btn-label">收据</span></button>
+          <a class="btn ghost sm" id="btn-export" href="#" download aria-label="把这条会话导出成一份 HTML"
+             title="导出成一份自包含的 HTML：对话、工具调用与结果、图片缩略图与账本。原文件不会被改动。"
+             hidden><span class="btn-glyph" aria-hidden="true">↧</span><span class="btn-label">导出</span></a>
           <button type="button" class="btn ghost sm" id="btn-compact" aria-label="压缩对话"
                   title="用摘要替换较早的回合，释放上下文。完整对话仍留在磁盘上。">
             <span class="btn-glyph" aria-hidden="true">⤓</span><span class="btn-label">压缩</span></button>
@@ -280,6 +286,20 @@
   <!-- 手机上显示在抽贴面板下面，所以点面板外面就能关掉它。它在壁纸层之上、
        所有面板和对话框之下。 -->
   <div id="scrim" class="scrim" hidden></div>
+</div>
+
+<div id="receipt-overlay" class="overlay" hidden>
+  <div class="overlay-card settings-card" role="dialog" aria-modal="true" aria-labelledby="receipt-title">
+    <header class="overlay-head">
+      <h2 id="receipt-title">上一回合的收据</h2>
+      <button type="button" class="btn ghost" id="receipt-close">关闭</button>
+    </header>
+    <div class="overlay-body">
+      <!-- 纯文本，一行不动地放进来：收据是给人复制走的，而它里面的字符就是终端里那份的字符。 -->
+      <pre class="md-pre" id="receipt-text"><code class="md-code"></code></pre>
+      <p class="hint" id="receipt-hint"></p>
+    </div>
+  </div>
 </div>
 
 <div id="settings-overlay" class="overlay" hidden>

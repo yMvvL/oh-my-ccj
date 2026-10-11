@@ -1,5 +1,7 @@
 package com.ccj.agent.core;
 
+import java.util.List;
+
 /**
  * 审批请求得到的答复，是五种答案，不是两种。
  *
@@ -40,6 +42,25 @@ public enum ApprovalAnswer {
 
   public boolean allowed() {
     return this == ALLOW_ONCE || this == ALLOW_SESSION || this == ALLOW_ALWAYS;
+  }
+
+  /**
+   * 这句话是不是「某次调用被拒绝了」。
+   *
+   * <p>工具把 {@link #refusal()} 原样交回给模型，而收据要能从结果里认出它。这句识别必须与那句生成待在同一个
+   * 文件里：两处分头维护的话，改一次措辞之后收据会安静地少报一次拒绝——而少报一次拒绝，正是那种「看起来
+   * 一切正常」的错。
+   */
+  public static boolean looksLikeARefusal(String content) {
+    if (content == null || content.isEmpty()) {
+      return false;
+    }
+    for (ApprovalAnswer denied : List.of(DENY, DENY_ALWAYS, DENY_BY_RULE)) {
+      if (content.startsWith(denied.refusal())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** 答案为否时，工具交还给模型的内容。 */

@@ -8,6 +8,7 @@ import com.ccj.agent.core.ApprovalAnswer;
 import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.RuleApprover;
+import com.ccj.agent.core.Receipt;
 import com.ccj.agent.core.SpendLimit;
 import com.ccj.agent.core.Checks;
 import com.ccj.agent.session.CheckpointStore;
@@ -22,12 +23,14 @@ import com.ccj.agent.core.TokenEstimate;
 import com.ccj.agent.core.ToolContext;
 import com.ccj.agent.core.ToolRegistry;
 import com.ccj.agent.core.ToolSpec;
+import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.demo.DemoProvider;
 import com.ccj.agent.retrieval.EmbeddingConfig;
 import com.ccj.agent.retrieval.RetrievalIndex;
 import com.ccj.agent.eval.EvalReport;
 import com.ccj.agent.eval.EvalRunner;
 import com.ccj.agent.eval.EvalTask;
+import com.ccj.agent.export.SessionExport;
 import com.ccj.agent.provider.ConfigModelCatalog;
 import com.ccj.agent.provider.ProviderStore;
 import com.ccj.agent.provider.Providers;
@@ -58,6 +61,7 @@ import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -177,6 +181,12 @@ public final class Cli {
       return 0;
     }
 
+    if (options.export() != null) {
+      // 导出是只读的：它打开那个会话、把 HTML 写到 stdout，然后退出。什么都没改，所以它也不需要模型、
+      // 工具或审批。
+      return exportSession(options.export(), sessionsDir, out, err);
+    }
+
     // 每次运行一个 store；它记录的是哪个会话和哪个项目，则按回合、在运行该回合的线程上决定。
     CheckpointStore checkpoints = CheckpointStore.recording();
     Config config;
@@ -195,6 +205,9 @@ public final class Cli {
 
     // 语义检索的索引，配了才有；它要在这里声明，因为它持有的那个 HTTP 客户端要在退出时关掉。
     RetrievalIndex retrieval = null;
+    // 编辑后检查在这里读一次：工具表拿它决定编辑之后跑什么，而收据拿它回答「这个文件被改过，可是有没有
+    // 东西检查过它」——两处问的必须是同一份配置，所以只有一个来源。
+    Checks checks = Checks.from(configFile);
     ToolRegistry tools;
     try {
       // 配置文件在构建工具之前读取，因为编辑类工具会带上这个文件声明的编辑后检查。Checks.from()
@@ -202,7 +215,7 @@ public final class Cli {
       // 到重启。
       // shell 也从配置来：它就是「这台机器上跑命令的那个程序」，与 bash 工具和编辑后检查共用同一个
       // 答案。它在启动时读一次——设置表单不管它，改它和改绑定地址一样，是下一次启动的事。
-      tools = Tools.standard(Checks.from(configFile), checkpoints, config.shell());
+      tools = Tools.standard(checks, checkpoints, config.shell());
       // 用户自己的服务器，如果有的话。起不来的服务器是警告而不是拒绝：一个坏掉的条目不能拦住
       // 代理，但也不能一声不吭——缺失的能力和没人提过的能力，从这里看是一模一样的。
       McpTools mcp = McpTools.discover(paths.home().resolve("mcp.json"));
@@ -327,6 +340,7 @@ public final class Cli {
             providerStore,
             paths.home(),
             traceSink,
+            checks,
             out,
             err);
       }
@@ -357,6 +371,7 @@ public final class Cli {
               cwd,
               paths.home(),
               checkpoints,
+              checks,
               config,
               env,
               session,
@@ -451,6 +466,31 @@ public final class Cli {
     err.flush();
     int outputLimit = config.outputLimitBytes() == null ? 32 * 1024 : config.outputLimitBytes();
     return new McpServer(exposed, cwd, approver, outputLimit, VERSION).serve(in, out, err);
+  }
+
+  /**
+   * 把一个会话导出成一份自包含的 HTML，写到 stdout。
+   *
+   * <p>写到 stdout 而不是某个文件：`ccj --export <id> > session.html` 让「写到哪里」完全由调用方决定，
+   * 而「绝不改动原文件」这条承诺也就不必靠自觉——这个子命令唯一打开的会话文件是只读的。
+   */
+  private int exportSession(String id, Path sessionsDir, PrintStream out, PrintStream err) {
+    FileSession session;
+    try {
+      session = SessionStore.open(sessionsDir, id);
+    } catch (RuntimeException e) {
+      // 不存在的会话、以及一个想走出目录的名字（`../`、绝对路径），都在这里变成一句可照做的话。
+      err.println("error: " + message(e));
+      err.flush();
+      return 1;
+    }
+    try {
+      out.print(SessionExport.toHtml(session, Instant.now()));
+      out.flush();
+      return 0;
+    } finally {
+      session.close();
+    }
   }
 
   /**
@@ -697,6 +737,7 @@ public final class Cli {
       ProviderStore providerStore,
       Path home,
       Recorder.TraceSink traceSink,
+      Checks checks,
       PrintStream out,
       PrintStream err) {
     int port = options.port() == null ? DEFAULT_WEB_PORT : options.port();
@@ -794,6 +835,7 @@ public final class Cli {
     // 因为仓库写不到这里。
     hub.setApprovalRules(ApprovalRules.open(home.resolve("approvals.json"), cwd));
     hub.setTraceSink(traceSink);
+    hub.setChecks(checks);
     Wallpapers wallpapers = Wallpapers.from(env, options.wallpapers());
     try (HttpApi api = HttpApi.start(hub, binds, token, wallpapers)) {
       List<String> urls = api.urls();
@@ -992,6 +1034,7 @@ public final class Cli {
     private final Path cwd;
     private final Path home;
     private final CheckpointStore checkpoints;
+    private final Checks checks;
     private final Config config;
     private final Map<String, String> env;
     private final ConsoleRenderer renderer;
@@ -1002,6 +1045,8 @@ public final class Cli {
     private final AtomicReference<String> sessionId = new AtomicReference<>();
 
     private FileSession session;
+    /** 这一个回合开始时的账本快照；收据里的 token 是它与现在之差。null 表示还没跑过回合。 */
+    private UsageTotals turnStart;
     private AgentOptions agentOptions;
     private boolean autoApprove;
     private AgentLoop loop;
@@ -1013,6 +1058,7 @@ public final class Cli {
         Path cwd,
         Path home,
         CheckpointStore checkpoints,
+        Checks checks,
         Config config,
         Map<String, String> env,
         FileSession session,
@@ -1029,6 +1075,7 @@ public final class Cli {
       this.cwd = cwd;
       this.home = home;
       this.checkpoints = checkpoints;
+      this.checks = checks;
       this.config = config;
       this.env = env;
       this.session = session;
@@ -1222,16 +1269,39 @@ public final class Cli {
         return;
       }
       checkpoints.beginTurn(session.file(), cwd);
+      UsageTotals before = session.totals();
       try {
         loop.run(input);
       } catch (RuntimeException e) {
         err.println("error: " + message(e));
         err.flush();
       } finally {
+        turnStart = before;
         checkpoints.endTurn();
         renderer.reset();
         autoCompact();
       }
+    }
+
+    /**
+     * 上一个回合的收据：它做了什么，以及它没有验证什么。
+     *
+     * <p>起点由 {@link #turn} 记下，文件清单来自检查点（与 {@code /api/undo} 的预览是同一份数据），
+     * token 是账本前后两次快照之差。所以这份收据不可能与屏幕上那个回合对不上——它们本来就是同一个来源。
+     */
+    private void receipt() {
+      Receipt receipt =
+          Receipt.of(
+              session.id(),
+              Receipt.lastTurn(session.messages()),
+              checkpoints.lastTurnFiles(session.file(), cwd),
+              turnStart == null ? session.totals() : turnStart,
+              session.totals(),
+              config.outputLimitBytes() == null ? 0 : config.outputLimitBytes(),
+              checks,
+              cwd);
+      out.print(receipt.render());
+      out.flush();
     }
 
     /** 把上一个回合改动过的东西放回原样，正如 {@code POST /api/undo} 为页面所做的那样。 */
@@ -1329,6 +1399,7 @@ public final class Cli {
         }
         case "/compact" -> compact();
         case "/undo" -> undo();
+        case "/receipt" -> receipt();
         case "/tools" -> printTools(tools, agentOptions.system(), out);
         case "/config" -> printConfig(config, env, out);
         case "/yolo" -> {
@@ -1348,6 +1419,8 @@ public final class Cli {
       session.close();
       session = next;
       sessionId.set(next.id());
+      // 换了会话，上一个回合的起点就不再属于任何东西：留在那里会让收据把两个会话的 token 相减。
+      turnStart = null;
       rebuild();
     }
 
@@ -1377,6 +1450,7 @@ public final class Cli {
             /model <name>    为本会话切换模型
             /compact         用摘要替换更早的回合，释放上下文
             /undo            把上一个回合改动过的文件放回原样
+            /receipt         上一个回合的收据：改了什么、跑了什么、花了多少、以及哪些事没有验证
             /tools           列出可用的工具
             /config          显示生效中的配置
             /yolo            切换工具调用的自动批准

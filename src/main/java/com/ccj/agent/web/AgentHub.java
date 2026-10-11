@@ -7,6 +7,7 @@ import com.ccj.agent.core.ApprovalAnswer;
 import com.ccj.agent.core.ApprovalRules;
 import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.SpendLimit;
+import com.ccj.agent.core.Checks;
 import com.ccj.agent.core.Compaction;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Json;
@@ -23,6 +24,8 @@ import com.ccj.agent.core.UsageTotals;
 import com.ccj.agent.core.VisionConfig;
 import com.ccj.agent.core.Workspace;
 import com.ccj.agent.core.ProviderDefinition;
+import com.ccj.agent.core.Receipt;
+import com.ccj.agent.export.SessionExport;
 import com.ccj.agent.obs.MeteredApprover;
 import com.ccj.agent.obs.Metric;
 import com.ccj.agent.obs.Metrics;
@@ -38,6 +41,7 @@ import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.session.AttachmentStore;
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
+import com.ccj.agent.session.Thumbnails;
 import com.ccj.agent.ui.ToolSummary;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -45,6 +49,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -179,6 +184,14 @@ public final class AgentHub implements AutoCloseable {
   private volatile Recorder.TraceSink traceSink;
 
   /**
+   * 这个项目声明的编辑后检查。
+   *
+   * <p>工具表另有一份、用来决定编辑之后跑什么；这里那一份只回答收据里的一个问题：「这个文件被改过，可是
+   * 有没有东西检查过它」。默认是什么都没有——一个没被告诉过的 hub 不该替用户声称某个文件被验证过。
+   */
+  private volatile Checks checks = Checks.none();
+
+  /**
    * 正在跑的回合，每个会话一个，以及每一个所属的对话。
    *
    * <p>这个 map 就是服务器对「这个会话忙不忙」的回答：回合在开始之前登记，在结束时移除，所以同一个对话
@@ -274,6 +287,45 @@ public final class AgentHub implements AutoCloseable {
   /** 某个会话最近一次运行的痕迹；它还没跑过回合时为 null。 */
   public RunTrace lastTrace(String sessionId) {
     return sessionId == null ? null : lastTraces.get(sessionId);
+  }
+
+  /** 见 {@link #checks}。由调用方设置，理由与 {@link #setApprovalRules} 相同：那是一个命令行 flag 指到的
+   * 文件，而本类看不到命令行。 */
+  public void setChecks(Checks rules) {
+    this.checks = rules == null ? Checks.none() : rules;
+  }
+
+  /**
+   * 屏幕上那个会话最近一次运行的收据。
+   *
+   * <p>和痕迹一样只在内存里、只留最近一次：它回答的是「刚刚那个回合到底做了什么」，而留下历史是导出负责
+   * 的事。没有收据时返回 {@code {"receipt": null}} 而不是 404——「这个进程里它还没跑过回合」是一种状态，
+   * 不是一次失败。
+   */
+  public ObjectNode receiptJson() {
+    FileSession current = session();
+    Conversation conversation = current == null ? null : conversations.get(current.id());
+    ObjectNode node = Json.object();
+    Receipt receipt = conversation == null ? null : conversation.receipt();
+    if (receipt == null) {
+      node.putNull("receipt");
+      return node;
+    }
+    node.set("receipt", receipt.toJson());
+    return node;
+  }
+
+  /**
+   * 一个会话导出成一份自包含的 HTML。
+   *
+   * <p>只读：打开、渲染、交回来。它不改动会话文件、也不写服务器上的任何地方——「导出绝不改动原文件」这条
+   * 承诺由测试用（路径、大小、修改时间）的快照比对钉住，而不是靠自觉。
+   */
+  public String exportHtml(String id) {
+    if (id == null || id.isBlank()) {
+      throw new IllegalArgumentException("导出需要一个会话 id");
+    }
+    return SessionExport.toHtml(openForDisplay(id), Instant.now());
   }
 
   /** 这条会话持有的待发送图片，或者 {@code null}。 */
@@ -1373,9 +1425,8 @@ public final class AgentHub implements AutoCloseable {
     if (current == null || name == null || name.isBlank()) {
       return null;
     }
-    Path directory = AttachmentStore.forSession(current.file()).directory();
-    Path file = resolveInside(directory, name.strip());
-    if (file == null || !Files.isRegularFile(file)) {
+    Path file = AttachmentStore.forSession(current.file()).resolve(name);
+    if (file == null) {
       return null;
     }
     byte[] bytes;
@@ -1395,15 +1446,6 @@ public final class AgentHub implements AutoCloseable {
    * 绝对路径、指向别处的符号链接），一律返回 {@code null}。检查的是解析结果而不是名字的拼写，因为名字
    * 的拼写有太多写法。
    */
-  private static Path resolveInside(Path directory, String name) {
-    Path base = directory.toAbsolutePath().normalize();
-    if (!Files.isDirectory(base)) {
-      return null;
-    }
-    Path candidate = base.resolve(name).normalize();
-    return candidate.getParent() != null && candidate.getParent().equals(base) ? candidate : null;
-  }
-
   /** 一张图片的字节，以及它们是什么类型。 */
   public record PictureFile(byte[] bytes, String mediaType) {}
 
@@ -1633,6 +1675,9 @@ public final class AgentHub implements AutoCloseable {
     checkpoints.beginTurn(conversation.session().file(), conversation.cwd());
     AgentLoop loop = newLoop(conversation);
     conversation.attach(loop);
+    // 账本的前后两次快照：收据里「这一轮花了多少」是它们之差，而不是会话的累计——一个累计数字没法回答
+    // 「刚才那一下花了多少」。
+    UsageTotals before = conversation.session().totals();
     long started = System.nanoTime();
     AgentLoop.Result result = null;
     Throwable failure = null;
@@ -1649,6 +1694,16 @@ public final class AgentHub implements AutoCloseable {
     // 在收尾的其他事之前关闭：这个回合改动的东西要趁着它仍是本线程跑的那个时写下，而下面的一切都在发布
     // 关于它的事件。
     checkpoints.endTurn();
+    conversation.receipt(
+        Receipt.of(
+            conversation.id(),
+            Receipt.lastTurn(conversation.session().messages()),
+            checkpoints.lastTurnFiles(conversation.session().file(), conversation.cwd()),
+            before,
+            conversation.session().totals(),
+            config.outputLimitBytes() == null ? 0 : config.outputLimitBytes(),
+            checks,
+            conversation.cwd()));
     conversation.addElapsed((System.nanoTime() - started) / 1_000_000);
     // 在回合边界做持久化，既让文件不至于每来一个 token 就长一点，也仍然扛得住被杀：最坏情况下丢的是最后
     // 一个回合，而绝不是整个会话。
@@ -2206,6 +2261,14 @@ public final class AgentHub implements AutoCloseable {
      * 工作区，绝不能把一个已经做了一半的工作重定向到别的目录里。一个回合从它启动的那一刻起就拥有自己的
      * 工作目录。
      */
+    /**
+     * 这个对话最近一次运行的收据。
+     *
+     * <p>它在回合结束时成形，因为那一刻同时握着三样东西——转录、检查点、账本的前后快照——而它们散开之后
+     * 就只能靠猜。
+     */
+    private volatile Receipt receipt;
+
     private volatile Path cwd;
     /**
      * 已经描述好、等着和用户下一句话一起发出去的那张图片。
@@ -2235,6 +2298,14 @@ public final class AgentHub implements AutoCloseable {
 
     Path cwd() {
       return cwd;
+    }
+
+    Receipt receipt() {
+      return receipt;
+    }
+
+    void receipt(Receipt value) {
+      this.receipt = value;
     }
 
     /** 重新读取工作目录，现在启动的回合应当用它。 */

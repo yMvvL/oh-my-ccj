@@ -1,4 +1,4 @@
-package com.ccj.agent.web;
+package com.ccj.agent.session;
 
 import com.ccj.agent.session.AttachmentStore;
 import java.awt.Graphics2D;

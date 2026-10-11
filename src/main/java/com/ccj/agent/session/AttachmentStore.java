@@ -91,10 +91,42 @@ public final class AttachmentStore {
   }
 
   /**
+   * 一个已经存在的附件目录，按路径。
+   *
+   * <p>与 {@link #forSession} 的区别是「已知目录」与「已知会话文件」：读的一方（导出、缩略图）手里有时
+   * 只有前者。它不做那套会话 id 的校验——那是给「由名字推出目录」用的，而这里没有名字可推。
+   */
+  public static AttachmentStore at(Path directory) {
+    return new AttachmentStore(directory.toAbsolutePath().normalize());
+  }
+
+  /**
    * 图片去哪里。由第一次 {@link #save} 创建，于是从未收到过图片的会话不会有一个空目录需要解释。
    */
   public Path directory() {
     return directory;
+  }
+
+  /**
+   * {@code name} 在这条会话的附件目录里的位置；名字指向目录之外、名字不是一张平面的文件、或者文件不在时
+   * 为 null。
+   *
+   * <p>「平面」是刻意的：上传的名字里从来没有过目录，所以一个带分隔符的名字不是一次失误就是一次试探，两者
+   * 都按「没有这张图片」处理。
+   */
+  public Path resolve(String name) {
+    if (name == null || name.isBlank()) {
+      return null;
+    }
+    Path base = directory.toAbsolutePath().normalize();
+    if (!Files.isDirectory(base)) {
+      return null;
+    }
+    Path candidate = base.resolve(name.strip()).normalize();
+    if (candidate.getParent() == null || !candidate.getParent().equals(base)) {
+      return null;
+    }
+    return Files.isRegularFile(candidate) ? candidate : null;
   }
 
   /**

@@ -218,6 +218,8 @@ public final class HttpApi implements AutoCloseable {
         case "/api/wallpapers" -> wallpapers(exchange);
         case "/api/status" -> get(exchange, hub.status());
         case "/metrics" -> metrics(exchange);
+        case "/api/receipt" -> receipt(exchange);
+        case "/api/export" -> export(exchange);
         case "/api/trace" -> trace(exchange);
         case "/api/sessions" -> sessions(exchange);
         case "/api/workspaces/browse" -> browse(exchange);
@@ -974,6 +976,44 @@ public final class HttpApi implements AutoCloseable {
       return;
     }
     respond(exchange, 200, trace.toJson());
+  }
+
+  /**
+   * 屏幕上那个会话最近一次运行的收据。
+   *
+   * <p>它是给人读的，所以 JSON 里连同一份渲染好的纯文本一起给出去（{@code text}）：页面只需要把它放进一个
+   * {@code <pre>}，而「怎么排版」这件事于是只有一处说法。
+   */
+  private void receipt(HttpExchange exchange) throws IOException {
+    if (!"GET".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "需要 GET");
+      return;
+    }
+    respond(exchange, 200, hub.receiptJson());
+  }
+
+  /**
+   * 把一个会话导出成一份自包含的 HTML。
+   *
+   * <p>它带着 {@code Content-Disposition: attachment} 发出去，所以浏览器把它当成一次下载而不是一个页面
+   * ——这个文件本来就是给人拿走用的。id 先过会话 id 的白名单（{@code ../} 到不了文件系统），然后才被拼进
+   * 那个文件名里。
+   */
+  private void export(HttpExchange exchange) throws IOException {
+    if (!"GET".equals(exchange.getRequestMethod())) {
+      error(exchange, 405, "需要 GET");
+      return;
+    }
+    String id = queryParam(exchange, "id");
+    if (id == null || id.isBlank()) {
+      error(exchange, 400, "查询参数 'id' 是必需的");
+      return;
+    }
+    String html = hub.exportHtml(id);
+    exchange
+        .getResponseHeaders()
+        .add("Content-Disposition", "attachment; filename=\"" + id.strip() + ".html\"");
+    respondText(exchange, 200, "text/html; charset=utf-8", html);
   }
 
   private void respond(HttpExchange exchange, int status, ObjectNode body) throws IOException {

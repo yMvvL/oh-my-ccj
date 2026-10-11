@@ -53,6 +53,7 @@ public record CliOptions(
     String shell,
     String trace,
     String eval,
+    String export,
     boolean mcpServe,
     Map<String, String> subAgentModels,
     Map<String, String> subAgentReasonings,
@@ -162,6 +163,7 @@ public record CliOptions(
     String shell = null;
     String trace = null;
     String eval = null;
+    String export = null;
     boolean mcpServe = false;
     Map<String, String> subAgentModels = new LinkedHashMap<>();
     Map<String, String> subAgentReasonings = new LinkedHashMap<>();
@@ -342,6 +344,10 @@ public record CliOptions(
           eval = take(args, i, name, inline);
           i += inline == null ? 2 : 1;
         }
+        case "--export" -> {
+          export = take(args, i, name, inline);
+          i += inline == null ? 2 : 1;
+        }
         case "--mcp-serve" -> {
           mcpServe = true;
           i += 1;
@@ -409,6 +415,7 @@ public record CliOptions(
         shell,
         trace,
         eval,
+        export,
         mcpServe,
         subAgentModels,
         subAgentReasonings,
@@ -470,6 +477,8 @@ public record CliOptions(
               --resume <id>        按 id 重新打开一个会话
               --continue           重新打开最近的一个会话
               --list-sessions      打印会话后退出
+              --export <id>        把一个会话导出成一份自包含的 HTML 并写到 stdout（断网也打得开；
+                                   原文件与图片一个字都不动）。见 docs/USAGE.md
               --workspace <name>   使用某个工作区：它的目录，以及它自己的会话
 
     Web:
