@@ -19,7 +19,7 @@ sandbox: the approval prompt is the only guard, and `--yolo` removes it.
 
 ---
 
-从零开始用纯 Java 21 写成的编码代理运行时——28.2k 行 Java 加一个 9.0k 行的原生页面，旁边还有 26.3k 行
+从零开始用纯 Java 21 写成的编码代理运行时——28.3k 行 Java 加一个 9.0k 行的原生页面，旁边还有 26.3k 行
 测试。它是每个编码代理都围绕的那个循环的一个小巧、可读的实现。
 
 ```
