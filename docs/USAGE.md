@@ -115,6 +115,8 @@ REPL 命令：`/help`、`/exit`、`/clear`、`/new`、`/resume <id>`、`/session
 | `CCJ_REASONING`, `CCJ_MAX_CONTEXT_TOKENS`, `CCJ_MAX_TOTAL_TOKENS` | 推理强度、提示词预算、花费上限 |
 | `CCJ_AUTO_APPROVE`, `CCJ_SYSTEM_PROMPT` | 审批模式与提示词覆盖 |
 | `CCJ_VISION_BASE_URL`, `CCJ_VISION_MODEL`, `CCJ_VISION_API_KEY`, `CCJ_VISION_API_KEY_ENV`, `CCJ_VISION_MAX_TOKENS` | 描述图片的那个模型（它自己的端点、密钥和补全预算；未设置表示该功能关闭——预算除外，它有默认值） |
+| `CCJ_SHELL` | 跑命令与编辑后检查的那个程序（默认 `/bin/bash`；Windows 上是 `%COMSPEC%`） |
+| `CCJ_SUBAGENT_<角色>_MODEL`, `CCJ_SUBAGENT_<角色>_REASONING` | 把一个子代理角色钉到它自己的模型与思考档位上（角色名在环境变量里大写：`EXPLORE`、`VERIFY`、`BUILD`；没点名的角色跟随主对话） |
 | `CCJ_WALLPAPERS` | 页面轮换作为背景的图片 |
 | `CCJ_WEB_TOKEN` | 网络地址必须携带的 token（不传 `--web-token` 时；`--web-token` 优先，否则用 `~/.oh-my-ccj/web-token`） |
 | `CCJ_HOME` | 应用主目录 |
@@ -239,6 +241,28 @@ ccj --workspace api            # this run works in api's directory, with api's s
   所以被写下去的正是你审批过的那份差异。
 - `abort` 在步骤之间、每次工具调用之前停止一个回合，所以一个卡在模型自己的网络调用上的回合会先把那次调用
   跑完再停。等待审批的回合会立即停止，并且停在它所属的那个对话里。
+
+## 在容器里跑
+
+```bash
+docker build -t ccj .
+docker run --rm -p 127.0.0.1:6767:6767 -v ccj-home:/home/ccj/.oh-my-ccj ccj
+```
+
+或者 `docker compose up -d`(仓库根有一份 `docker-compose.yml`,`docker compose run --rm demo` 还能跑一个不要密钥
+的演示回合)。
+
+| 你要知道的事 | 为什么 |
+|---|---|
+| **token 在 `docker logs` 里。** 绑非环回地址时 ccj 自己生成一个 token、存进卷里,并把带 token 的地址打在启动那几行 | 一个让人手填的秘密,最后会落进 dotfiles 与 shell 历史;而生成的这一个只进那个卷。**把带 token 的 URL 当密码对待** |
+| **`-v ccj-home:/home/ccj/.oh-my-ccj` 是这台机器的全部记忆** | 会话、审批规则、嵌入索引、工作区注册表都在 `CCJ_HOME` 下。不挂它,容器一删对话就没了。镜像**不声明** `VOLUME`:声明出来的卷第一次创建时属于 root,而这个进程是 uid 10001——那会把自己锁在门外(第一版的错误就是起容器后第一行 `无法写入 …/workspaces.json`) |
+| **默认发布到 `127.0.0.1`** | 想让它对局域网或 tailnet 可达,就改成 `-p 6767:6767`——并清楚自己刚做的是「把一台能执行 shell 的机器接到那个网络上,只差一个 token」 |
+| **容器里没有终端,所以需要审批的调用默认被拒绝** | 这就是那道关卡该有的样子:没人能问的时候,答案是「不行」。要放行就写一条规则进卷里的 `approvals.json`(或用 `--yolo`,但那只该在你完全掌控的环境里) |
+| **镜像是 `--user 10001`,不是 root** | 这个程序以你的身份执行 shell 命令,在容器里也一样 |
+
+构建阶段**不跑测试**:那 869 个用例是给 `./mvnw verify` 用的(里面有一条要真浏览器),把它们塞进一次镜像构建
+只会让「构建失败」失去意义。CI 里两件事都做,而且是分开的两个作业——`docker` 那个作业会真的起一个容器并对它
+发一次 HTTP 请求,因为「镜像能构建」与「镜像能用」是两件事。
 
 ## 想要一个自带运行时的包？
 

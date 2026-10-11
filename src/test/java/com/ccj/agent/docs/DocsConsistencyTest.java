@@ -14,6 +14,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
@@ -67,6 +69,76 @@ class DocsConsistencyTest {
               + entry.getKey()
               + " 的参数表与它的 schema 不一致；参数就是文档里那一行，改名要一起改");
     }
+  }
+
+  @Test
+  void theEnvironmentTableListsExactlyTheVariablesTheCodeReads() throws IOException {
+    String doc = Files.readString(USAGE);
+    Set<String> documented = documentedEnvironment(doc);
+    Set<String> read = environmentVariablesInSource();
+
+    // 两个方向都要比，因为两种漂移的害处不同：文档里写了代码不读的变量，读者会以为设它有用；代码读了而
+    // 文档不写的变量，读者根本不知道它存在——而那正是这次检查抓到的第一件事（`CCJ_SHELL` 与子代理那两个
+    // 从来没被写进这张表）。
+    Set<String> undocumented = new TreeSet<>(read);
+    undocumented.removeAll(documented);
+    Set<String> phantom = new TreeSet<>(documented);
+    phantom.removeAll(read);
+
+    assertTrue(
+        undocumented.isEmpty(),
+        "这些环境变量代码会读，而 docs/USAGE.md 的「配置」一节没有列："
+            + undocumented
+            + "——把它们的含义写进那张表；用户看不到的开关等于不存在。");
+    assertTrue(
+        phantom.isEmpty(),
+        "这些环境变量文档里列了，而 src/main/java 里没有任何地方读："
+            + phantom
+            + "——要么代码丢了它们，要么他们只是纸面上的。");
+  }
+
+  /**
+   * {@code docs/USAGE.md}「配置」一节那张表里的变量名。
+   *
+   * <p>拼出来的那些在文档里写成 {@code CCJ_SUBAGENT_<角色>_MODEL}，而代码里的字面量只有前缀
+   * （{@code "CCJ_SUBAGENT_"} 加角色的键）：所以 {@code <} 之后的部分在这里被切掉，两边比的是同一个东西。
+   */
+  private static Set<String> documentedEnvironment(String doc) {
+    Set<String> names = new TreeSet<>();
+    Matcher row = Pattern.compile("(?m)^\\| `CCJ_[^|]*\\|.*$").matcher(section(doc, "## 配置"));
+    while (row.find()) {
+      // 整行都是候选：一行的第一个变量名在第一个反引号对里，而它同样是这张表的一部分——只取「第一个之外」
+      // 的那半行，恰好会把每一行的头一个变量漏掉（这一版第一稿就是这么错的）。
+      Matcher name = Pattern.compile("`(CCJ_[A-Z0-9_<>\\u4e00-\\u9fff]+)`").matcher(row.group(0));
+      while (name.find()) {
+        String found = name.group(1);
+        int placeholder = found.indexOf('<');
+        names.add(placeholder < 0 ? found : found.substring(0, placeholder));
+      }
+    }
+    assertTrue(names.size() >= 10, "配置一节该列出环境变量，实际是 " + names);
+    return names;
+  }
+
+  /**
+   * {@code src/main/java} 里出现的每一个 {@code CCJ_*} 字面量。
+   *
+   * <p>扫源码而不是问配置类要一张清单：这些名字散在 {@code Config}、{@code AppPaths}、{@code Cli} 与
+   * {@code Wallpapers} 里，而「代码到底会读哪些」这个问题的答案只有一个来源——代码本身。
+   */
+  private static Set<String> environmentVariablesInSource() throws IOException {
+    Path main = Path.of("src", "main", "java");
+    Set<String> names = new TreeSet<>();
+    try (var walk = Files.walk(main)) {
+      for (Path file : walk.filter(path -> path.toString().endsWith(".java")).sorted().toList()) {
+        Matcher literal = Pattern.compile("\"(CCJ_[A-Z0-9_]*)\"").matcher(Files.readString(file));
+        while (literal.find()) {
+          names.add(literal.group(1));
+        }
+      }
+    }
+    assertTrue(names.size() >= 10, "源码里该有一批 CCJ_* 环境变量，实际是 " + names);
+    return names;
   }
 
   /**

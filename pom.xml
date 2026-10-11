@@ -103,6 +103,31 @@
         </executions>
       </plugin>
 
+      <!-- 覆盖率:是一份**报告**,不是一道门。一个阈值是一个凭感觉定下的数字,而覆盖率说明的是「哪些地方
+           从来没有被跑过」——那是有用的,但它不说明「测得好不好」:一行被跑过不等于它被验证过(而
+           `docs/CONVENTIONS.md` 里那句「名字就是主张」说的正是另一半)。所以它只生成
+           `target/site/jacoco/index.html`,让数字可以被读到,不拦构建。 -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>0.8.12</version>
+        <executions>
+          <execution>
+            <id>coverage-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>coverage-report</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>

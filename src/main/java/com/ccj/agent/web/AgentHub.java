@@ -62,6 +62,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -84,6 +85,14 @@ public final class AgentHub implements AutoCloseable {
 
   /** 一个回合运行期间，一个对话最多可以积压多少条消息。见 Conversation.queued。 */
   private static final int MAX_QUEUED_MESSAGES = 16;
+
+  /**
+   * {@link #close()} 最多等多久让正在跑的回合收尾。
+   *
+   * <p>五秒是一个「够一个正在写会话文件的回合写完」的界，而不是「够一个长命令跑完」的界：被中断的工具命令
+   * 只看循环的中止标志，等它等不来。
+   */
+  private static final long SHUTDOWN_GRACE_SECONDS = 5;
 
   /** 按设置构建一个提供方；做成注入的，好让本类不沾传输层的细节。 */
   @FunctionalInterface
@@ -2208,6 +2217,21 @@ public final class AgentHub implements AutoCloseable {
     closed = true;
     approvals.denyAll();
     turns.shutdownNow();
+    // 等一等被中断的回合真的停下，而不是把「关掉」当成「说了一句关掉」：会话文件是每一条消息一次 write，
+    // 所以 close() 之后还有人在写，就意味着「关掉之后文件还在变」。
+    //
+    // 这件事是被一次真实的失败逼出来的（`WebConversationConcurrencyTest` 里 JUnit 删不掉自己的临时目录：
+    // 一个还在收尾的回合刚好又往 `sessions/` 里写了一个文件）。等待是有上界的，因为一个正卡在长命令里的
+    // 工具不会被线程中断叫醒——它只看循环的中止标志——而 close() 不该为了它挂住五分钟。
+    try {
+      if (!turns.awaitTermination(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)) {
+        // 说不出口也要说：这里不抛，因为一个关不下去的回合不该让进程退不掉；但也不该假装它停了。
+        java.util.logging.Logger.getLogger(AgentHub.class.getName())
+            .warning("关闭时有回合没有在 " + SHUTDOWN_GRACE_SECONDS + " 秒内停下");
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
     Provider current = provider.getAndSet(null);
     if (current != null) {
       current.close();

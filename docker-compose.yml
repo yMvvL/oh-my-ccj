@@ -1,0 +1,34 @@
+# 一条命令起一个能用的 ccj：
+#
+#   docker compose up -d          # 然后看 `docker compose logs ccj` 里那条带 token 的地址
+#   docker compose run --rm demo  # 不要密钥的演示：跑一个真回合（read 一个文件）然后退出
+#
+# 这里没有 `CCJ_WEB_TOKEN`：绑非环回时 ccj 会自己生成一个、存进卷里、并把带 token 的地址打出来。让用户在
+# 一个 yaml 里手填一个秘密，结果是那个秘密进了 dotfiles 与 shell 历史——而生成的那一个只进这个卷。
+services:
+  ccj:
+    build: .
+    image: ccj:local
+    # 只发布到本机，是更窄的默认：要让它对局域网或 tailnet 可达，把这一行改成 "6767:6767"，
+    # 并且清楚自己刚刚做的是「把一台能执行 shell 的机器接到那个网络上，只差一个 token」。
+    ports:
+      - "127.0.0.1:6767:6767"
+    volumes:
+      # 会话、审批规则、索引都在这里。删掉这个卷 = 忘掉全部对话。
+      - ccj-home:/home/ccj/.oh-my-ccj
+    restart: unless-stopped
+    # 容器里没有终端，所以需要审批的调用默认会被**拒绝**。要放行就得有规则：往卷里的
+    # approvals.json 写一条，或者（只在你自己掌控的环境里）加 "--yolo"。
+    # 这正是这道关卡该有的样子：没人能问的时候，答案是「不行」。
+
+  demo:
+    profiles: ["demo"]
+    build: .
+    image: ccj:local
+    # 镜像是**只有 jar** 的（没有仓库、没有 README），所以这个演示让 demo 模型去列一下 jar——那是一次真的
+    # 工具调用，也是一句真的回答。想看它读你的代码，就把仓库挂进来：
+    #   docker compose run --rm -v "$PWD:/work" demo --demo -p "read pom.xml"
+    command: ["--demo", "--no-open", "-p", "list *.jar"]
+
+volumes:
+  ccj-home:

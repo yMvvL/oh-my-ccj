@@ -82,3 +82,43 @@ jobs:
           name: surefire-reports-${{ matrix.os }}
           path: target/surefire-reports/
           if-no-files-found: ignore
+
+  # 镜像这一条是分开的一个作业，而不是主机测试里多一步：它要的是另一个工具链（Docker），而且它与平台矩阵
+  # 无关——一个镜像要么能起来，要么不能。
+  #
+  # 它证明的不是「Dockerfile 语法正确」，而是「这个镜像真的能起一个服务器并回答一个问题」：先构建，再起一个
+  # 容器，再对它做一次真的 HTTP 请求。没有这一步，Dockerfile 就是一份**没有人跑过**的声明——而这个仓库对
+  # 那种东西的名字，是「负债」。
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 构建阶段会跑 `mvn package`，所以要一个 JDK 的只是那个镜像里自带的 Maven，不是 runner 上的。
+      - name: 构建镜像
+        run: docker build -t ccj:ci .
+
+      - name: 起一个容器并问它一句
+        run: |
+          # 覆盖 CMD 时要连着默认的那几个 flag 一起给：容器里没有浏览器可开，而环回对宿主机没有意义。
+          docker run -d --name ccj-ci -p 6767:6767 ccj:ci --demo --no-open --host 0.0.0.0 --port 6767
+          for attempt in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:6767/api/status >/dev/null 2>&1; then
+              echo "服务器起来了（第 ${attempt} 次尝试）"
+              break
+            fi
+            sleep 1
+          done
+          # 一次真的请求：没有它，「镜像能构建」和「镜像能用」是两件事。
+          curl -fsS http://127.0.0.1:6767/api/status | head -c 300
+          echo
+
+      - name: 容器里的日志
+        if: failure()
+        run: docker logs ccj-ci || true
+
+      - name: 收尾
+        if: always()
+        run: docker rm -f ccj-ci || true

@@ -19,7 +19,7 @@ sandbox: the approval prompt is the only guard, and `--yolo` removes it.
 
 ---
 
-从零开始用纯 Java 21 写成的编码代理运行时——22.7k 行 Java 加一个 8.8k 行的原生页面，旁边还有 21.7k 行
+从零开始用纯 Java 21 写成的编码代理运行时——27.0k 行 Java 加一个 9.0k 行的原生页面，旁边还有 25.3k 行
 测试。它是每个编码代理都围绕的那个循环的一个小巧、可读的实现。
 
 ```
@@ -48,7 +48,7 @@ Added the check on line 42 and the suite passes.
 - **审批是唯一的防线，而它可以被记住。** 五个答案——拒绝 / 只允许这一次 / 本会话都允许 / 始终允许 / 以后
   都拒绝——两个「从现在起」各写一条规则，主语一模一样。子代理问的是同一个人，它的写入也一样要审批，而且
   它不能再往下委派：`task` 根本不在它的注册表里。[SECURITY.md](SECURITY.md)
-- **每个主张都带着它的测量结果。** 743 个测试离线跑，其中一条经 CDP 驱动一个**真浏览器**跑完一个回合；
+- **每个主张都带着它的测量结果。** 869 个测试离线跑，其中一条经 CDP 驱动一个**真浏览器**跑完一个回合；
   [CHANGELOG](docs/CHANGELOG.md) 记着每次改动的测量、代价，以及**没有**验证的部分。
 
 ## 两分钟跑起来
@@ -100,4 +100,5 @@ ln -sfn "$PWD/ccj" ~/.local/bin/ccj        # use `ccj` from anywhere
 - 内部：**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**｜**[docs/BOOTSTRAP.md](docs/BOOTSTRAP.md)**（重启并落回同一个对话）｜**[docs/COMPACT.md](docs/COMPACT.md)**｜**[docs/SUBAGENTS.md](docs/SUBAGENTS.md)**｜**[docs/PERF.md](docs/PERF.md)**（这个工具自己有多贵：启动、每回合的前缀、列一次会话）
 - 能测的东西：**[docs/EVAL.md](docs/EVAL.md)**（一套离线的回归任务）｜**[docs/RETRIEVAL.md](docs/RETRIEVAL.md)**（按意思找代码：配置、它的出口审批、量到的召回率）
 - 关于信任与写法：**[SECURITY.md](SECURITY.md)**｜**[docs/CONVENTIONS.md](docs/CONVENTIONS.md)**
+- 它是什么、**不是什么**、以及不做什么的代价：**[docs/SHAPE.md](docs/SHAPE.md)**
 - 关于这个项目：**[CONTRIBUTING.md](CONTRIBUTING.md)**｜**[docs/ROADMAP.md](docs/ROADMAP.md)**｜**[docs/CHANGELOG.md](docs/CHANGELOG.md)**｜**[docs/VISION.md](docs/VISION.md)**｜**[docs/RESUME.md](docs/RESUME.md)**
