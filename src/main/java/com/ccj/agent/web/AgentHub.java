@@ -83,9 +83,6 @@ import java.util.function.Consumer;
  */
 public final class AgentHub implements AutoCloseable {
 
-  /** 一个回合运行期间，一个对话最多可以积压多少条消息。见 Conversation.queued。 */
-  private static final int MAX_QUEUED_MESSAGES = 16;
-
   /**
    * {@link #close()} 最多等多久让正在跑的回合收尾。
    *
@@ -338,7 +335,7 @@ public final class AgentHub implements AutoCloseable {
   }
 
   /** 这条会话持有的待发送图片，或者 {@code null}。 */
-  private Held heldPicture(FileSession current) {
+  private Conversation.Held heldPicture(FileSession current) {
     if (current == null) {
       return null;
     }
@@ -383,7 +380,7 @@ public final class AgentHub implements AutoCloseable {
     }
     // 一张已经描述好、还没走的图片：刷新之后那条缩略条还在，而不是变成一张看不见、却会跟着下一句话发
     // 出去的图片。
-    Held held = heldPicture(current);
+    Conversation.Held held = heldPicture(current);
     if (held == null) {
       node.putNull("picture");
     } else {
@@ -1248,8 +1245,8 @@ public final class AgentHub implements AutoCloseable {
       throw new IllegalStateException("没有打开的会话");
     }
     Conversation conversation =
-        conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current));
-    Held held = conversation.pendingPicture.get();
+        conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current, this::cwd, approvals::denySession));
+    Conversation.Held held = conversation.pendingPicture.get();
     String name = held == null ? null : held.saved().path().getFileName().toString();
     if (pictureName != null && !pictureName.isBlank() && held != null) {
       boolean named =
@@ -1291,7 +1288,7 @@ public final class AgentHub implements AutoCloseable {
     if (!conversation.enqueue(composed)) {
       throw new IllegalStateException(
           "这个对话已经有 "
-              + MAX_QUEUED_MESSAGES
+              + Conversation.MAX_QUEUED_MESSAGES
               + " 条消息在等了；请等回合结束，或者中止它");
     }
     // 图片跟着这句话走了，所以它不再等着。入队失败时上面就已经抛出，而图片仍在原处：队列满了是稍后重试，
@@ -1356,7 +1353,7 @@ public final class AgentHub implements AutoCloseable {
               + "或者传入 --vision-base-url 和 --vision-model");
     }
     Conversation conversation =
-        conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current));
+        conversations.computeIfAbsent(current.id(), key -> new Conversation(key, current, this::cwd, approvals::denySession));
     AttachmentStore.Saved saved;
     String description;
     try (VisionClient client = VisionClient.from(active.vision(), settings.env())) {
@@ -1369,7 +1366,9 @@ public final class AgentHub implements AutoCloseable {
     //
     // 一次只留一张，所以第二次上传取代第一次。被取代的那个文件留在会话的附件目录里，随之一起删除——它
     // 从来没有进过对话，所以也不该假装它被送出去过。
-    Held previous = conversation.pendingPicture.getAndSet(new Held(saved, description, mediaType));
+    Conversation.Held previous =
+        conversation.pendingPicture.getAndSet(
+            new Conversation.Held(saved, description, mediaType));
     publish(
         current.id(),
         "picture",
@@ -1467,7 +1466,7 @@ public final class AgentHub implements AutoCloseable {
     if (conversation == null) {
       return null;
     }
-    Held dropped = conversation.pendingPicture.getAndSet(null);
+    Conversation.Held dropped = conversation.pendingPicture.getAndSet(null);
     if (dropped == null) {
       return null;
     }
@@ -1476,33 +1475,6 @@ public final class AgentHub implements AutoCloseable {
     return dropped.saved().path().getFileName().toString();
   }
 
-  /** 一张已经描述过、正等着和用户下一句话一起发出去的图片。 */
-  record Held(AttachmentStore.Saved saved, String description, String mediaType) {
-
-    /** 这条消息在对话里的开头，用户自己说的话接在它后面。 */
-    String block() {
-      return pictureMessage(saved, description);
-    }
-  }
-
-  /**
-   * 一张图片在对话里变成什么：它展示了什么，以及文件在哪里。
-   *
-   * <p>做了标记，而不是冒充打字打出来的。读者——以及模型——应当知道这条消息是一张图片，而路径正是让
-   * 描述可核对的东西：图片仍在磁盘上，{@code read} 不需要审批，问一个被描述漏掉的细节是一次工具调用，
-   * 而不是再上传一次。
-   *
-   * <p>它进到对话里的那段文本保持英文，因为模型会读到它：翻译会改变模型的行为。
-   */
-  private static String pictureMessage(AttachmentStore.Saved saved, String description) {
-    return "[picture "
-        + saved.path().getFileName()
-        + "] "
-        + description
-        + "\n\n(The picture this describes is saved at "
-        + saved.path()
-        + "; read it if a detail the description dropped matters.)";
-  }
 
   /**
    * 压缩屏幕上的这个会话：对话里较早的那部分被模型写的一段摘要替换，会话以同一个 id 的下一代继续存在。
@@ -1528,7 +1500,7 @@ public final class AgentHub implements AutoCloseable {
     }
     String id = shown.id();
     Conversation conversation =
-        conversations.computeIfAbsent(id, key -> new Conversation(key, shown));
+        conversations.computeIfAbsent(id, key -> new Conversation(key, shown, this::cwd, approvals::denySession));
     // 全程占位，这样一个回合没法在压缩进行到一半时启动，输入框也会在这次压缩期间把该对话显示为忙。
     if (!conversation.begin()) {
       throw new IllegalStateException("还有回合在跑；请先中止它");
@@ -1857,7 +1829,27 @@ public final class AgentHub implements AutoCloseable {
         conversation.session(),
         options,
         context,
-        new Recorder(metrics, sessionId, this::recordTrace, new WebListener(sessionId)));
+        new Recorder(metrics, sessionId, this::recordTrace, new WebListener(conversation, events())));
+  }
+
+  /**
+   * {@link WebListener} 需要的两个出口。
+   *
+   * <p>这一处适配器是刻意的：它把「事件往哪去」与「一个回调翻译成哪种事件」分开，于是 WebListener 不必抓着一个
+   * hub 的引用。六行换掉的是一处「读监听器必须同时读整个服务器」的耦合。
+   */
+  private WebListener.Events events() {
+    return new WebListener.Events() {
+      @Override
+      public void publish(String sessionId, String type, ObjectNode payload) {
+        AgentHub.this.publish(sessionId, type, payload);
+      }
+
+      @Override
+      public void publishUsage(String sessionId) {
+        AgentHub.this.publishUsage(sessionId);
+      }
+    };
   }
 
   /**
@@ -2243,291 +2235,6 @@ public final class AgentHub implements AutoCloseable {
     FileSession active = session();
     if (active != null) {
       active.close();
-    }
-  }
-
-  /**
-   * 一个对话的实时状态：它的会话文件、它正在跑的回合，以及它自己的账本。
-   *
-   * <p>服务器一次只跑一个回合的时候，这些都是实例状态，而那正是一个正在跑的回合把所有东西都锁住的原因。
-   * 现在会忙的单位是对话，所以标记、循环和计数器都住在这里，第二个对话只是有自己的一份。
-   *
-   * <p>计数器就是会话文件已经在记录的那些：它们通过 {@link FileSession#totals()} 读写，所以并排运行的
-   * 两个对话不会把 token 加到对方的账本上。
-   */
-  private final class Conversation {
-
-    private final String id;
-    private final FileSession session;
-    private final AtomicBoolean busy = new AtomicBoolean();
-    private final AtomicReference<AgentLoop> loop = new AtomicReference<>();
-    /** 正在跑这个对话回合的线程，好让回调能被归到它身上。 */
-    private final AtomicReference<Thread> owner = new AtomicReference<>();
-    /**
-     * 这个对话忙的时候敲进来的消息，最旧的在前。
-     *
-     * <p>有上界，而上界正是重点：一个无限增长的队列，就是在一个已经在跑东西的会话里失去控制的一条路，
-     * 而十六条比任何人看着一个回合时会敲的都多。
-     */
-    private final Deque<String> queued = new ConcurrentLinkedDeque<>();
-    /**
-     * 最近一次自动压缩被拒绝时的提示尺寸，或者 0。
-     *
-     * <p>一次拒绝是一次没产出任何可用东西的模型调用——一段并不比它要替换的东西小的摘要——没有这个值，
-     * 只要对话在预算上方徘徊，同一个调用就会在每个回合结束时再做一次。它会在对话从被拒绝的尺寸再长过
-     * 一成之后重试，那大致就是摘要开始划算的时候。
-     */
-    private volatile long autoCompactRefusedAt;
-    /**
-     * 这个对话的工具在哪里运行，在回合启动时定下。
-     *
-     * <p>只读一次，而不是每次工具调用都读，因为活动工作区可能在一个回合运行期间改变——切换到另一个
-     * 工作区，绝不能把一个已经做了一半的工作重定向到别的目录里。一个回合从它启动的那一刻起就拥有自己的
-     * 工作目录。
-     */
-    /**
-     * 这个对话最近一次运行的收据。
-     *
-     * <p>它在回合结束时成形，因为那一刻同时握着三样东西——转录、检查点、账本的前后快照——而它们散开之后
-     * 就只能靠猜。
-     */
-    private volatile Receipt receipt;
-
-    private volatile Path cwd;
-    /**
-     * 已经描述好、等着和用户下一句话一起发出去的那张图片。
-     *
-     * <p>挂在这个对话上，而不是挂在整个 hub 上：两个对话各持有自己的那一张，切换会话时各自看到自己的
-     * 那一张，而不是看到另一个会话上传的图片。
-     *
-     * <p>描述与「发送」分开，是因为这两件事是分开的。上传一张图片是「看看这个」，而从输入框发出去才是
-     * 「照这个做」——过去它们是一个动作，于是模型在用户还没说出想让它做什么之前，就已经拿着一段描述开始
-     * 干活了。
-     */
-    private final AtomicReference<Held> pendingPicture = new AtomicReference<>();
-
-    Conversation(String id, FileSession session) {
-      this.id = id;
-      this.session = session;
-      this.cwd = AgentHub.this.cwd();
-    }
-
-    String id() {
-      return id;
-    }
-
-    FileSession session() {
-      return session;
-    }
-
-    Path cwd() {
-      return cwd;
-    }
-
-    Receipt receipt() {
-      return receipt;
-    }
-
-    void receipt(Receipt value) {
-      this.receipt = value;
-    }
-
-    /** 重新读取工作目录，现在启动的回合应当用它。 */
-    void useCurrentCwd() {
-      this.cwd = AgentHub.this.cwd();
-    }
-
-    /**
-     * 这个对话的回合一旦被要求停下就返回 true。
-     *
-     * <p>这是子代理用来知道自己也该停下的依据：中止一个回合必须能到达这个回合委派出去的工作，否则用户
-     * 的停止按钮会留下一个子代理继续跑着，而屏幕上没有任何东西说明这一点。
-     */
-    boolean aborting() {
-      AgentLoop active = loop.get();
-      return active != null && active.isAborted();
-    }
-
-    boolean running() {
-      return busy.get();
-    }
-
-    /** 把一条消息加入这个对话的队列；队满时返回 false。 */
-    boolean enqueue(String text) {
-      if (queued.size() >= MAX_QUEUED_MESSAGES) {
-        return false;
-      }
-      queued.addLast(text);
-      return true;
-    }
-
-    /** 把一条消息放回队首，用于回合槽位在中间被占走的那个竞态。 */
-    void enqueueFirst(String text) {
-      queued.addFirst(text);
-    }
-
-    /** 下一条在等的消息，没有则为 null。 */
-    String dequeue() {
-      return queued.pollFirst();
-    }
-
-    /** 正在等的东西，最旧的在前，供页面画出的状态使用。 */
-    List<String> queued() {
-      return List.copyOf(queued);
-    }
-
-    long autoCompactRefusedAt() {
-      return autoCompactRefusedAt;
-    }
-
-    void autoCompactRefusedAt(long tokens) {
-      this.autoCompactRefusedAt = tokens;
-    }
-
-    /** 丢掉正在等的东西；一个意思是「停下，全都停下」的中止会报出这个数量。 */
-    int clearQueue() {
-      int dropped = queued.size();
-      queued.clear();
-      return dropped;
-    }
-
-    /** 占下回合槽位；这个对话已经有一个在跑时返回 false。 */
-    boolean begin() {
-      return busy.compareAndSet(false, true);
-    }
-
-    void attach(AgentLoop running) {
-      loop.set(running);
-      owner.set(Thread.currentThread());
-    }
-
-    /** 释放回合槽位，好让这个对话里的下一条消息被接受。 */
-    void end() {
-      loop.set(null);
-      owner.set(null);
-      busy.set(false);
-    }
-
-    boolean ownedByCurrentThread() {
-      return Thread.currentThread().equals(owner.get());
-    }
-
-    boolean abort() {
-      AgentLoop running = loop.get();
-      if (running == null) {
-        return false;
-      }
-      // 在等人类的那个回合是靠回答那个问题被停下的，理由见 ApprovalDesk.denySession。
-      approvals.denySession(id);
-      running.abort();
-      return true;
-    }
-
-    synchronized void add(
-        int input,
-        int output,
-        Integer cached,
-        int userTurnDelta,
-        int modelTurnDelta,
-        int toolCallDelta,
-        int toolErrorDelta,
-        long elapsedDelta) {
-      session.totals(
-          session
-              .totals()
-              .plus(
-                  input,
-                  output,
-                  cached,
-                  userTurnDelta,
-                  modelTurnDelta,
-                  toolCallDelta,
-                  toolErrorDelta,
-                  elapsedDelta));
-    }
-
-    synchronized void addElapsed(long elapsedMillis) {
-      session.totals(session.totals().withElapsed(elapsedMillis));
-    }
-
-    /** 把账本写到磁盘；在回合边界调用，好让文件扛得住被杀。 */
-    synchronized void persist() {
-      session.totals(session.totals());
-    }
-
-    void close() {
-      session.close();
-    }
-  }
-
-  /** 把循环的回调翻译成线上事件；这里没有任何东西做策略决定。 */
-  private final class WebListener implements AgentListener {
-
-    private final Conversation conversation;
-
-    WebListener(String sessionId) {
-      Conversation known = conversations.get(sessionId);
-      this.conversation =
-          known != null ? known : new Conversation(sessionId, session());
-    }
-
-    @Override
-    public void onText(String delta) {
-      publish(conversation.id(), "text", Json.object().put("delta", delta));
-    }
-
-    @Override
-    public void onReasoning(String delta) {
-      publish(conversation.id(), "reasoning", Json.object().put("delta", delta));
-    }
-
-    @Override
-    public void onToolStart(Message.ToolCall call) {
-      conversation.add(0, 0, null, 0, 0, 1, 0, 0);
-      publish(conversation.id(), "tool", toolPayload(call, "start"));
-      // 面板数的是屏幕上的东西：没有这一句，卡片说某次调用正在跑，计数器却还停在上一回合的总数上。
-      publishUsage(conversation.id());
-    }
-
-    @Override
-    public void onToolEnd(Message.ToolCall call, ToolResult result, long elapsedMillis) {
-      if (result.error()) {
-        conversation.add(0, 0, null, 0, 0, 0, 1, 0);
-      }
-      publish(
-          conversation.id(),
-          "tool",
-          toolPayload(call, "end")
-              .put("ok", !result.error())
-              .put("elapsedMs", elapsedMillis)
-              .put("output", result.content()));
-      publishUsage(conversation.id());
-    }
-
-    /** 模型回合在这里计数，而不是来自用量：一个不报用量的提供方照样跑过。 */
-    @Override
-    public void onTurnStart(int step) {
-      conversation.add(0, 0, null, 0, 1, 0, 0, 0);
-    }
-
-    @Override
-    public void onUsage(int inputTokens, int outputTokens, Integer cachedInputTokens) {
-      // token 由循环本身记进会话账本（它是唯一知道会话的那个东西，也是终端唯一有的那个东西）；这里只负责
-      // 让页面立刻看到新数字。再加一次就是同一笔钱记两遍。
-      publishUsage(conversation.id());
-    }
-
-    @Override
-    public void onNotice(String text) {
-      publish(conversation.id(), "notice", Json.object().put("text", text));
-    }
-
-    private ObjectNode toolPayload(Message.ToolCall call, String state) {
-      return Json.object()
-          .put("id", call.id())
-          .put("name", call.name())
-          .put("state", state)
-          .put("summary", ToolSummary.summarise(call));
     }
   }
 

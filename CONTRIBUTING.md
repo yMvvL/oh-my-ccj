@@ -30,6 +30,11 @@ Linux 和 macOS 上，运行中的进程保留它打开时的 inode，所以覆�
 
 `jar.name` 这个属性存在的唯一理由就是这个，启动器替你重新构建时也用它。
 
+**还有一个坑：`-Dtest` 会把那条浏览器冒烟塞回共享 JVM。** pom 里给 `WebBrowserSmokeTest` 单独开了一次
+surefire 执行（它唯一驱动的是另一个进程，而它在整套跑完之后犯过两次病），但 `-Dtest='Web*Test'` 会覆盖那次
+执行的 include/exclude 列表，于是它和二十几个 web 用例挤在同一个 JVM 里跑——然后以那条已知的
+`Runtime.evaluate` 超时红掉。本机实测：过滤跑 120 秒超时，`clean verify` 里它自己一个 JVM，1.2 秒通过。
+
 **另一个坑：搬了一个类之后要 `clean`。** `mvn verify` 不做清理，所以一个被移动或改名的类会把它上一次编出来
 的 `.class` 留在 `target/test-classes` 里，而 surefire 照样会捡起它——于是你会看到一堆 `NoClassDefFoundError`
 指着那个**已经不存在**的类，看起来像你的改动弄坏了什么。实测（把 `Thumbnails` 从 `web/` 搬到 `session/`）：
