@@ -135,12 +135,32 @@ class WebSessionRowTest {
     }
   }
 
-  private static String hubSource() {
-    Path hub = Path.of("src", "main", "java", "com", "ccj", "agent", "web", "AgentHub.java");
-    try {
-      return Files.exists(hub) ? Files.readString(hub) : "";
+  /**
+   * 服务器那一侧：{@code web/} 这一层的全部源码拼在一起。
+   *
+   * <p>它从前只读 {@code AgentHub.java}。4.8 把那个类拆成了几块——表单、状态、会话、回合各自成文件——于是
+   * 「服务器会发送 title」这条主张也跟着搬了家。这些用例要钉的是**那条契约**，不是哪一行住在哪个文件里，
+   * 所以能回答它的东西是这一层，而不是某一个文件：文件会搬，跨语言的那份契约不会。
+   *
+   * <p>读不到就**中止**，理由与 {@link #appSourceOrSkip()} 相同：跑不了的用例不许看起来像跑过了。
+   */
+  static String hubSource() {
+    Path layer = Path.of("src", "main", "java", "com", "ccj", "agent", "web");
+    try (var files = Files.list(layer)) {
+      return files
+          .filter(file -> file.toString().endsWith(".java"))
+          .sorted()
+          .map(
+              file -> {
+                try {
+                  return Files.readString(file);
+                } catch (IOException err) {
+                  throw new org.opentest4j.TestAbortedException("读不到 " + file, err);
+                }
+              })
+          .reduce("", (a, b) -> a + "\n" + b);
     } catch (IOException err) {
-      return "";
+      throw new org.opentest4j.TestAbortedException("读不到 web/ 这一层的源码", err);
     }
   }
 

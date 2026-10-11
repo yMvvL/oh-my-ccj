@@ -28,9 +28,6 @@ class WebCompactTest {
 
   private static final Path SCRIPT = Path.of("src", "test", "js", "compaction.test.mjs");
   private static final Path APP = Path.of("src", "main", "resources", "web", "app.js");
-  private static final Path HUB =
-      Path.of("src", "main", "java", "com", "ccj", "agent", "web", "AgentHub.java");
-
   @Test
   void theCompactionScriptPasses() throws IOException, InterruptedException {
     WebSessionRowTest.runNodeCases(SCRIPT, "压缩");
@@ -64,29 +61,23 @@ class WebCompactTest {
   }
 
   @Test
-  void theServerSendsTheSummaryRatherThanDroppingIt() throws IOException {
-    String hub = source(HUB);
-    assertTrue(hub != null, "AgentHub.java 必须可读");
+  void theServerSendsTheSummaryRatherThanDroppingIt() {
+    // 整层一起读：4.8 之后历史那个方法住在状态那一块里，而这条契约要钉的是它做了什么，不是它住在哪。
+    String hub = WebSessionRowTest.hubSource();
 
     // bug 就在这儿：`Message.Summary` 落到了默认分支上，而那个分支的注释说系统消息不是被渲染
     // 的内容，于是一次压缩之后加载的页面只显示留下的那几组往来，没有任何迹象表明发生过压缩。
-    int at = hub.indexOf("public ObjectNode historyJson()");
-    assertTrue(at >= 0, "历史是由一个方法构建的");
-    int end = hub.indexOf("private static ObjectNode replay(", at);
-    String history = hub.substring(at, end > at ? end : hub.length());
-
-    assertTrue(history.contains("case Message.Summary summary ->"),
+    assertTrue(hub.contains("case Message.Summary summary ->"),
         "historyJson 必须为摘要准备一个分支");
-    assertTrue(history.contains("replay(\"summary\")"),
+    assertTrue(hub.contains("replay(\"summary\")"),
         "并作为 summary 事件发出去，而这正是页面派发的东西");
-    assertTrue(history.contains(".put(\"covers\""),
+    assertTrue(hub.contains(".put(\"covers\""),
         "带上那张卡片显示的计数");
   }
 
   @Test
-  void theCompactedEventIsStillAnnouncedToThePage() throws IOException {
-    String hub = source(HUB);
-    assertTrue(hub != null, "AgentHub.java 必须可读");
+  void theCompactedEventIsStillAnnouncedToThePage() {
+    String hub = WebSessionRowTest.hubSource();
 
     // 正是这个事件告诉页面该重建了；单有 summary 事件只在取历史时才到，而取历史正是这个事件
     // 触发的。

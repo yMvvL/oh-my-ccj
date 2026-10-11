@@ -28,16 +28,13 @@ class WebApprovalTest {
   }
 
   @Test
-  void theStatusCarriesEverythingAPromptNeeds() throws IOException {
-    String hub = hubSource();
-
-    // Pending 跟着审批台搬到了 ApprovalDesk.java：那张桌子就在那里，而记录着「谁在问、问什么」的也是
-    // 它，所以这条主张的家跟着它走。它是包内可见的，因为状态快照在隔壁——列出屏幕上这个对话正在等什么，
-    // 正是隔壁那件事。
-    String desk = deskSource();
+  void theStatusCarriesEverythingAPromptNeeds() {
+    // 4.8 把这一层拆成了几块（表单、状态、会话、回合各自成文件），所以这条契约读的是**整层**：`Pending`
+    // 住在审批台那张桌子里，报告它的那一段住在状态那一块里，而两边都要在。
+    String hub = WebSessionRowTest.hubSource();
     assertTrue(
-        desk.contains("record Pending("),
-        "审批必须记住自己在问什么，而不只是它等待的那个 future：\n" + desk);
+        hub.contains("record Pending("),
+        "审批必须记住自己在问什么，而不只是它等待的那个 future：\n" + hub);
     assertTrue(
         hub.contains("pending.title()") && hub.contains("pending.detail()"),
         "而且状态会报告它，否则一个看向别处的页面就没法把提示再画出来：\n" + hub);
@@ -67,15 +64,6 @@ class WebApprovalTest {
         "而服务器已经不再知道的请求会被关掉，而不是留在那儿无从作答");
   }
 
-
-  private static String hubSource() {
-    return source(Path.of("src", "main", "java", "com", "ccj", "agent", "web", "AgentHub.java"));
-  }
-
-  /** 审批台现在住在这里；{@code Pending} 那条主张读的就是它。 */
-  private static String deskSource() {
-    return source(Path.of("src", "main", "java", "com", "ccj", "agent", "web", "ApprovalDesk.java"));
-  }
 
   private static String source(Path file) {
     try {

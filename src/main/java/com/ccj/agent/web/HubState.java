@@ -1,12 +1,17 @@
 package com.ccj.agent.web;
 
+import com.ccj.agent.core.Checks;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.ToolRegistry;
+import com.ccj.agent.obs.Metrics;
+import com.ccj.agent.obs.Recorder;
+import com.ccj.agent.obs.RunTrace;
 import com.ccj.agent.session.FileSession;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -57,6 +62,42 @@ interface HubState {
 
   /** 现在长什么样：工作区、会话、模型、工具的完整状态表。 */
   ObjectNode status();
+
+  /** 每个会话最近一次运行的 trace，`GET /api/trace` 读的就是它。 */
+  RunTrace lastTrace(String sessionId);
+
+  /** 这个服务器的指标：一个进程一个，因为跨会话的问题只有它答得上来。 */
+  Metrics metrics();
+
+  /** 每次运行的 trace 写到哪；null 表示不留。 */
+  void setTraceSink(Recorder.TraceSink sink);
+
+  /** 这个项目声明的编辑后检查；{@code null} 与「什么都没有」是一回事（见 {@link Checks#none}）。 */
+  void setChecks(Checks rules);
+
+  /** 审批台：谁在等人类、一个请求能等多久。 */
+  ApprovalDesk approvals();
+
+  /** 正在跑的对话，按会话 id。读它得到的是活的那一份，不是快照。 */
+  Collection<Conversation> conversations();
+
+  /**
+   * 是否提供 `task`。
+   *
+   * <p>见 {@link AgentHub.Settings#subAgents()}：默认关闭，而默认值是诚实的。
+   */
+  boolean subAgents();
+
+  /**
+   * 屏幕上这个会话正拿着的那张待发图片；没有时为 null。
+   *
+   * <p>它是**推导**出来的，不是又一块状态：先找这个会话的对话，再问它手里有没有东西。所以它写成 default——
+   * 一处实现，而不是每个实现各写一遍。
+   */
+  default Conversation.Held heldPicture(FileSession current) {
+    Conversation conversation = current == null ? null : conversation(current.id());
+    return conversation == null ? null : conversation.pendingPicture.get();
+  }
 
   /** 会话列表，{@code workspace} 为 null 表示活动工作区。 */
   ArrayNode sessionsJson(String workspace);
