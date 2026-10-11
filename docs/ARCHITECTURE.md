@@ -12,7 +12,7 @@ How `ccj` is put together, why each seam is where it is, and what the wire actua
                   |            ToolRegistry (interface) ---- tool/ (filesystem, shell)
                   |            Session (interface)      ---- session/ (JSONL on disk)
                   |            AgentListener (interface) -- ui/ (ConsoleRenderer)
-                  v                                        -- web/ (AgentHub + HttpApi + page)
+                  v                                        -- web/ (HubState + Hub* blocks + HttpApi + page)
              Config / AppPaths / Message / Json / SessionRepair (a sendable projection of history)
 ```
 
@@ -26,7 +26,7 @@ a real relay in production.
 ```
 cli/       argument parsing, wiring, REPL, exit codes   (the only place that calls System.exit)
 ui/        AgentListener implementation: streaming text, tool cards, spinner, ANSI
-web/       the same loop behind HTTP: agent hub, SSE stream, approval handshake, single page
+web/       the same loop behind HTTP: SSE stream, approval handshake, single page, and the split hub
 workspace/ the workspace registry: named directories and where their sessions live
 demo/      a tool-routing stand-in for a model, so the CLI can be demonstrated with no key
 session/   JSONL message codec, FileSession, SessionStore
@@ -34,6 +34,25 @@ tool/      read write edit bash glob grep + approval-aware helpers
 provider/  OpenAI-compatible and Anthropic providers over java.net.http, plus the SSE reader
 core/      Message, Provider, Tool, ToolRegistry, AgentLoop, Session, Config, AppPaths
 ```
+
+## The web layer's seams
+
+`web/` 里从前是一个两千六百多行的 `AgentHub`，里面挤着三样互不相同的东西。4.8 把它按"谁在动什么"拆开了，
+而拆成什么样是可以**由构造参数回答**的：每一块拿到的都是一个窄面 `HubState`，而不是整个服务器。
+
+```
+HubState        23 个名字：settings、config 的读与写、聊天里的会话、事件往哪发、以及三条"忙不忙"的守卫
+  |             submit / close / abort **不在**这个面上——"能不能开始一个回合"正是它要回答的问题
+  +-- HubForms        模型 / 提供方 / 工作区 / 配置这几张表单的往返（会写文件、会换提供方）
+  +-- HubViews        状态表、会话列表、用量、收据、导出、转录回放（渲染并发布，不写）
+  +-- HubSessions     会话的新建 / 恢复 / 删除 / 切换，以及"哪一个是屏幕上的那个"
+  +-- HubAttachments  一个文件怎么进对话：独立描述 → 文本 → 描述进对话，文件留在会话旁边
+  +-- HubTurns        回合的执行：submit / runTurn / abort / 压缩 / 收回；它自己带着线程池与检查点
+```
+
+判据只有一条：**这一块能不能自己回答"我在动什么"**。`HubViews` 能（只读），所以它的 javadoc 敢写"它不写"；
+`HubForms` 与 `HubSessions` 能（改设置、删会话）；`HubTurns` 能（跑回合）。搬不动的那些留在 `AgentHub` 里——
+它是**服务器**：构造、生命周期、以及对外的那些入口。
 
 ## Message model
 

@@ -168,16 +168,6 @@ public final class AgentHub implements AutoCloseable {
   private final ApprovalDesk approvals;
   private final AtomicReference<Provider> provider = new AtomicReference<>();
 
-  /**
-   * 每个会话最近一次运行的 trace，`GET /api/trace` 读的就是它。
-   *
-   * <p>只留最近一次，而且只留在内存里：它回答的是「刚刚那个回合里到底发生了什么」——一次运行的形状与
-   * 它里面那几段耗时。一次运行一棵树，保留历史是另一件事，那件事由 {@link #setTraceSink} 指向的文件来做。
-   */
-  private final Map<String, RunTrace> lastTraces = new ConcurrentHashMap<>();
-
-  /** 每次运行的 trace 写到哪；null 表示不留。由调用方设置，因为只有它知道命令行给了什么。 */
-  private volatile Recorder.TraceSink traceSink;
 
   /**
    * 这个项目声明的编辑后检查。
@@ -196,8 +186,6 @@ public final class AgentHub implements AutoCloseable {
    */
   private final Map<String, Conversation> conversations = new ConcurrentHashMap<>();
 
-  /** 浏览前端正在看的那个对话。 */
-  private final Object sessionLock = new Object();
 
   /**
    * 用户在屏幕上这个项目里的审批规则，在调用方提供之前为 null：没有任何规则的 hub 会对一切都发问，测试
@@ -207,9 +195,9 @@ public final class AgentHub implements AutoCloseable {
   /** 一个回合此前的文件内容存到哪，这样这个回合才可以被收回。 */
 
   private volatile Config config;
-  private volatile FileSession session;
+
   private volatile boolean closed;
-  private final FolderChooser folderChooser;
+
 
   /**
    * 交给搬出去那几块的窄面（{@link HubState}，见 4.8）。
@@ -230,7 +218,7 @@ public final class AgentHub implements AutoCloseable {
   private final HubAttachments attachments = new HubAttachments(seat);
 
   /** 会话本身：新建、恢复、删除、切换（4.8 搬出来的第五块）。 */
-  private final HubSessions sessions = new HubSessions(seat);
+  private final HubSessions sessions;
 
   /** 回合的执行：submit、abort、循环、压缩、收回（4.8 搬出来的第六块）。 */
   private final HubTurns turns = new HubTurns(seat);
@@ -245,35 +233,23 @@ public final class AgentHub implements AutoCloseable {
     this.config = config;
     this.tools = tools;
     this.settings = settings;
-    this.session = session;
+    this.sessions =
+        new HubSessions(
+            seat,
+            session,
+            settings.folderChooser() == null ? new NativeFolderChooser() : settings.folderChooser());
     // 审批台拿到的全是回调，而不是本对象的引用：规则来自设置那一刻装上的那个字段，状态由这里发布，
     // 审批按 id 作答，而它该归到哪个会话只有本类说得出来（见 currentTurnSession）。
     this.approvals =
         new ApprovalDesk(
             settings.autoApprove(),
             () -> approvalRules,
-            this::publishStatus,
+            seat::publishStatus,
             events::publish,
-            this::currentTurnSession);
+            seat::currentTurnSession);
     this.subAgents.set(settings.subAgents());
-    this.folderChooser =
-        settings.folderChooser() == null ? new NativeFolderChooser() : settings.folderChooser();
   }
 
-  /** 工具解析相对路径的基准，也是本次运行的会话存放的地方。 */
-  private Path cwd() {
-    Workspace active = settings.workspaces().active();
-    Path override = settings.cwdOverride();
-    if (override != null) {
-      return override;
-    }
-    return active == null ? Path.of("").toAbsolutePath() : active.path();
-  }
-
-  private Path sessionsDir() {
-    Workspace active = settings.workspaces().active();
-    return active == null ? settings.workspaces().home().resolve("sessions") : active.sessionsDir();
-  }
 
   // ------------------------------------------------------------------ status
   // ---- 状态、会话列表、用量、收据与转录：搬到了 HubViews（4.8），这里只剩下委托
@@ -290,6 +266,11 @@ public final class AgentHub implements AutoCloseable {
     return views.metrics();
   }
 
+
+  public void setChecks(Checks rules) {
+    views.setChecks(rules);
+  }
+
   public void setTraceSink(Recorder.TraceSink sink) {
     views.setTraceSink(sink);
   }
@@ -298,8 +279,12 @@ public final class AgentHub implements AutoCloseable {
     return views.lastTrace(sessionId);
   }
 
-  public void setChecks(Checks rules) {
-    views.setChecks(rules);
+  public Optional<Path> chooseFolder(java.io.IOException[] failure) {
+    return sessions.chooseFolder(failure);
+  }
+
+  public void publishStatus() {
+    views.publishStatus();
   }
 
   public ObjectNode receiptJson() {
@@ -461,22 +446,6 @@ public final class AgentHub implements AutoCloseable {
 
 
 
-  /**
-   * 一次运行结束：最近的那棵树留在内存里供 {@code GET /api/trace} 读，另外（如果命令行给了文件）追加到
-   * 那份 JSONL 里。
-   *
-   * <p>两部分都要，因为它们的用处不同：内存里那棵回答「刚刚那一次到底发生了什么」，而在文件里的那些能被
-   * 拿走、被 diff、被另一个工具读——那正是「痕迹」这个词在这个项目里的意思。
-   */
-  private void recordTrace(RunTrace trace) {
-    lastTraces.put(trace.sessionId(), trace);
-    Recorder.TraceSink sink = traceSink;
-    if (sink != null) {
-      sink.accept(trace);
-    }
-  }
-
-
 
   // ---- 附件那条路：搬到了 HubAttachments（4.8），这里只剩下委托
 
@@ -492,21 +461,6 @@ public final class AgentHub implements AutoCloseable {
     return attachments.discardPicture();
   }
 
-
-  private void useSession(FileSession next) {
-    FileSession previous;
-    synchronized (sessionLock) {
-      previous = session;
-      session = next;
-    }
-    // 离开屏幕的会话，只有在没人在用它时才关闭。正在跑的对话拥有它的文件——那是回合追加的目标，而且它
-    // 可能就是正被放回屏幕上的同一个对象——所以在这里关掉它会让一个仍在工作的回合失败。
-    if (previous != null && previous != next && !conversations.containsKey(previous.id())) {
-      previous.close();
-    }
-    publishUsage();
-    publishStatus();
-  }
 
 
 
@@ -536,15 +490,6 @@ public final class AgentHub implements AutoCloseable {
     return sessions.deleteAllSessions(workspace);
   }
 
-  /** 向桌面要一个目录。阻塞直到用户作答、取消或超时。 */
-  public Optional<Path> chooseFolder(java.io.IOException[] failure) {
-    try {
-      return folderChooser.choose("选择工作区文件夹");
-    } catch (java.io.IOException e) {
-      failure[0] = e;
-      return Optional.empty();
-    }
-  }
 
   // ------------------------------------------------------------------ approvals
 
@@ -567,7 +512,7 @@ public final class AgentHub implements AutoCloseable {
 
   public void setSubAgents(boolean enabled) {
     if (subAgents.getAndSet(enabled) != enabled) {
-      publishStatus();
+      seat.publishStatus();
     }
   }
 
@@ -579,29 +524,9 @@ public final class AgentHub implements AutoCloseable {
    */
   public Conversation conversationFor(FileSession session) {
     return conversations.computeIfAbsent(
-        session.id(), key -> new Conversation(key, session, this::cwd, approvals::denySession));
+        session.id(), key -> new Conversation(key, session, seat::cwd, approvals::denySession));
   }
 
-  /** 一个会话的运行状态；它没有的话为 null。 */
-  private Conversation conversation(String sessionId) {
-    return sessionId == null || sessionId.isEmpty() ? null : conversations.get(sessionId);
-  }
-
-  /**
-   * 这条线程正在跑其回合的那个会话。
-   *
-   * <p>从调用线程解析出来，而不是当作参数传进来，因为循环把审批人当作一个普通的 {@link Approver} 交给
-   * 它的工具：只有回合自己的会话能说出是哪个对话在问，而一个不带会话发布的审批会同时出现在每一份打开的
-   * 转录里。
-   */
-  private String currentTurnSession() {
-    for (Conversation conversation : conversations.values()) {
-      if (conversation.ownedByCurrentThread()) {
-        return conversation.id();
-      }
-    }
-    return HubState.idOf(session());
-  }
 
   // ------------------------------------------------------------------ events
 
@@ -623,44 +548,7 @@ public final class AgentHub implements AutoCloseable {
     events.publish(sessionId, type, payload);
   }
 
-  public void publishStatus() {
-    // 状态是关于一个对话的——屏幕上那个——所以它点名是哪一个，用的也是页面读出 id 的同一个地方：一个
-    // 没有会话的状态会被归到无处。
-    ObjectNode node = statusFields();
-    node.put("sessionId", HubState.idOf(session()));
-    publish(HubState.idOf(session()), "status", node);
-    // 两个仪表跟着状态走：它们是全服务器的，而状态是这里发布得最频繁的东西（每个回合的一头一尾、每次
-    // 开关、每次切换）。给它们各自一条定时线程，是拿一个专门的调度器去换两个整数。
-    int queued = 0;
-    int running = 0;
-    for (Conversation conversation : conversations.values()) {
-      queued += conversation.queued().size();
-      if (conversation.running()) {
-        running++;
-      }
-    }
-    metrics.set(Metric.QUEUED_MESSAGES, queued);
-    metrics.set(Metric.RUNNING_CONVERSATIONS, running);
-  }
 
-  public void publishUsage() {
-    publish(HubState.idOf(session()), "usage", usageFields());
-  }
-
-  /** 一个会话的用量，也就是一个回合在自己的账本变化时发布的东西。 */
-  public void publishUsage(String sessionId) {
-    Conversation conversation = sessionId == null ? null : conversations.get(sessionId);
-    FileSession target = conversation == null ? session() : conversation.session();
-    ObjectNode node = usageFields(target);
-    node.put("sessionId", sessionId == null ? "" : sessionId);
-    publish(sessionId, "usage", node);
-  }
-
-  private FileSession session() {
-    synchronized (sessionLock) {
-      return session;
-    }
-  }
 
   @Override
   public void close() {
@@ -676,16 +564,12 @@ public final class AgentHub implements AutoCloseable {
       conversation.close();
     }
     conversations.clear();
-    FileSession active = session();
+    FileSession active = sessions.session();
     if (active != null) {
       active.close();
     }
   }
 
-  /** 见 {@link ApprovalDesk#approver}。 */
-  public Approver approver() {
-    return approvals.approver();
-  }
 
   /**
    * 用户在这个项目里的规则，由调用方提供，因为它手里有应用 home 而本类没有。在设置之前，每个请求都
@@ -700,12 +584,12 @@ public final class AgentHub implements AutoCloseable {
 
   /** 见 {@link SettingsFiles#rulesJson}。 */
   public ObjectNode rulesJson() {
-    return SettingsFiles.rulesJson(approvalRules, cwd());
+    return SettingsFiles.rulesJson(approvalRules, sessions.cwd());
   }
 
   /** 见 {@link SettingsFiles#applyRules}。 */
   public ObjectNode applyRules(JsonNode posted) {
-    return SettingsFiles.applyRules(posted, approvalRules, cwd());
+    return SettingsFiles.applyRules(posted, approvalRules, sessions.cwd());
   }
 
   /** 见 {@link SettingsFiles#checksJson}。 */
@@ -758,12 +642,12 @@ public final class AgentHub implements AutoCloseable {
 
     @Override
     public FileSession session() {
-      return AgentHub.this.session();
+      return sessions.session();
     }
 
     @Override
     public void useSession(FileSession next) {
-      AgentHub.this.useSession(next);
+      sessions.useSession(next);
     }
 
     @Override
@@ -773,22 +657,24 @@ public final class AgentHub implements AutoCloseable {
 
     @Override
     public void recordTrace(RunTrace trace) {
-      AgentHub.this.recordTrace(trace);
+      views.recordTrace(trace);
     }
 
-    @Override
-    public RunTrace lastTrace(String sessionId) {
-      return lastTraces.get(sessionId);
-    }
 
     @Override
     public Metrics metrics() {
       return metrics;
     }
 
+
     @Override
     public void setTraceSink(Recorder.TraceSink sink) {
-      traceSink = sink;
+      views.setTraceSink(sink);
+    }
+
+    @Override
+    public RunTrace lastTrace(String sessionId) {
+      return views.lastTrace(sessionId);
     }
 
     @Override
@@ -826,15 +712,7 @@ public final class AgentHub implements AutoCloseable {
       return AgentHub.this.conversationFor(session);
     }
 
-    @Override
-    public Conversation conversation(String sessionId) {
-      return AgentHub.this.conversation(sessionId);
-    }
 
-    @Override
-    public String currentTurnSession() {
-      return AgentHub.this.currentTurnSession();
-    }
 
     @Override
     public void publish(String type, ObjectNode payload) {
@@ -848,27 +726,27 @@ public final class AgentHub implements AutoCloseable {
 
     @Override
     public void publishStatus() {
-      AgentHub.this.publishStatus();
+      views.publishStatus();
     }
 
     @Override
     public void publishUsage() {
-      AgentHub.this.publishUsage();
+      views.publishUsage();
     }
 
     @Override
     public void publishUsage(String sessionId) {
-      AgentHub.this.publishUsage(sessionId);
+      views.publishUsage(sessionId);
     }
 
     @Override
     public Path cwd() {
-      return AgentHub.this.cwd();
+      return sessions.cwd();
     }
 
     @Override
     public Path sessionsDir() {
-      return AgentHub.this.sessionsDir();
+      return sessions.sessionsDir();
     }
 
     @Override

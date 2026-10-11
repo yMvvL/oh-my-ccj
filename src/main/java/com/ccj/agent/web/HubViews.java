@@ -30,12 +30,13 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 /**
  * 「现在长什么样」——状态表、会话列表、用量、收据、导出，以及一段对话的转录。
  *
- * <p>4.8 搬出来的第三块。它只读：不动配置、不换提供方、不写会话。搬出去之后 `AgentHub` 剩下的那些方法里，
+ * <p>4.8 搬出来的第三块。它只**渲染并发布**：不动配置、不换提供方、不写会话。搬出去之后 `AgentHub` 剩下的那些方法里，
  * 凡是要**改**服务器的都写着一句 `state.`，而这一块里一个都没有——这正是把「读」与「写」分成两块的意义。
  */
 final class HubViews {
@@ -45,6 +46,17 @@ final class HubViews {
       DateTimeFormatter.ISO_OFFSET_DATE_TIME.withZone(ZoneId.systemDefault());
 
   private final HubState state;
+
+/**
+   * 每个会话最近一次运行的 trace，`GET /api/trace` 读的就是它。
+   *
+   * <p>只留最近一次，而且只留在内存里：它回答的是「刚刚那个回合里到底发生了什么」——一次运行的形状与
+   * 它里面那几段耗时。一次运行一棵树，保留历史是另一件事，那件事由 {@link #setTraceSink} 指向的文件来做。
+   */
+  private final Map<String, RunTrace> lastTraces = new ConcurrentHashMap<>();
+
+/** 每次运行的 trace 写到哪；null 表示不留。由调用方设置，因为只有它知道命令行给了什么。 */
+  private volatile Recorder.TraceSink traceSink;
 
   HubViews(HubState state) {
     this.state = state;
@@ -74,12 +86,12 @@ final class HubViews {
    * 命令行。不设置就什么都不写——痕迹的另一个去处是 {@link #lastTrace}，在内存里，永远都在。
    */
   void setTraceSink(Recorder.TraceSink sink) {
-    state.setTraceSink(sink);
+    this.traceSink = sink;
   }
 
   /** 某个会话最近一次运行的痕迹；它还没跑过回合时为 null。 */
   RunTrace lastTrace(String sessionId) {
-    return sessionId == null ? null : state.lastTrace(sessionId);
+    return sessionId == null ? null : lastTraces.get(sessionId);
   }
 
   /** 见 {@link #setChecks}。由调用方设置，理由与 {@link #setApprovalRules} 相同：那是一个命令行 flag 指到的
@@ -389,5 +401,51 @@ final class HubViews {
 
   static ObjectNode replay(String type) {
     return Json.object().put("type", type).put("replay", true);
+  }
+  /**
+   * 一次运行结束：最近的那棵树留在内存里供 {@code GET /api/trace} 读，另外（如果命令行给了文件）追加到
+   * 那份 JSONL 里。
+   *
+   * <p>两部分都要，因为它们的用处不同：内存里那棵回答「刚刚那一次到底发生了什么」，而在文件里的那些能被
+   * 拿走、被 diff、被另一个工具读——那正是「痕迹」这个词在这个项目里的意思。
+   */
+  void recordTrace(RunTrace trace) {
+    lastTraces.put(trace.sessionId(), trace);
+    Recorder.TraceSink sink = traceSink;
+    if (sink != null) {
+      sink.accept(trace);
+    }
+  }
+  void publishStatus() {
+    // 状态是关于一个对话的——屏幕上那个——所以它点名是哪一个，用的也是页面读出 id 的同一个地方：一个
+    // 没有会话的状态会被归到无处。
+    ObjectNode node = statusFields();
+    node.put("sessionId", HubState.idOf(state.session()));
+    state.publish(HubState.idOf(state.session()), "status", node);
+    // 两个仪表跟着状态走：它们是全服务器的，而状态是这里发布得最频繁的东西（每个回合的一头一尾、每次
+    // 开关、每次切换）。给它们各自一条定时线程，是拿一个专门的调度器去换两个整数。
+    int queued = 0;
+    int running = 0;
+    for (Conversation conversation : state.conversations()) {
+      queued += conversation.queued().size();
+      if (conversation.running()) {
+        running++;
+      }
+    }
+    state.metrics().set(Metric.QUEUED_MESSAGES, queued);
+    state.metrics().set(Metric.RUNNING_CONVERSATIONS, running);
+  }
+
+  void publishUsage() {
+    state.publish(HubState.idOf(state.session()), "usage", usageFields());
+  }
+
+  /** 一个会话的用量，也就是一个回合在自己的账本变化时发布的东西。 */
+  void publishUsage(String sessionId) {
+    Conversation conversation = sessionId == null ? null : state.conversation(sessionId);
+    FileSession target = conversation == null ? state.session() : conversation.session();
+    ObjectNode node = usageFields(target);
+    node.put("sessionId", sessionId == null ? "" : sessionId);
+    state.publish(sessionId, "usage", node);
   }
 }

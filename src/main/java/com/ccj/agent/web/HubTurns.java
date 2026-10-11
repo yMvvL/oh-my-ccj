@@ -1,6 +1,7 @@
 package com.ccj.agent.web;
 
 import com.ccj.agent.core.AgentListener;
+import com.ccj.agent.core.Approver;
 import com.ccj.agent.core.AgentLoop;
 import com.ccj.agent.core.AgentOptions;
 import com.ccj.agent.core.Checks;
@@ -692,5 +693,9 @@ final class HubTurns {
     node.put("savedPercent", result.savedPercent());
     node.put("source", source.toString());
     return node;
+  }
+  /** 见 {@link ApprovalDesk#approver}。 */
+  public Approver approver() {
+    return state.approvals().approver();
   }
 }

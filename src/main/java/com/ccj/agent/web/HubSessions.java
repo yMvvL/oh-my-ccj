@@ -1,6 +1,7 @@
 package com.ccj.agent.web;
 
 import com.ccj.agent.core.Json;
+
 import com.ccj.agent.session.FileSession;
 import com.ccj.agent.session.SessionStore;
 import com.ccj.agent.core.Workspace;
@@ -17,15 +18,23 @@ import java.util.Optional;
  * 就写在两边的 javadoc 里——展示那一块能读到的只是一份列表，而这一块能删掉它——而一条「只读」的保证，只有在
  * 它能被一个文件的范围回答时才值钱。
  *
- * <p>屏幕上那个会话（{@code session} 与它的锁）仍然住在 {@link AgentHub} 里：它是服务器的**当前状态**，
- * 而不是这一块的私有财产，所以这一块通过 {@code state.session()} / {@code state.useSession(…)} 动它。
+ * <p>屏幕上那个会话（{@code session} 与它的锁）也住在这里：它从前在 {@link AgentHub} 的字段里，而搬过来之后
+ * 「哪一个是屏幕上的那个」和「会话住在哪儿」是同一件事的两半。窄面上的 {@code session()} 与
+ * {@code useSession(…)} 就是它。
  */
 final class HubSessions {
 
-  final HubState state;
+  private final HubState state;
 
-  HubSessions(HubState state) {
+  /** 浏览前端正在看的那个对话。 */
+  private final Object sessionLock = new Object();
+
+  private volatile FileSession session;
+
+  HubSessions(HubState state, FileSession initial, FolderChooser folderChooser) {
     this.state = state;
+    this.session = initial;
+    this.folderChooser = folderChooser;
   }
 
   /**
@@ -172,5 +181,48 @@ final class HubSessions {
   /** 屏幕上的会话在干活时拒绝。 */
   void requireShownIdle(String what) {
     state.requireNotRunning(HubState.idOf(state.session()), what);
+  }
+  FileSession session() {
+    synchronized (sessionLock) {
+      return session;
+    }
+  }
+  void useSession(FileSession next) {
+    FileSession previous;
+    synchronized (sessionLock) {
+      previous = session;
+      session = next;
+    }
+    // 离开屏幕的会话，只有在没人在用它时才关闭。正在跑的对话拥有它的文件——那是回合追加的目标，而且它
+    // 可能就是正被放回屏幕上的同一个对象——所以在这里关掉它会让一个仍在工作的回合失败。
+    if (previous != null && previous != next && state.conversation(previous.id()) == null) {
+      previous.close();
+    }
+    state.publishUsage();
+    state.publishStatus();
+  }
+  /** 工具解析相对路径的基准，也是本次运行的会话存放的地方。 */
+  Path cwd() {
+    Workspace active = state.settings().workspaces().active();
+    Path override = state.settings().cwdOverride();
+    if (override != null) {
+      return override;
+    }
+    return active == null ? Path.of("").toAbsolutePath() : active.path();
+  }
+  Path sessionsDir() {
+    Workspace active = state.settings().workspaces().active();
+    return active == null ? state.settings().workspaces().home().resolve("sessions") : active.sessionsDir();
+  }
+  private final FolderChooser folderChooser;
+
+  /** 向桌面要一个目录。阻塞直到用户作答、取消或超时。 */
+  Optional<Path> chooseFolder(java.io.IOException[] failure) {
+    try {
+      return folderChooser.choose("选择工作区文件夹");
+    } catch (java.io.IOException e) {
+      failure[0] = e;
+      return Optional.empty();
+    }
   }
 }

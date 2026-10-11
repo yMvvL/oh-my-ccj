@@ -126,8 +126,23 @@ interface HubState {
   /** 会话列表，{@code workspace} 为 null 表示活动工作区。 */
   ArrayNode sessionsJson(String workspace);
 
-  /** 按 id 找那个正在跑的对话；没有（或 id 为空）时为 null。 */
-  Conversation conversation(String sessionId);
+  /**
+   * 按 id 找那个正在跑的对话；没有（或 id 为空）时为 null。
+   *
+   * <p>它写成 default，因为它是**推导**出来的：正在跑的那几个里有没有这一个。写成抽象方法让每个实现去填，
+   * 只会让「按 id 找对话」有两种可能的行为。
+   */
+  default Conversation conversation(String sessionId) {
+    if (sessionId == null || sessionId.isEmpty()) {
+      return null;
+    }
+    for (Conversation conversation : conversations()) {
+      if (conversation.id().equals(sessionId)) {
+        return conversation;
+      }
+    }
+    return null;
+  }
 
   /**
    * 这个会话的对话；没有就地开一个。
@@ -142,9 +157,16 @@ interface HubState {
    * 这条线程正在跑其回合的那个会话 id。
    *
    * <p>从调用线程解析出来，而不是当参数传：工具把审批人当作一个普通的 {@code Approver}，只有回合自己的会话
-   * 说得清是哪个对话在问。
+   * 说得清是哪个对话在问。它也是推导出来的——谁正在这条线程上跑，那个会话就是答案。
    */
-  String currentTurnSession();
+  default String currentTurnSession() {
+    for (Conversation conversation : conversations()) {
+      if (conversation.ownedByCurrentThread()) {
+        return conversation.id();
+      }
+    }
+    return idOf(session());
+  }
 
   /** 见 {@link EventStream#publish}. */
   void publish(String type, ObjectNode payload);
