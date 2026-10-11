@@ -1,0 +1,13 @@
+{
+  "name": "ccj — 编码代理控制台",
+  "short_name": "ccj",
+  "description": "同一个 jar 里的编码代理：终端 REPL、单次运行、以及这个页面。会话、规则与索引都在这台机器上。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

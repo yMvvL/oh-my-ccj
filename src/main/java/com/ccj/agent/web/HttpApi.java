@@ -215,6 +215,11 @@ public final class HttpApi implements AutoCloseable {
         case "/app.js" -> staticResource(exchange, "/web/app.js", "text/javascript; charset=utf-8");
         case "/style.css" -> staticResource(exchange, "/web/style.css", "text/css; charset=utf-8");
         case "/theme.css" -> staticResource(exchange, "/web/theme.css", "text/css; charset=utf-8");
+        // 「加到主屏」需要的那两样：一个清单、一个图标。它们和别的静态文件走同一条路（同一个白名单、
+        // 同样的 no-store），所以这里没有第二套发文件的方式。
+        case "/manifest.webmanifest" ->
+            staticResource(exchange, "/web/manifest.webmanifest", "application/manifest+json; charset=utf-8");
+        case "/icon.svg" -> staticResource(exchange, "/web/icon.svg", "image/svg+xml charset=utf-8");
         case "/api/wallpapers" -> wallpapers(exchange);
         case "/api/status" -> get(exchange, hub.status());
         case "/metrics" -> metrics(exchange);

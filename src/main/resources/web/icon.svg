@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ccj">
+  <!-- 图标画的就是这个程序做过的事：中间一枚二维码的三个定位角，右下角一块终端光标。 -->
+  <rect width="64" height="64" rx="14" fill="#0b0d12"/>
+  <g fill="#e8eaf0">
+    <rect x="10" y="10" width="18" height="18" rx="3"/>
+    <rect x="14" y="14" width="10" height="10" rx="2" fill="#0b0d12"/>
+    <rect x="36" y="10" width="18" height="18" rx="3"/>
+    <rect x="40" y="14" width="10" height="10" rx="2" fill="#0b0d12"/>
+    <rect x="10" y="36" width="18" height="18" rx="3"/>
+    <rect x="14" y="40" width="10" height="10" rx="2" fill="#0b0d12"/>
+    <rect x="36" y="36" width="7" height="7" rx="1"/>
+    <rect x="47" y="36" width="7" height="7" rx="1"/>
+    <rect x="36" y="47" width="7" height="7" rx="1"/>
+  </g>
+  <rect x="47" y="47" width="7" height="7" rx="1" fill="#7aa2f7"/>
+</svg>

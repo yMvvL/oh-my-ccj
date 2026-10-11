@@ -43,6 +43,7 @@ import com.ccj.agent.tool.Tools;
 import com.ccj.agent.ui.Ansi;
 import com.ccj.agent.obs.Recorder;
 import com.ccj.agent.ui.ConsoleRenderer;
+import com.ccj.agent.ui.QrCode;
 import com.ccj.agent.web.AgentHub;
 import com.ccj.agent.workspace.WorkspaceStore;
 import com.ccj.agent.web.HttpApi;
@@ -469,6 +470,21 @@ public final class Cli {
   }
 
   /**
+   * 手机该扫的那个码：地址清单里第一个**带 token** 的那个。
+   *
+   * <p>只认带 token 的地址，因为只画环回地址是骗人：那个地址在那台手机上根本走不通。循环地址一个都没有
+   * （也就是用户点名了 `--host 127.0.0.1`）时返回空串，调用方连那两行提示都不打印。
+   */
+  static String phoneCode(List<String> urls) {
+    return urls.stream()
+        .filter(url -> url.contains("token="))
+        .filter(QrCode::fits)
+        .findFirst()
+        .map(url -> QrCode.forTerminal(url, 2))
+        .orElse("");
+  }
+
+  /**
    * 把一个会话导出成一份自包含的 HTML，写到 stdout。
    *
    * <p>写到 stdout 而不是某个文件：`ccj --export <id> > session.html` 让「写到哪里」完全由调用方决定，
@@ -871,6 +887,19 @@ public final class Cli {
                       + "），但 -C 把工具放在 " + cwd));
       out.println("按 Ctrl+C 停止");
       out.flush();
+      if (reachesTheNetwork) {
+        // 手机上要敲的是一个长地址加一个 64 位的 token，所以把它画成一个码——这就是 `--host tailscale`
+        // 那一步剩下的最后一点摩擦。
+        String code = phoneCode(api.urls());
+        out.println();
+        if (!code.isEmpty()) {
+          out.print(code);
+          out.println("扫这个码直接打开页面（那台设备要在能连上这个地址的网络里）");
+        } else {
+          out.println("（这个地址太长，画不成一个二维码；请把上面的地址拷到手机上）");
+        }
+        out.flush();
+      }
       if (!options.noOpen()) {
         // 用 loopback 那个 URL：本机永远能访问它，而且它不需要 token。用 tailnet 地址打开浏览器
         // 也行，但那会把一个秘密放进每个窗口的地址栏。
