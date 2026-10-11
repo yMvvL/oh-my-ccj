@@ -3,6 +3,7 @@ package com.ccj.agent.provider;
 import com.ccj.agent.core.Config;
 import com.ccj.agent.core.Provider;
 import com.ccj.agent.core.ProviderDefinition;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -108,6 +109,13 @@ public final class Providers {
       throw new IllegalArgumentException("需要一份已解析的配置");
     }
     Map<String, String> environment = env == null ? Map.of() : env;
+    // 闸门（限速与熔断）在这里配一次，因为这里是「一个真实提供方被造出来」的唯一入口——而它保护的是那份
+    // 凭据，不是某个会话。它走环境变量而不是配置文件：它还没进设置表单，而一个进不了表单的字段放进
+    // config.json 只会让两处说法慢慢分叉。见 docs/USAGE.md 的「限流与熔断」。
+    Transport.configure(
+        integer(environment, "CCJ_MAX_REQUESTS_PER_MINUTE", 600),
+        integer(environment, "CCJ_BREAKER_FAILURES", 5),
+        Duration.ofSeconds(integer(environment, "CCJ_BREAKER_COOLDOWN_SECONDS", 30)));
     String name =
         resolved.provider() == null || resolved.provider().isBlank()
             ? Config.DEFAULT_PROVIDER
@@ -152,6 +160,24 @@ public final class Providers {
    *
    * <p>只有这里知道哪个 kind 是哪个类，所以加一种协议是一次改动加一次测试，而不是在三个地方各找一遍。
    */
+  /**
+   * 一个整数的环境变量；没设时用默认值。
+   *
+   * <p>读不出来时抛，而不是悄悄退回默认值：一个写错的值（`CCJ_BREAKER_FAILURES=five`）看起来和「我设了」是
+   * 同一件事，而它实际的意思是「我什么都没设」——那种分歧值得在启动时说出来。
+   */
+  private static int integer(Map<String, String> env, String name, int fallback) {
+    String raw = env.get(name);
+    if (raw == null || raw.isBlank()) {
+      return fallback;
+    }
+    try {
+      return Integer.parseInt(raw.strip());
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException(name + " 需要一个整数，实际是 '" + raw.strip() + "'");
+    }
+  }
+
   private static Provider byKind(String kind, String baseUrl, String apiKey) {
     if (ProviderDefinition.ANTHROPIC.equals(kind)) {
       return new AnthropicProvider(baseUrl, apiKey);

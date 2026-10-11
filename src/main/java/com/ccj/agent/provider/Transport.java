@@ -11,6 +11,10 @@ import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.Duration;
+import java.util.Collections;
+import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
@@ -39,6 +43,59 @@ final class Transport {
 
   private Transport() {}
 
+  /**
+   * 每个客户端一个闸门（限速 + 熔断），见 {@link Throttle}。
+   *
+   * <p>按**身份**索引而不是按名字，因为这个关系的形状就是那样：闸门属于那份提供方凭据所对应的客户端，而不
+   * 属于某个叫 "openai" 的字符串。{@code HttpClient} 没有重写 {@code equals}，所以一张 {@code WeakHashMap}
+   * 就是按身份索引的——而弱引用是刻意的：改一次设置就会换掉一个提供方（连带它的客户端），一张强引用的登记表
+   * 会让那些旧客户端永远活着。它也不会漂——这个程序里的每一个 {@link HttpClient} 都从 {@link #newClient}
+   * 出来，所以「注册过闸门的客户端」与「存在的客户端」是同一批东西。
+   */
+  private static final Map<HttpClient, Throttle> THROTTLES =
+      Collections.synchronizedMap(new WeakHashMap<>());
+
+  /** 每分钟最多发出多少请求；0 表示不限速。默认值见 {@link #configure}。 */
+  private static volatile int requestsPerMinute = 600;
+
+  /** 连续失败多少次之后暂停这个端点；0 表示不熔断。 */
+  private static volatile int failuresBeforeOpen = 5;
+
+  /** 暂停多久之后放一次试探。 */
+  private static volatile Duration breakerCooldown = Duration.ofSeconds(30);
+
+  /**
+   * 设定这一次运行的闸门。由 {@code Providers.create} 在读环境变量之后调一次。
+   *
+   * <p>默认给的是 600 rpm（10 次/秒）与「连续 5 次失败暂停 30 秒」，两条都不是拍脑袋：
+   * 一个人坐在终端前敲字，一分钟发不出 600 个请求；而一个端点连续失败五次，几乎总是它挂了或钥匙错了，不是
+   * 网络抖了一下。三样都可以用环境变量改（见 docs/USAGE.md 的配置一节），0 表示关掉那一项。
+   */
+  static void configure(int perMinute, int breakAfter, Duration cooldown) {
+    requestsPerMinute = Math.max(0, perMinute);
+    failuresBeforeOpen = Math.max(0, breakAfter);
+    breakerCooldown = cooldown == null || cooldown.isNegative() ? Duration.ZERO : cooldown;
+  }
+
+  /** 现在生效的闸门配置，给状态行、测试与「我到底配了什么」这类问题用。 */
+  static String describeThrottle() {
+    if (requestsPerMinute <= 0 && failuresBeforeOpen <= 0) {
+      return "不限速、不熔断";
+    }
+    String rate =
+        requestsPerMinute <= 0 ? "不限速" : "每分钟最多 " + requestsPerMinute + " 次请求";
+    String breaker =
+        failuresBeforeOpen <= 0
+            ? "不熔断"
+            : "连续失败 " + failuresBeforeOpen + " 次暂停 " + breakerCooldown.toSeconds() + " 秒";
+    return rate + "，" + breaker;
+  }
+
+  /** 测试用：把闸门恢复到默认值。 */
+  static void resetThrottle() {
+    configure(600, 5, Duration.ofSeconds(30));
+  }
+
   static ExecutorService newExecutor(String threadName) {
     return Executors.newCachedThreadPool(
         runnable -> {
@@ -49,7 +106,17 @@ final class Transport {
   }
 
   static HttpClient newClient(ExecutorService executor) {
-    return HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).executor(executor).build();
+    HttpClient client =
+        HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).executor(executor).build();
+    THROTTLES.put(
+        client,
+        new Throttle(
+            requestsPerMinute / 60.0,
+            // 桶容量给一秒的量：一个回合里的连续调用不必自己卡自己，而一次真的突发仍然被限住。
+            Math.max(1, requestsPerMinute / 60.0),
+            failuresBeforeOpen,
+            breakerCooldown));
+    return client;
   }
 
   /**
@@ -57,7 +124,36 @@ final class Transport {
    * 5xx 会以指数退避加抖动重试，每一次都通过 {@code listener} 播报。其他任何非 2xx 立刻抛出：400
    * 意味着请求本身有问题，重复发送只是浪费用户的时间。
    */
+  /**
+   * 发出 {@code request} 之前先过那道闸门，发送之后把结果告诉它。
+   *
+   * <p>闸门包在**整个重试序列**外面，而不是每一次尝试上：一个最终成功的重试序列不该被记成失败，而一个重试
+   * 三次仍然失败的请求只算一次失败——因为它就是一次「这个端点现在不行」的证据。
+   */
   static HttpResponse<Stream<String>> send(
+      HttpClient http, HttpRequest request, Consumer<Provider.Event> listener) throws Exception {
+    Throttle throttle = THROTTLES.get(http);
+    if (throttle == null) {
+      return sendOnce(http, request, listener);
+    }
+    try {
+      // 等令牌在这里，抛「门关着」也在这里：那一次请求根本不该发出去。
+      throttle.await(listener);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new Exception("等待模型 API 的发送许可时被中断", e);
+    }
+    try {
+      HttpResponse<Stream<String>> response = sendOnce(http, request, listener);
+      throttle.recordSuccess();
+      return response;
+    } catch (Exception | Error e) {
+      throttle.recordFailure();
+      throw e;
+    }
+  }
+
+  private static HttpResponse<Stream<String>> sendOnce(
       HttpClient http, HttpRequest request, Consumer<Provider.Event> listener) throws Exception {
     for (int attempt = 1; ; attempt++) {
       try {
