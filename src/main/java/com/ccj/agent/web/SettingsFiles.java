@@ -94,12 +94,12 @@ final class SettingsFiles {
     } else {
       throw new IllegalArgumentException("effect 必须是 'allow' 或 'deny'");
     }
-    String tool = AgentHub.text(posted, "tool");
+    String tool = FormFields.text(posted, "tool");
     if (tool == null) {
       throw new IllegalArgumentException("字段 'tool' 是必需的：一条规则必须点名它拦住的工具");
     }
     ApprovalRules.Rule rule =
-        new ApprovalRules.Rule(tool, AgentHub.text(posted, "command"), AgentHub.text(posted, "path"));
+        new ApprovalRules.Rule(tool, FormFields.text(posted, "command"), FormFields.text(posted, "path"));
     switch (posted.path("action").asText("")) {
       case "add" -> rules.remember(deny, rule);
       case "remove" -> {
