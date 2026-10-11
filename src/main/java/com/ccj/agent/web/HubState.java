@@ -54,6 +54,14 @@ interface HubState {
    */
   AtomicReference<Provider> provider();
 
+  /**
+   * 服务器已经关了。
+   *
+   * <p>关掉之后进来的请求必须被拒绝，而「拒绝」这件事要在**动作发生之前**问，所以它是一个问题，不是一个
+   * 异常：{@code close()} 让在飞的回合跑完它们正在写的那一行，而新的工作从这里就被挡住。
+   */
+  boolean closed();
+
   /** 屏幕上正看着的那个会话。 */
   FileSession session();
 
@@ -104,6 +112,15 @@ interface HubState {
 
   /** 按 id 找那个正在跑的对话；没有（或 id 为空）时为 null。 */
   Conversation conversation(String sessionId);
+
+  /**
+   * 这个会话的对话；没有就地开一个。
+   *
+   * <p>「就地开一个」不是随意的一步：一个新对话拿到的是**屏幕上的那个 {@link FileSession}**，于是它写的
+   * 正是页面正在读的那个文件——这是整个按对话规则的前提。所以它是这里的一个方法，而不是让每一块各自去
+   * {@code computeIfAbsent}：那样就有两处各自决定「怎么开一个对话」，而它们必须一模一样。
+   */
+  Conversation conversationFor(FileSession session);
 
   /**
    * 这条线程正在跑其回合的那个会话 id。
