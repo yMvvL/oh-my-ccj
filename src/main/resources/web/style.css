@@ -131,15 +131,29 @@ body {
 }
 .brand { display: flex; align-items: center; gap: var(--sp-2); }
 
-/* 字标待在自己的小方块里：它是这个页面上唯一一个代表身份而不是控件的东西。 */
 .brand-mark {
-  font: 600 13px/1 var(--ds-font-family-code);
-  letter-spacing: .08em;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: 700 13px/1 var(--ds-font-family-code);
+  letter-spacing: .12em;
+  text-transform: uppercase;
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-layer-1);
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: var(--radius-sm);
-  padding: 5px 9px;
+  padding: 6px 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.brand-mark::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 6px var(--dsw-alias-state-business-primary);
 }
 
 .conn-pill {
@@ -155,7 +169,7 @@ body {
 .meta {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
@@ -164,51 +178,81 @@ body {
   flex: 0 1 auto;
   min-width: 0;
   max-width: 240px;
-  padding: 4px 8px;
-  border: none;
-  border-radius: 12px;
-  background: none;
-  color: var(--dsw-alias-label-tertiary);
-  font: 400 14px/20px var(--dsw-font-family);
+  padding: 3px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: 500 12px/18px var(--ds-font-family-code);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: all .14s ease;
+}
+
+.chip:hover {
+  border-color: var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-primary);
 }
 
 /* 让位的是会话 id：提供方和模型名都很短，而且它们才是「我在跟谁说话」的答案。 */
 #chip-provider, #chip-model { flex: none; }
 #chip-session { flex: 0 1 auto; }
-.chip-session { color: var(--dsw-alias-label-primary); font-weight: 500; }
+.chip-session {
+  font-family: var(--dsw-font-family);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  background: var(--dsw-alias-button-elevated-fill);
+}
 .live {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--dsw-alias-label-tertiary);
-  font: 400 13px/20px var(--dsw-font-family);
+  gap: 7px;
+  color: var(--dsw-alias-label-secondary);
+  font: 500 12px/1 var(--dsw-font-family);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
   white-space: nowrap;
 }
 .live-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--dsw-alias-label-caption);
   flex: none;
-  transition: background .2s ease;
+  transition: background .2s ease, box-shadow .2s ease;
 }
-/* 状态只是圆点上的一个颜色，仅此而已：没有药丸、没有第二层面。 */
-.live[data-state="thinking"] .live-dot { background: var(--dsw-alias-state-business-primary); }
+/* 状态圆点与动画 */
+.live[data-state="idle"] .live-dot {
+  background: var(--dsw-alias-state-success-primary);
+  box-shadow: 0 0 5px var(--dsw-alias-state-success-primary);
+}
+.live[data-state="thinking"] .live-dot {
+  background: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 5px var(--dsw-alias-state-business-primary);
+}
 .live[data-state="running"] .live-dot {
   background: var(--dsw-alias-state-business-primary);
-  animation: pulse 1s ease-in-out infinite alternate;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-state-business-primary) 30%, transparent);
+  animation: live-pulse 1.4s ease-in-out infinite;
 }
-.live[data-state="approval"] .live-dot { background: var(--dsw-alias-state-warn-primary); }
-.live[data-state="offline"] .live-dot { background: var(--dsw-alias-state-error-primary); }
+.live[data-state="approval"] .live-dot {
+  background: var(--dsw-alias-state-warn-primary);
+  box-shadow: 0 0 5px var(--dsw-alias-state-warn-primary);
+}
+.live[data-state="offline"] .live-dot {
+  background: var(--dsw-alias-state-error-primary);
+  box-shadow: 0 0 5px var(--dsw-alias-state-error-primary);
+}
 .live[data-state="offline"] { color: var(--dsw-alias-state-error-primary); }
 
-@keyframes pulse {
-  0%, 100% { opacity: .35; transform: scale(.8); }
-  50% { opacity: 1; transform: scale(1.15); }
+@keyframes live-pulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 color-mix(in srgb, var(--dsw-alias-state-business-primary) 50%, transparent); }
+  70% { transform: scale(1.1); box-shadow: 0 0 0 5px transparent; }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 transparent; }
 }
 
 /* 头部这些工具是工具架的图标按钮：一个永远合身的字形，有地方时就把词放在它旁边。 */
@@ -398,56 +442,78 @@ body {
   flex: none;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  height: 60px;
-  padding: 8px 0 8px 4px;
+  height: 52px;
+  padding: 0 4px 0 6px;
   margin-bottom: 8px;
   overflow: hidden;
 }
 
-.side-logo-row .brand-mark { flex: 1 1 auto; min-width: 0; }
+.side-logo-row .brand-mark { flex: 0 0 auto; }
 
 /* 工具架那个 28px 的圆形图标按钮，给所有以字形表示的东西用。 */
 .icon-btn {
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: none;
-  border-radius: 50%;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: none;
   color: var(--dsw-alias-label-secondary);
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
+  transition: all .14s ease;
 }
 
-.icon-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.icon-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-border-l2);
+}
 
-/* 新建会话，用工具架为它定的尺寸：38px、14/22、500，一条细线、抬起的填充和 12px
- * 圆角。 */
+/* 新建会话按钮 */
 .new-session {
   flex: none;
   height: 38px;
-  margin: 0 2px 8px;
-  padding: 8px 16px;
+  margin: 0 2px 10px;
+  padding: 0 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
   background: var(--dsw-alias-button-elevated-fill);
   color: var(--dsw-alias-label-primary);
-  font: 500 14px/22px var(--dsw-font-family);
+  font: 500 13px/20px var(--dsw-font-family);
   cursor: pointer;
   overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  transition: all .16s ease;
 }
 
-.new-session:hover { background: var(--dsw-alias-button-floating-hover); }
+.new-session:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transform: translateY(-0.5px);
+}
+
+.new-session:active {
+  transform: translateY(0);
+}
+
+.new-session::before {
+  content: "+";
+  font: 600 16px/1 var(--ds-font-family-code);
+  color: var(--dsw-alias-state-business-primary);
+}
 /* 树在自身内部滚动：一个有五十个会话的工作区不能把页面撑长，而它上面的头部原地不动。 */
 .sidebar-body {
   flex: 1 1 auto;
@@ -558,36 +624,32 @@ body {
   flex-direction: column;
   gap: 2px;
 }
-/* 会话行保持它在别处的形状 —— 内容在左、两步删除在右 —— 在侧边栏的宽度上再紧一档，
- * 因为一长串历史是要顺着读的列表，不是拿来滚的。 */
-.ws-sessions .session-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 8px;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  cursor: pointer;
-}
+.ws-sessions .session-row,
 .session-row {
   display: flex;
   align-items: center;
   gap: 6px;
   min-height: 32px;
   padding: 0 8px;
-  border: none;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: none;
   cursor: pointer;
+  transition: all .12s ease;
 }
 
-.session-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.session-row.current { background: var(--dsw-alias-interactive-bg-hover); }
+.session-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l2);
+}
 
-/* 当前行由开头槽位里的一个点标记，工具架就是这样标记一行状态的 —— 而不是在标题旁边
- * 挤进一个词。 */
+.session-row.current {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary) 25%, transparent);
+  box-shadow: inset 2px 0 0 0 var(--dsw-alias-state-business-primary);
+}
+
+/* 当前行由开头槽位里的一个点标记 */
 .session-row.current .session-item::before {
   content: "";
   flex: none;
@@ -595,6 +657,7 @@ body {
   height: 6px;
   border-radius: 50%;
   background: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 0 4px var(--dsw-alias-state-business-primary);
 }
 
 .session-item {
@@ -685,9 +748,28 @@ body {
 .ws-actions {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 8px 0 0;
+  padding: 10px 4px 4px;
+  margin-top: auto;
+  border-top: 1px solid var(--dsw-alias-border-l2);
   flex-wrap: wrap;
+}
+
+.delete-control .btn.danger {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11.5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: all .14s ease;
+}
+
+.delete-control .btn.danger:hover {
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 25%, transparent);
 }
 #main {
   flex: 1 1 auto;
@@ -749,16 +831,17 @@ body {
 }
 
 .ev-user .bubble {
-  max-width: min(525px, 82%);
-  padding: 10px 16px;
+  max-width: min(560px, 82%);
+  padding: 10px 18px;
   background: var(--dsw-specific-bubble);
-  border: none;
-  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 22%, transparent);
+  border-radius: 18px 18px 4px 18px;
   color: var(--dsw-alias-label-primary);
-  font-size: 16px;
+  font-size: 15px;
   line-height: 24px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
 }
 .ev-assistant { max-width: var(--content); }
 
@@ -840,21 +923,33 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 
 /* 代码块在自身内部滚动，与工具卡片的输出完全一样：一个粘贴了文件的答案不能把窄栏
  * 撑宽。 */
-.md-code-wrap { margin: 0 0 var(--sp-3); }
+.md-code-wrap {
+  margin: 10px 0 var(--sp-3);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-markdown-code-block);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
 .md-code-lang {
-  font: 10px/1.6 var(--ds-font-family-code);
-  letter-spacing: .08em;
+  display: flex;
+  align-items: center;
+  padding: 6px 14px;
+  font: 600 11px/1.4 var(--ds-font-family-code);
+  letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--dsw-alias-label-tertiary);
-  margin-bottom: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-border-l1) 30%, transparent);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  margin-bottom: 0;
 }
 .md-pre {
   margin: 0;
-  padding: 16px;
-  background: var(--dsw-alias-markdown-code-block);
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
-  max-height: 420px;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  max-height: 440px;
   overflow: auto;
   overscroll-behavior: contain;
 }
@@ -881,46 +976,83 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 
 /* 工具卡片 */
 
-/* 一次工具调用是一行，不是一张卡片：24px 行高、工具名、一个点、一行摘要 —— 工具架的
- * ToolRow。它下面的输出才是卡片。 */
+/* 一次工具调用是一张薄卡片：工具名、一个状态标记、一行摘要，它自己的输出缩在里面。
+ * 卡片是这一层唯一的容器，因为工具名现在带底色、输出带自己的表面——两者都要一个边界才分得开。 */
 .ev-tool {
   position: relative;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 8px 12px;
   overflow: hidden;
+  transition: all .14s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
-.tool-head { display: flex; align-items: center; gap: 0; min-height: 24px; }
+.ev-tool:hover {
+  border-color: var(--dsw-alias-border-l1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+.tool-head { display: flex; align-items: center; gap: 6px; min-height: 24px; }
 .tool-spinner {
   width: 8px;
   height: 8px;
-  margin-right: 8px;
+  margin-right: 6px;
   border-radius: 50%;
   background: var(--dsw-alias-state-business-primary);
   flex: none;
-  animation: pulse 1s ease-in-out infinite alternate;
+  animation: tool-spin 1s ease-in-out infinite alternate;
 }
-.tool-mark { flex: none; width: 16px; text-align: center; color: var(--dsw-alias-label-secondary); font: 400 13px/24px var(--ds-font-family-code); }
-.tool-mark.ok { color: var(--dsw-alias-state-success-primary); }
-.tool-mark.fail { color: var(--dsw-alias-state-error-primary); }
-.tool-name { flex: none; color: var(--dsw-alias-label-primary); font: 400 14px/24px var(--dsw-font-family); }
-/* 摘要跟在名字后面，中间隔一个 2px 的分隔点，正是工具架放它的位置。 */
+
+/* 转圈与头部状态点是两种动效：那个反射式地亮起又暗下，这个要一圈一圈转，混用一个 keyframes
+ * 会让其中一个退化。测量：把共用的 `pulse` 改名成 `live-pulse` 而没跟这里，转圈就静悄悄地停了
+ * ——动画名不存在时浏览器什么都不报。 */
+@keyframes tool-spin {
+  0%, 100% { opacity: .35; transform: scale(.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+.tool-mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font: 600 11px/1 var(--ds-font-family-code);
+}
+.tool-mark.ok {
+  color: var(--dsw-alias-state-success-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
+}
+.tool-mark.fail {
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+}
+.tool-name {
+  flex: none;
+  color: var(--dsw-alias-state-business-primary);
+  font: 600 12.5px/1 var(--ds-font-family-code);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, transparent);
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+/* 摘要跟在名字后面，中间隔一个 3px 的分隔点 */
 .tool-summary {
   display: flex;
   align-items: center;
   min-width: 0;
   color: var(--dsw-alias-label-tertiary);
-  font: 400 14px/24px var(--dsw-font-family);
+  font: 400 13px/20px var(--dsw-font-family);
   overflow: hidden;
+  padding-left: 2px;
 }
 .tool-summary::before {
   content: "";
   flex: none;
-  width: 2px;
-  height: 2px;
+  width: 3px;
+  height: 3px;
   margin: 0 8px;
-  border-radius: 1px;
+  border-radius: 50%;
   background: var(--dsw-alias-label-caption);
 }
 .tool-meta {
@@ -928,11 +1060,11 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   margin-left: auto;
   padding-left: 8px;
   color: var(--dsw-alias-label-tertiary);
-  font: 400 14px/24px var(--dsw-font-family);
+  font: 400 12px/20px var(--ds-font-family-code);
   white-space: nowrap;
 }
-.ev-tool.ok { border: none; }
-.ev-tool.failed { border: none; }
+.ev-tool.ok { border-color: var(--dsw-alias-border-l2); }
+.ev-tool.failed { border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 30%, var(--dsw-alias-border-l2)); }
 /* 调用运行期间，一带光扫过这一行 —— 工具架自己的运行态动画，用它的 2.6s。 */
 .ev-tool.running .tool-head {
   position: relative;
@@ -954,19 +1086,18 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   0% { left: -300px; }
   90%, 100% { left: 100%; }
 }
-/* 等宽输出待在自己略深一点的表面上，并在自身内部滚动：一长串工具输出永远不会撑宽
- * 页面。 */
+/* 等宽输出待在自己略深一点的表面上，并在自身内部滚动 */
 .tool-output {
-  margin: 4px 0 4px 4px;
-  padding: 12px 16px;
+  margin: 6px 0 2px 0;
+  padding: 10px 14px;
   background: var(--dsw-alias-markdown-code-block);
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 12px;
+  border-radius: 8px;
   color: var(--dsw-alias-label-secondary);
-  font: 400 12px/18px var(--ds-font-family-code);
+  font: 400 12.5px/1.65 var(--ds-font-family-code);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 224px;
+  max-height: 260px;
   overflow: auto;
   overscroll-behavior: contain;
 }
@@ -1131,34 +1262,34 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
   max-width: var(--stack);
-  padding-top: 10px;
+  padding: 8px 10px 6px;
   background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
-  border-radius: 22px;
-  box-shadow: var(--dsw-shadow-lv2);
-  font-size: 16px;
-  line-height: 24px;
-  transition: border-color .16s ease;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  font-size: 15px;
+  line-height: 22px;
+  transition: border-color .16s ease, box-shadow .16s ease;
 }
 .composer-card:focus-within {
   border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: 0 6px 24px rgba(0, 102, 255, 0.12), 0 0 0 1px var(--dsw-alias-state-business-primary);
 }
 #input {
   width: 100%;
-  /* 随书写内容增长，而不是在卡片里显示一个缩放抓手；不支持 field-sizing 的浏览器
-   * 保留最小高度。 */
+  /* 随书写内容增长 */
   field-sizing: content;
   resize: none;
-  min-height: 52px;
+  min-height: 48px;
   max-height: 336px;
-  padding: 4px 12px 0 16px;
+  padding: 4px 10px 0 12px;
   background: none;
   border: 0;
   color: var(--dsw-alias-label-primary);
-  font: 400 16px/24px var(--dsw-font-family);
+  font: 400 15px/22px var(--dsw-font-family);
   outline: none;
 }
 #input::placeholder { color: var(--dsw-alias-label-caption); }
@@ -1291,24 +1422,34 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   padding: 0;
   border: none;
   border-radius: 999px;
-  background: var(--dsw-alias-button-info-fill);
+  background: var(--dsw-alias-state-business-primary);
   color: #fff;
   font-size: 0;
   transform: translateY(-2px);
   cursor: pointer;
-  transition: background-color .1s;
+  box-shadow: 0 2px 6px rgba(0, 102, 255, 0.25);
+  transition: all .15s ease;
 }
 
-#send::after { content: "↑"; font-size: 19px; line-height: 1; }
+#send::after { content: "↑"; font-size: 18px; line-height: 1; font-weight: 700; }
 
-#send:hover:not(:disabled) { background: var(--dsw-alias-button-info-hover); }
-
-#send:disabled { opacity: .4; cursor: default; }
 #send:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 88%, #fff 12%);
-  color: #fff;
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 85%, #fff 15%);
+  box-shadow: 0 4px 12px rgba(0, 102, 255, 0.35);
+  transform: translateY(-3px);
 }
-#send:disabled { background: var(--dsw-alias-border-l2); color: var(--dsw-alias-label-tertiary); opacity: 1; }
+
+#send:active:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+#send:disabled {
+  background: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-tertiary);
+  box-shadow: none;
+  opacity: 0.7;
+  cursor: default;
+}
 
 .jump {
   position: absolute;
@@ -1378,20 +1519,27 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
 .tool-list { list-style: none; margin: 0; padding: 0; }
 .tool-list li {
   display: flex;
-  align-items: baseline;
-  gap: var(--sp-2);
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
-  margin-bottom: var(--sp-1);
-  padding: 3px 6px;
+  margin-bottom: 6px;
+  padding: 6px 8px;
   border-radius: 8px;
+  border: 1px solid transparent;
+  transition: all .14s ease;
 }
 
-.tool-list li:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.tool-list .name { font: 600 12px var(--ds-font-family-code); color: var(--dsw-alias-state-business-primary); flex: 0 0 auto; }
-/* 两行而不是裁成一行：一份把「return num…」切掉的图例比会折行的更难读，而面板有
- * 这个空间。 */
+.tool-list li:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l2);
+}
+.tool-list .name {
+  font: 600 12.5px var(--ds-font-family-code);
+  color: var(--dsw-alias-state-business-primary);
+  flex: 0 0 auto;
+}
 .tool-list .desc {
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.45;
   color: var(--dsw-alias-label-tertiary);
   min-width: 0;
@@ -1418,8 +1566,8 @@ h5.md-h, h6.md-h { font-size: 16px; font-weight: 600; line-height: 28px; color: 
   color: var(--dsw-alias-label-tertiary);
 }
 
-.usage-hero-value { color: var(--dsw-alias-label-primary); font: 600 24px/32px var(--ds-font-family-code); }
-.usage-hero-value.na { color: var(--dsw-alias-label-tertiary); font-weight: 400; font-size: 18px; }
+.usage-hero-value { color: var(--dsw-alias-label-primary); font: 600 22px/28px var(--ds-font-family-code); }
+.usage-hero-value.na { color: var(--dsw-alias-label-tertiary); font-weight: 500; font-size: 14px; letter-spacing: .02em; }
 
 /* 同一个百分比的形状表示。报告上来的 0% 是一条空的已填充条（数字仍然读作 0.0%）；
  * 未报告的命中率则是一条空*轨道*加上它下面的提示 —— 永远不是一条填到零、假装自己
@@ -2064,4 +2212,22 @@ body.wallpaper[data-ds-dark-theme] .transcript {
 
 /* 开启时用的是与激活面板切换钮相同的标记：强调色，而不是填充。 */
 #btn-wallpaper[aria-pressed="true"] { color: var(--dsw-alias-state-business-primary); }
+
+/* ------------------------------------------------------------- 自定义精致滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--dsw-alias-border-l1) 80%, transparent);
+  border-radius: 999px;
+  transition: background .15s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dsw-alias-border-l2);
+}
+
 
