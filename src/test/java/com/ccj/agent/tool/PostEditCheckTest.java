@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -52,6 +53,7 @@ class PostEditCheckTest {
     return new EditTool(Checks.from(config)).execute(editArgs(path, from, to), context()).content();
   }
 
+  @Tag("posix")
   @Test
   void aBrokenEditComesBackWithWhatTheCheckSaid() throws Exception {
     // 全部要点就在这里：模型在同一步里被告知它弄坏了什么，于是修复就是它接下来做的事，而不是它得自己
@@ -72,6 +74,7 @@ class PostEditCheckTest {
     assertTrue(result.contains("继续之前先修好它"), result);
   }
 
+  @Tag("posix")
   @Test
   void aCheckThatPassesSaysSoInOneLine() throws Exception {
     givenConfig("{\"checks\": [{\"glob\": \"**/*.java\", \"command\": \"true\"}]}");
@@ -136,6 +139,7 @@ class PostEditCheckTest {
     assertFalse(result.contains("[check]"), "会话工作区之外的文件什么都不会运行: " + result);
   }
 
+  @Tag("posix")
   @Test
   void aCheckThatHangsIsKilledAtItsTimeout() throws Exception {
     givenConfig("{\"checks\": [{\"glob\": \"**\", \"command\": \"sleep 30\", \"timeoutSeconds\": 1}]}");
@@ -160,6 +164,7 @@ class PostEditCheckTest {
     assertTrue(result.contains("checks"), result);
   }
 
+  @Tag("posix")
   @Test
   void aChattyCheckIsReportedBounded() throws Exception {
     // 结果是一段用户此后每个回合都要付费的提示，所以构建日志是被封顶的，而不是整段贴出来：头、尾，

@@ -14,6 +14,7 @@ import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.List;
 import java.util.Set;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -101,6 +102,10 @@ class SessionStoreTest {
     assertEquals("（暂无消息）", SessionStore.list(dir).get(0).preview());
   }
 
+  // Windows 上不可能通过：这条用例的机制是把文件设成不可读，而它靠的是 POSIX 权限位——
+  // Files.setPosixFilePermissions 在那边的默认文件系统上直接抛 UnsupportedOperationException。
+  // 按 CONTRIBUTING 的判据（"它在 Windows 上不可能通过"）标 posix，而不是让它静默跳过。
+  @Tag("posix")
   @Test
   void aListingIsServedFromWhatWasDerivedOnceNotOncePerCall() throws IOException {
     // 侧栏在每个回合结束后都会重读这份列表，而推导一行意味着解析文件直到它的第一条用户消息——标题就是

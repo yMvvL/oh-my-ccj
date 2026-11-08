@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -309,6 +310,7 @@ class CliEndToEndTest {
             + server.lastRequest().body());
   }
 
+  @Tag("posix")
   @Test
   void aCheckDeclaredInTheConfigFileRunsAfterAnEditAndItsVerdictReachesTheModel() throws IOException {
     // 整个功能，端到端且离线：CLI 读取配置文件，用其声明的检查构建工具，模型的编辑触发其中一个，
