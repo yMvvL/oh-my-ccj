@@ -76,24 +76,28 @@ jobs:
         if: failure()
         run: |
           shopt -s nullglob
-          found=0
           reports=(target/surefire-reports/*.txt)
           if [ ${#reports[@]} -eq 0 ]; then
             echo "::error::没有 surefire 报告：这一遍很可能连编译都没过"
+            exit 0
           fi
+          failures=""
           for report in "${reports[@]}"; do
             if grep -qE '<<< (FAILURE|ERROR)' "$report"; then
-              found=1
               echo "===== $report"
               cat "$report"
-              grep -E '<<< (FAILURE|ERROR)' "$report" | while IFS= read -r line; do
-                echo "::error::${line# }"
-              done
+              # 聚合成一条注解：注解有配额（每个步骤 10 条），一条失败一条注解会把自己顶满，
+              # 于是后面的类根本不进注解——看起来像是第一个类独占了所有问题。
+              failures="${failures}$(grep -E '<<< (FAILURE|ERROR)' "$report" | sed 's/^ *//')"$'\n'
             fi
           done
-          if [ "$found" -eq 0 ] && [ ${#reports[@]} -gt 0 ]; then
-            echo "::error::报告里没有 <<< FAILURE 行：失败可能发生在测试之外"
+          if [ -z "$failures" ]; then
+            echo "::error::报告里没有 <<< FAILURE 行：失败可能发生在测试之外（编译、或者这一步本身）"
+            exit 0
           fi
+          count=$(printf '%s' "$failures" | grep -c .)
+          printf '::error::%s 个用例失败\n%s' "$count" "$failures" | head -c 60000
+          echo
 
       - name: 上传测试报告
         if: failure()
@@ -147,36 +151,44 @@ jobs:
         if: failure()
         shell: pwsh
         run: |
-          # 每条失败打成一行 `::error::`，因为**日志不是一条可以查的记录**：它要管理员权限才下载得下来，
-          # 而这个仓库是公开的、谁都能看 Actions 页面。注解是唯一能从 REST API 读到的失败明细，所以
-          # 让失败自己走进注解里，而不是等人去翻日志。
+          # 失败要走进注解里，因为**日志不是一条可以查的记录**：它要管理员权限才下载得下来，而这个仓库
+          # 是公开的、谁都能看 Actions 页面。注解是唯一能从 REST API 读到的失败明细。
           #
-          # 第一次真正跑这个作业时吃的就是这个亏：注解里只剩「Process completed with exit code 1」，
-          # 而看不出是哪个用例、为什么——一次失败变成一次猜。
+          # 但注解有配额：**每个步骤最多 10 条**。第一版是「一条失败一条注解」，十来个错就把自己顶满了，
+          # 后面的类根本没进注解——于是看到的第一个类看起来像是唯一出问题的那个。所以改成**聚合成一条**：
+          # 一条注解里列出全部失败用例。宁可挤在一个消息里，也不要让人以为剩下的都过了。
           $found = $false
           $reports = Get-ChildItem target/surefire-reports/*.txt -ErrorAction SilentlyContinue
           if (-not $reports) {
             Write-Output "::error::没有 surefire 报告：这一遍很可能连编译都没过，先看上面那一步的输出"
+            exit 0
           }
+          $failures = New-Object System.Collections.Generic.List[string]
+          $detail = New-Object System.Collections.Generic.List[string]
           foreach ($report in $reports) {
             $lines = @(Get-Content $report.FullName)
             for ($i = 0; $i -lt $lines.Count; $i++) {
               if ($lines[$i] -match '<<< (FAILURE|ERROR)') {
                 $found = $true
-                $name = $report.BaseName
-                Write-Output ("::error file=target/surefire-reports/$($report.Name)::$name — " + $lines[$i].Trim())
-                # 断言消息就在紧跟的几行里；前三条够定位，不把整份堆栈塞进注解。
-                for ($j = $i + 1; $j -lt [Math]::Min($i + 4, $lines.Count); $j++) {
-                  if ($lines[$j].Trim()) {
-                    Write-Output ("::error::" + $lines[$j].Trim())
-                  }
+                $failures.Add($lines[$i].Trim())
+                # 断言消息在紧跟的几行里；每一处失败只取前两条，够定位又不至于把注解撑爆。
+                for ($j = $i + 1; $j -lt [Math]::Min($i + 3, $lines.Count); $j++) {
+                  if ($lines[$j].Trim()) { $detail.Add($lines[$j].Trim()) }
                 }
               }
             }
           }
-          if (-not $found -and $reports) {
+          if (-not $found) {
             Write-Output "::error::报告里没有 <<< FAILURE 行：失败可能发生在测试之外（编译、或者这一步本身）"
+            exit 0
           }
+          $message = "$($failures.Count) 个用例失败`n" + ($failures -join "`n")
+          if ($detail.Count -gt 0) {
+            $message += "`n`n--- 断言消息 ---`n" + (($detail | Select-Object -First 20) -join "`n")
+          }
+          # 消息长度有上限，超了会被整条丢掉——那时连「有几个失败」都看不到。
+          if ($message.Length -gt 60000) { $message = $message.Substring(0, 60000) + "`n…（截断）" }
+          Write-Output "::error::$message"
 
       - name: 上传测试报告
         if: failure()
