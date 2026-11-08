@@ -304,12 +304,22 @@ HTML），含对话、工具调用与结果、图片的缩略图、以及账本�
 
 - **一个 `windows` 作业**（`.github/workflows/build.yml`）：`-DexcludedGroups=posix` 跑不绑定 POSIX 的全部，
   装 Node（否则页面用例会被报告为*跳过*，而一次跳过看起来和通过一模一样），并单独跑一步
-  `ShellFromConfigTest`——那一步会把"CI 证据：…"两行从日志里找出来，**找不到就让作业失败**：一句没人检查过的
-  证据与没有证据是一回事。
-- **`@Tag("posix")`，10 处**：判据只有一条——**它在 Windows 上不可能通过**。所以标的是文件权限
-  （`Files.setPosixFilePermissions`：`ConfigTest` ×2、`ApprovalRulesTest`、`ToolsTest`、`GrepToolTest`、
-  `WebSettingsTest`、`WebTokenTest`）与 `/bin/sh`（`NativeFolderChooserTest` 整个类、`McpClientTest` 里那条、
-  `BashToolTest` 整个类）。`ProcessRunner` 那一组**没有**标：它是纯函数，平台默认是从参数读进来的。
+  `ShellFromConfigTest`——那一步会把 `CI-EVIDENCE` 那一行从日志里找出来，**找不到就让作业失败**：一句没人
+  检查过的证据与没有证据是一回事。标记是 ASCII 而不是中文，因为机器要在管道里找它：Windows 的控制台编码与
+  `Tee-Object` 的解码不必一致，中文过一遍管道可能已经是乱码（第一次跑这个作业就是这样红的，而报错看起来
+  像是回合没跑起来）。
+- **`@Tag("posix")`，18 处、覆盖 16 个用例**（其中 2 处是类级）：判据只有一条——**它在 Windows 上不可能
+  通过**。标的是文件权限（`Files.setPosixFilePermissions` 或「把文件设成不可读」这类前提：
+  `ConfigTest` ×2、`ApprovalRulesTest`、`ToolsTest`、`GrepToolTest`、`WebSettingsTest`、`WebTokenTest`、
+  `SessionStoreTest`、`ProjectPromptTest`）、`/bin/sh`（`NativeFolderChooserTest` 整个类、`McpClientTest` 里
+  那条、`BashToolTest` 整个类），以及检查命令写的是 POSIX 语法的那 6 条（`PostEditCheckTest` ×4、
+  `CliEndToEndTest` ×1，命令形如 `echo '…'; exit 1`——`cmd.exe` 里 `;` 不是分隔符、`exit` 不是内建，退出码
+  会变成 0）。
+- `ProcessRunner` 那一组**只在读真实机器的那一半**带标签：`platformDefault("Linux", null)` 是纯函数，两边都
+  跑；`resolve(null)` 读的是这台机器的 `os.name`，在 Windows 上等于断言「这台机器是 POSIX」。
+- **跨平台能跑的东西不加这个标签**，所以另有一批是**改断言**而不是加标签：路径断言改成与生产同一条路
+  （`toAbsolutePath().normalize()`），手拼 JSON 里的路径用 `JsonText` 转义，`attachments`/`approvals` 那类
+  「拿路径比 JSON 正文」的断言按转义后的样子比。这些都是 Linux 上永远绿、Windows 上整片红的门。
 - **`ShellFromConfigTest`**（新，跨平台）：一条真实的 CLI 回合（`--demo` 只关掉模型）。两个用例合起来才说明
   问题——第一个证明**一个回合跑完并拿回命令的输出**；第二个在配置里写一个**根本不存在**的 shell，证明那个回合
   因此**失败**。如果平台默认被偷偷用上，第二条会通过，而"配置能决定 shell"就成了一句没人验证过的主张。

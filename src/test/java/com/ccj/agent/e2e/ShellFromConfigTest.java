@@ -17,6 +17,10 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * 一个回合真的跑起来了，而它执行命令用的那个程序**来自配置**。
  *
+ * <p>标记写作 {@code CI-EVIDENCE} 而不是中文，这是有原因的：机器要在日志里找它。Windows 的
+ * 控制台编码与管道的解码方式不必一致，一行中文在 {@code Tee-Object} 之后可能已经是乱码，而
+ * ASCII 在两边都对。中文那句仍然打印，给人读。
+ *
  * <p>它是 4.6（"Windows 的真相"）里那份证据。这个类**不绑定 POSIX**：CI 的 windows 作业会跑它，而它打印
  * 的那两行就是那份证据——不是"应该能跑"，而是"跑过了，而且是配置里那个程序执行的"。跑的是真实 CLI：
  * {@code --demo} 之下没有任何模型后端，但回合、工具、shell 全是真的。
@@ -37,7 +41,7 @@ class ShellFromConfigTest {
     // 演示提供方会把用户说的话原样背一遍，所以"输出里出现过这个记号"本身什么都不能证明。
     assertTrue(run.out().contains("✔ bash"), run.out());
     assertTrue(run.out().contains("CI-SHELL-EVIDENCE"), run.out());
-    System.out.println("CI 证据：一个回合跑起来了，命令的输出回来了（shell 用平台默认）");
+    System.out.println("CI-EVIDENCE: 一个回合跑起来了，命令的输出回来了（shell 用平台默认）");
   }
 
   @Test
@@ -50,7 +54,7 @@ class ShellFromConfigTest {
     assertTrue(run.out().contains("✖ bash"), run.out());
     assertTrue(run.out().contains("definitely-not-a-shell-xyz"), run.out());
     assertFalse(run.out().contains("✔ bash"), "不该有成功的执行：\n" + run.out());
-    System.out.println("CI 证据：配置里那个不存在的 shell 被真的用上了（不是平台默认）");
+    System.out.println("CI-EVIDENCE: 配置里那个不存在的 shell 被真的用上了（不是平台默认）");
   }
 
   private record Run(int exitCode, String out) {}

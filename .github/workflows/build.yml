@@ -154,7 +154,10 @@ jobs:
       - name: 证据——一个回合跑起来了，shell 来自配置
         run: |
           .\mvnw.cmd -B -ntp -Dtest=ShellFromConfigTest test | Tee-Object -FilePath evidence.txt
-          if (-not (Select-String -Quiet -Path evidence.txt -Pattern 'CI 证据')) {
+          # 找的是 ASCII 标记，不是那句中文：Windows 的控制台编码与 Tee-Object 的解码不必一致，
+          # 中文在管道里可能已经是乱码。第一次跑这个作业时它就是因为这个红的——而那一行
+          # 「日志里没有那条证据」看起来像是回合没跑起来，其实回合跑得好好的。
+          if (-not (Select-String -Quiet -Path evidence.txt -Pattern 'CI-EVIDENCE')) {
             throw "日志里没有那条证据"
           }
 
