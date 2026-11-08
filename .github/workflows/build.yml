@@ -67,18 +67,33 @@ jobs:
           ./mvnw -B -ntp -DskipTests package
           java -jar target/ccj.jar --version
 
-      # 失败时把「哪条测试、为什么」直接打进日志。surefire 的报告只在磁盘上，而 Maven 的输出在几十行
-      # 之上——日志唯一的读者是人，所以让它自己说出结论，比让人去下载 artifact 再翻文件强。
+      # 失败时把「哪条测试、为什么」直接打进日志**和注解**。surefire 的报告只在磁盘上，而 Maven 的输出
+      # 在几十行之上——日志唯一的读者是人，所以让它自己说出结论，比让人去下载 artifact 再翻文件强。
+      #
+      # 注解那一半是给机器读的：日志要管理员权限才下载得下来，而 `::error::` 行会变成能通过 REST API
+      # 读到的注解。没有它，一次失败在 API 里只剩「Process completed with exit code 1」。
       - name: 失败的测试
         if: failure()
         run: |
           shopt -s nullglob
-          for report in target/surefire-reports/*.txt; do
+          found=0
+          reports=(target/surefire-reports/*.txt)
+          if [ ${#reports[@]} -eq 0 ]; then
+            echo "::error::没有 surefire 报告：这一遍很可能连编译都没过"
+          fi
+          for report in "${reports[@]}"; do
             if grep -qE '<<< (FAILURE|ERROR)' "$report"; then
+              found=1
               echo "===== $report"
               cat "$report"
+              grep -E '<<< (FAILURE|ERROR)' "$report" | while IFS= read -r line; do
+                echo "::error::${line# }"
+              done
             fi
           done
+          if [ "$found" -eq 0 ] && [ ${#reports[@]} -gt 0 ]; then
+            echo "::error::报告里没有 <<< FAILURE 行：失败可能发生在测试之外"
+          fi
 
       - name: 上传测试报告
         if: failure()
@@ -132,11 +147,35 @@ jobs:
         if: failure()
         shell: pwsh
         run: |
-          Get-ChildItem target/surefire-reports/*.txt | ForEach-Object {
-            if (Select-String -Quiet -Path $_.FullName -Pattern '<<< (FAILURE|ERROR)') {
-              Write-Output ("===== " + $_.Name)
-              Get-Content $_.FullName | Write-Output
+          # 每条失败打成一行 `::error::`，因为**日志不是一条可以查的记录**：它要管理员权限才下载得下来，
+          # 而这个仓库是公开的、谁都能看 Actions 页面。注解是唯一能从 REST API 读到的失败明细，所以
+          # 让失败自己走进注解里，而不是等人去翻日志。
+          #
+          # 第一次真正跑这个作业时吃的就是这个亏：注解里只剩「Process completed with exit code 1」，
+          # 而看不出是哪个用例、为什么——一次失败变成一次猜。
+          $found = $false
+          $reports = Get-ChildItem target/surefire-reports/*.txt -ErrorAction SilentlyContinue
+          if (-not $reports) {
+            Write-Output "::error::没有 surefire 报告：这一遍很可能连编译都没过，先看上面那一步的输出"
+          }
+          foreach ($report in $reports) {
+            $lines = @(Get-Content $report.FullName)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match '<<< (FAILURE|ERROR)') {
+                $found = $true
+                $name = $report.BaseName
+                Write-Output ("::error file=target/surefire-reports/$($report.Name)::$name — " + $lines[$i].Trim())
+                # 断言消息就在紧跟的几行里；前三条够定位，不把整份堆栈塞进注解。
+                for ($j = $i + 1; $j -lt [Math]::Min($i + 4, $lines.Count); $j++) {
+                  if ($lines[$j].Trim()) {
+                    Write-Output ("::error::" + $lines[$j].Trim())
+                  }
+                }
+              }
             }
+          }
+          if (-not $found -and $reports) {
+            Write-Output "::error::报告里没有 <<< FAILURE 行：失败可能发生在测试之外（编译、或者这一步本身）"
           }
 
       - name: 上传测试报告
