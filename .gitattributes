@@ -1,0 +1,11 @@
+# 一律 LF。
+#
+# Windows 的 git 默认 core.autocrlf=true，于是 checkout 出来是 CRLF。而有些用例逐字比较文件内容：
+# DocsConsistencyTest 拿 docs/USAGE.md 与 CliOptions.usage() 的输出比，后者是文本块，编译之后固定
+# 是 \n。不做这一条，那条用例只在 Windows 上红——而它红的原因（行尾）与它想守的东西（文档与代码
+# 一致）毫无关系。
+* text=auto eol=lf
+
+# 批处理必须 CRLF：cmd.exe 对 LF 结尾的 .cmd/.bat 解析并不总是正确。
+*.cmd text eol=crlf
+*.bat text eol=crlf

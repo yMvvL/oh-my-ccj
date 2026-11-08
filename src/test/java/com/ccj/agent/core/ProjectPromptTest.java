@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -85,6 +86,10 @@ class ProjectPromptTest {
     assertEquals("", ProjectPrompt.from(root));
   }
 
+  // Windows 上不可能通过：这条用例的机制是把文件设成不可读（File.setReadable(false)），而
+  // Windows 上那个调用对文件所有者不产生实际限制——文件照样读得出来，于是「读不了就返回空」这条
+  // 路径根本没被走到，断言必然失败。按 CONTRIBUTING 的判据标 posix。
+  @Tag("posix")
   @Test
   void aFileThatCannotBeReadIsNotAnError() throws Exception {
     // 提示词是助力，不是依赖：一个进程读不了的文件不能阻碍它启动，最坏的情况也只是回到这个功能

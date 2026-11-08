@@ -1,5 +1,6 @@
 package com.ccj.agent.web;
 
+import com.ccj.agent.JsonText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -357,7 +358,7 @@ class WebConversationConcurrencyTest extends WebHarness {
 
       // 注册工作区只是加一条注册表条目，而且必须在 a 运行时也能做——否则第二个工作区恰好在用户
       // 想去的时候够不着。
-      postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + other + "\"}");
+      postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + JsonText.of(other) + "\"}");
 
       // 切过去：换的是命名空间，不是正在运行的东西。
       JsonNode switched = postJson("/api/workspace", "{\"name\":\"other\"}");
@@ -405,7 +406,7 @@ class WebConversationConcurrencyTest extends WebHarness {
       assertTrue(firstPrompt.contains("run `make check`"), firstPrompt);
       assertFalse(firstPrompt.contains("use tabs"), firstPrompt);
 
-      postJson("/api/workspaces", "{\"name\":\"second\",\"path\":\"" + other + "\"}");
+      postJson("/api/workspaces", "{\"name\":\"second\",\"path\":\"" + JsonText.of(other) + "\"}");
       JsonNode switched = postJson("/api/workspace", "{\"name\":\"second\"}");
       post("/api/message", "{\"text\":\"hello in the second\"}");
       sse.awaitInSession(switched.path("sessionId").asText(), "done", 1, 5000);

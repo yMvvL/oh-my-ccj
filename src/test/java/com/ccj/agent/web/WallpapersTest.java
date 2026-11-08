@@ -132,19 +132,20 @@ class WallpapersTest {
 
   @Test
   void theDirectoryIsTheFlagThenTheEnvironmentThenTheUsualPlace() {
-    Path home = Path.of("/home/someone");
+    // Wallpapers 把目录 toAbsolutePath().normalize()（见它的构造器），所以期望值也要走同一条路。
+    Path home = Path.of("/home/someone").toAbsolutePath();
 
     assertEquals(
-        Path.of("/pictures/here"),
+        Path.of("/pictures/here").toAbsolutePath().normalize(),
         Wallpapers.from(
                 Map.of("HOME", home.toString(), "CCJ_WALLPAPERS", "/from/env"), "/pictures/here")
             .directory());
     assertEquals(
-        Path.of("/from/env"),
+        Path.of("/from/env").toAbsolutePath().normalize(),
         Wallpapers.from(Map.of("HOME", home.toString(), "CCJ_WALLPAPERS", "/from/env"), null)
             .directory());
     assertEquals(
-        home.resolve("Pictures/ccj-backgrounds"),
+        home.resolve("Pictures/ccj-backgrounds").toAbsolutePath().normalize(),
         Wallpapers.from(Map.of("HOME", home.toString()), null).directory());
   }
 }

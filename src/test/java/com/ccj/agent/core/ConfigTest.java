@@ -214,11 +214,13 @@ class ConfigTest {
 
   @Test
   void appPathsHonourCcjHome() {
+    // AppPaths 会 toAbsolutePath().normalize()（见它的构造器），所以期望值也要走同一条路：
+    // 字面量 "/tmp/ccj-home" 在 Windows 上是 \tmp\ccj-home，而实际值是 D:\tmp\ccj-home。
     assertEquals(
-        Path.of("/tmp/ccj-home"),
+        Path.of("/tmp/ccj-home").toAbsolutePath().normalize(),
         AppPaths.fromEnv(Map.of("CCJ_HOME", "/tmp/ccj-home")).home());
     assertEquals(
-        Path.of("/home/someone/.oh-my-ccj"),
+        Path.of("/home/someone/.oh-my-ccj").toAbsolutePath().normalize(),
         AppPaths.fromEnv(Map.of("HOME", "/home/someone")).home());
   }
 

@@ -55,7 +55,10 @@ class CompactionTest {
   void theNewestExchangesAreKeptVerbatimAndTheRestIsSummarised() {
     List<Message> before = conversation(8, false);
 
-    Compaction.Result result = Compaction.apply(before, SUMMARY, "/sessions/s.jsonl", null);
+    // 生产会把它 toAbsolutePath().normalize()（见 Compaction.display），所以期望值不能用字面量：
+    // 同一串 "/sessions/s.jsonl" 在 Windows 上是 D:\sessions\s.jsonl。
+    String source = Path.of("/sessions/s.jsonl").toAbsolutePath().normalize().toString();
+    Compaction.Result result = Compaction.apply(before, SUMMARY, source, null);
 
     // 8 个回合、每回合两条消息；最新的 5 个回合保留，所以有 3 个回合 —— 6 条消息 —— 被替换掉。
     assertEquals(6, result.summarised(), "最旧的三个回合被替换");
@@ -65,7 +68,7 @@ class CompactionTest {
     Message.Summary head = (Message.Summary) result.messages().get(0);
     assertTrue(head.text().contains(SUMMARY), head.text());
     assertEquals(6, head.covers(), "这个数目是消息数，也就是转录所报告的");
-    assertEquals("/sessions/s.jsonl", head.source());
+    assertEquals(source, head.source());
 
     // 尾部就是原始消息，未作改动、顺序不变 —— 被引用，从不被改写。
     assertEquals(
@@ -164,11 +167,12 @@ class CompactionTest {
   void theSummaryTellsTheModelWhereTheRealConversationIs() {
     List<Message> before = conversation(8, false);
 
-    Compaction.Result result =
-        Compaction.apply(before, SUMMARY, "/home/me/.oh-my-ccj/sessions/abc.jsonl", null);
+    String source =
+        Path.of("/home/me/.oh-my-ccj/sessions/abc.jsonl").toAbsolutePath().normalize().toString();
+    Compaction.Result result = Compaction.apply(before, SUMMARY, source, null);
     Message.Summary head = (Message.Summary) result.messages().get(0);
 
-    assertTrue(head.text().contains("/home/me/.oh-my-ccj/sessions/abc.jsonl"), head.text());
+    assertTrue(head.text().contains(source), head.text());
     assertTrue(head.text().contains("read it if you need a detail"), head.text());
     // 摘要被标记为摘要，这样模型不会把它读成自己先前说过的话。
     assertTrue(head.text().contains("written by the model when the conversation was compacted"), head.text());

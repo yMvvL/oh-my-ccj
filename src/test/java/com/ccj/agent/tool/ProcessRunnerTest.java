@@ -3,6 +3,7 @@ package com.ccj.agent.tool;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.List;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -25,11 +26,19 @@ class ProcessRunnerTest {
   }
 
   @Test
-  void withoutAConfiguredShellPosixMachinesGetBash() {
-    assertEquals(ProcessRunner.POSIX_DEFAULT, ProcessRunner.resolve(null));
-    assertEquals(ProcessRunner.POSIX_DEFAULT, ProcessRunner.resolve("   "));
+  void posixMachinesAreToldToUseBash() {
+    // 纯函数那一半，Windows 上也跑得通——osName 是传进去的，不是从这台机器读的。
     assertEquals(ProcessRunner.POSIX_DEFAULT, ProcessRunner.platformDefault("Linux", null));
     assertEquals(ProcessRunner.POSIX_DEFAULT, ProcessRunner.platformDefault("Mac OS X", "/bin/zsh"));
+  }
+
+  @Tag("posix")
+  @Test
+  void withoutAConfiguredShellThisMachineGetsItsOwnDefault() {
+    // 这两条读的是**这台机器**的 os.name，所以它们在 Windows 上断言的是「这台机器是 POSIX」——
+    // 一句假话。拆出来标 posix，而不是让整个用例在 Windows 上消失：上面那一半仍然在两边都跑。
+    assertEquals(ProcessRunner.POSIX_DEFAULT, ProcessRunner.resolve(null));
+    assertEquals(ProcessRunner.POSIX_DEFAULT, ProcessRunner.resolve("   "));
   }
 
   @Test

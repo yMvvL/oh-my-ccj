@@ -1,5 +1,6 @@
 package com.ccj.agent.mcp;
 
+import com.ccj.agent.JsonText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -218,7 +219,7 @@ class McpServerTest {
     Files.writeString(
         home.resolve("approvals.json"),
         "{\"projects\": {\""
-            + workspace.toAbsolutePath().normalize()
+            + JsonText.of(workspace.toAbsolutePath().normalize())
             + "\": {\"allow\": [{\"tool\": \"write\", \"path\": \"**\"}]}}}");
 
     try (McpClient client = McpClient.start(subprocess(home, workspace))) {
