@@ -1,5 +1,6 @@
 package com.ccj.agent.web;
 
+import com.ccj.agent.JsonText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -127,7 +128,7 @@ class WebSessionWorkspaceTest extends WebHarness {
     Path other = tmp.resolve("other-project");
     Files.writeString(Files.createDirectories(other).resolve("note.txt"), "in the other project");
 
-    JsonNode added = postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + other + "\"}");
+    JsonNode added = postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + JsonText.of(other) + "\"}");
     assertEquals(2, added.path("workspaces").size(), added.toString());
 
     JsonNode switched = postJson("/api/workspace", "{\"name\":\"other\"}");
@@ -160,7 +161,7 @@ class WebSessionWorkspaceTest extends WebHarness {
     assertEquals(1, json("/api/sessions").path("sessions").size());
     String firstSession = json("/api/status").path("sessionId").asText();
 
-    postJson("/api/workspaces", "{\"name\":\"second\",\"path\":\"" + tmp.resolve("second") + "\"}");
+    postJson("/api/workspaces", "{\"name\":\"second\",\"path\":\"" + JsonText.of(tmp.resolve("second")) + "\"}");
     postJson("/api/workspace", "{\"name\":\"second\"}");
     assertEquals(
         0, json("/api/sessions").path("sessions").size(), "另一个工作区就是另一段历史");
@@ -174,7 +175,7 @@ class WebSessionWorkspaceTest extends WebHarness {
 
   @Test
   void forgettingAWorkspaceIsRefusedForTheActiveOne() throws Exception {
-    postJson("/api/workspaces", "{\"name\":\"temp\",\"path\":\"" + tmp.resolve("temp") + "\"}");
+    postJson("/api/workspaces", "{\"name\":\"temp\",\"path\":\"" + JsonText.of(tmp.resolve("temp")) + "\"}");
 
     HttpResponse<String> refusal =
         client.send(
@@ -207,7 +208,7 @@ class WebSessionWorkspaceTest extends WebHarness {
   void aPathWithoutANameIsAddedUnderTheFoldersOwnName() throws Exception {
     Path picked = Files.createDirectories(tmp.resolve("picked-thing"));
 
-    JsonNode added = postJson("/api/workspaces", "{\"path\":\"" + picked + "\"}");
+    JsonNode added = postJson("/api/workspaces", "{\"path\":\"" + JsonText.of(picked) + "\"}");
 
     assertEquals(2, added.path("workspaces").size(), added.toString());
     JsonNode entry = added.path("workspaces").get(1);
@@ -220,12 +221,12 @@ class WebSessionWorkspaceTest extends WebHarness {
   void pickingTheSameDirectoryTwiceIsRefusedWithTheWorkspaceThatOwnsIt() throws Exception {
     Path project = Files.createDirectories(tmp.resolve("twice"));
 
-    assertEquals("twice", postJson("/api/workspaces", "{\"path\":\"" + project + "\"}").path("workspaces").get(1).path("name").asText());
+    assertEquals("twice", postJson("/api/workspaces", "{\"path\":\"" + JsonText.of(project) + "\"}").path("workspaces").get(1).path("name").asText());
 
     // 同一个目录，不同的写法：正是归一化让这里变成一次拒绝，而不是多出一条带着竞争对手会话
     // 历史的条目。
     HttpResponse<String> refusal =
-        post("/api/workspaces", "{\"path\":\"" + project.resolve(".") + "\"}");
+        post("/api/workspaces", "{\"path\":\"" + JsonText.of(project.resolve(".")) + "\"}");
 
     assertEquals(400, refusal.statusCode(), refusal.body());
     assertTrue(refusal.body().contains("twice"), refusal.body());
@@ -243,11 +244,11 @@ class WebSessionWorkspaceTest extends WebHarness {
     Path spaced = Files.createDirectories(tmp.resolve("my project"));
     assertEquals(
         "my project",
-        postJson("/api/workspaces", "{\"path\":\"" + spaced + "\"}")
+        postJson("/api/workspaces", "{\"path\":\"" + JsonText.of(spaced) + "\"}")
             .path("workspaces").get(1).path("name").asText());
 
     Path odd = Files.createDirectories(tmp.resolve("-dashed"));
-    HttpResponse<String> oddName = post("/api/workspaces", "{\"path\":\"" + odd + "\"}");
+    HttpResponse<String> oddName = post("/api/workspaces", "{\"path\":\"" + JsonText.of(odd) + "\"}");
     assertEquals(400, oddName.statusCode(), oddName.body());
     assertTrue(oddName.body().contains("文件夹名 '-dashed' 不能作为工作区名：工作区名称必须为 1-40 个字符，不能包含路径分隔符，不能以连字符开头，也不能是 '.' 或 '..'"), oddName.body());
   }
@@ -374,7 +375,7 @@ class WebSessionWorkspaceTest extends WebHarness {
       sse.await("done", 5000);
     }
     String firstId = json("/api/status").path("sessionId").asText();
-    postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + tmp.resolve("other") + "\"}");
+    postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + JsonText.of(tmp.resolve("other")) + "\"}");
     postJson("/api/workspace", "{\"name\":\"other\"}");
 
     // 折叠一个文件夹绝不能挪动当前工作区，只是读它的内容。
@@ -398,7 +399,7 @@ class WebSessionWorkspaceTest extends WebHarness {
       sse.await("done", 5000);
     }
     String wsSession = json("/api/status").path("sessionId").asText();
-    postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + tmp.resolve("other") + "\"}");
+    postJson("/api/workspaces", "{\"name\":\"other\",\"path\":\"" + JsonText.of(tmp.resolve("other")) + "\"}");
     postJson("/api/workspace", "{\"name\":\"other\"}");
     String activeNow = json("/api/status").path("sessionId").asText();
 

@@ -1,5 +1,6 @@
 package com.ccj.agent.core;
 
+import com.ccj.agent.JsonText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -46,7 +47,7 @@ class RuleApproverTest {
   private ApprovalRules rules(String json) throws IOException {
     project = Files.createDirectories(tmp.resolve("project"));
     file = tmp.resolve("approvals.json");
-    Files.writeString(file, json.formatted(project));
+    Files.writeString(file, json.formatted(JsonText.of(project)));
     return ApprovalRules.open(file, project);
   }
 

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.ccj.agent.JsonText;
 import com.ccj.agent.cli.Cli;
 import com.ccj.agent.core.ProjectPrompt;
 import com.ccj.agent.core.Approver;
@@ -137,7 +138,7 @@ class CliEndToEndTest {
           "workspaces": [ { "name": "project", "path": "%s" } ]
         }
         """
-            .formatted(workspace));
+            .formatted(JsonText.of(workspace)));
   }
 
   @Test

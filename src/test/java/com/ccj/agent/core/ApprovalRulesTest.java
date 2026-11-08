@@ -1,5 +1,6 @@
 package com.ccj.agent.core;
 
+import com.ccj.agent.JsonText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -30,7 +31,7 @@ class ApprovalRulesTest {
   private ApprovalRules rules(String json) throws IOException {
     project = Files.createDirectories(tmp.resolve("project"));
     file = tmp.resolve("approvals.json");
-    Files.writeString(file, json.formatted(project));
+    Files.writeString(file, json.formatted(JsonText.of(project)));
     return ApprovalRules.open(file, project);
   }
 
@@ -240,12 +241,35 @@ class ApprovalRulesTest {
     file = tmp.resolve("approvals.json");
     Files.writeString(
         file,
-        "{\"projects\": {\"" + tmp.resolve("somewhere-else") + "\": {\"allow\": [{\"tool\": \"bash\", \"command\": \"rm -rf /\"}]}}}");
+        "{\"projects\": {\"" + JsonText.of(tmp.resolve("somewhere-else")) + "\": {\"allow\": [{\"tool\": \"bash\", \"command\": \"rm -rf /\"}]}}}");
 
     assertEquals(
         Optional.empty(),
         ApprovalRules.open(file, project).verdict(cmd("rm -rf /")),
         "规则是按项目分的：一个项目的决定不是每个项目的决定");
+  }
+
+  @Test
+  void aWindowsStyleProjectPathIsStillValidJson() throws IOException {
+    // 与平台无关的一条：它喂一条**假的** Windows 路径进去，钉住「路径必须被转义」这件事本身。
+    //
+    // 为什么需要它：原来那个 bug 只在 Windows 上暴露，因为 Linux 的路径里没有反斜杠。而它一旦发生，
+    // 症状是 ApprovalRulesTest 13 个用例里 1 个失败、11 个错误，报的却是「JSON 无效：Unrecognized
+    // character escape 'U'」——一个离真相很远的句子。在 Linux 上把这件事钉住，等于把一道只有一半 CI
+    // 才看得见的门，变成每次都能看见的门。
+    Path windows = Path.of("C:\\Users\\ccj\\work\\project");
+    project = Files.createDirectories(tmp.resolve("project"));
+    file = tmp.resolve("approvals.json");
+    Files.writeString(
+        file,
+        "{\"projects\": {\""
+            + JsonText.of(windows)
+            + "\": {\"allow\": [{\"tool\": \"bash\", \"command\": \"ls\"}]}}}");
+
+    assertEquals(
+        Optional.of(true),
+        ApprovalRules.open(file, windows).verdict(cmd("ls")),
+        "反斜杠被转义之后，这条规则仍然读得回来，而且仍然匹配那个项目");
   }
 
   @Test
@@ -283,7 +307,7 @@ class ApprovalRulesTest {
     file = tmp.resolve("approvals.json");
     Files.writeString(
         file,
-        "{\"projects\": {\"" + project + "/\": {\"allow\": [{\"tool\": \"bash\", \"command\": \"ls\"}]}}}");
+        "{\"projects\": {\"" + JsonText.of(project) + "/\": {\"allow\": [{\"tool\": \"bash\", \"command\": \"ls\"}]}}}");
 
     assertEquals(
         Optional.of(true),
