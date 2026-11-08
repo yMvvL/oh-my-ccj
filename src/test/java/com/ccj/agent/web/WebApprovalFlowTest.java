@@ -1,5 +1,6 @@
 package com.ccj.agent.web;
 
+import com.ccj.agent.JsonText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -183,7 +184,7 @@ class WebApprovalFlowTest extends WebHarness {
 
     String written = Files.readString(approvalsFile());
     assertTrue(written.contains("printf a > one.txt"), written);
-    assertTrue(written.contains(cwd.toString()), "归档在它被授予的那个项目下：" + written);
+    assertTrue(written.contains(JsonText.of(cwd)), "归档在它被授予的那个项目下：" + written);
     assertTrue(
         written.contains("one.txt"),
         "规则就是被批准的那条命令，逐字照录：" + written);
@@ -215,7 +216,7 @@ class WebApprovalFlowTest extends WebHarness {
     Files.writeString(
         approvalsFile(),
         "{\"projects\": {\""
-            + cwd
+            + JsonText.of(cwd)
             + "\": {\"deny\": [{\"tool\": \"bash\", \"command\": \"printf a > one.txt\"}]}}}");
     provider.reply(bashCall("printf a > one.txt"));
     provider.reply(Message.Assistant.text("tried"));

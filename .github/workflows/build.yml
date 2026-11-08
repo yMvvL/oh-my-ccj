@@ -96,10 +96,18 @@ jobs:
             exit 0
           fi
           count=$(printf '%s' "$failures" | grep -c .)
+          detail=$(for report in "${reports[@]}"; do
+            awk '/<<< (FAILURE|ERROR)/ { want=1; next } want && NF { s=$0; if (length(s)>200) s=substr(s,1,200) "…"; print s; want=0 }' "$report"
+          done)
           # 工作流命令是**单行**的：消息里的换行必须写成 %0A，否则 GitHub 只取第一行——上一版
           # 就只发出了「26 个用例失败」，列表整个丢了。% 与 \r 同理。
           encoded=$(printf '%s' "$failures" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk 'BEGIN{ORS="%0A"} {print}')
-          printf '::error::%s 个用例失败%%0A%s\n' "$count" "$encoded" | head -c 60000
+          body="$count 个用例失败"$'\n'"$failures"
+          if [ -n "$detail" ]; then
+            body="${body}"$'\n'"--- 每处失败的第一行 ---"$'\n'"$detail"
+          fi
+          encoded=$(printf '%s' "$body" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk 'BEGIN{ORS="%0A"} {print}')
+          printf '::error::%s\n' "$encoded" | head -c 3800
           echo
 
       - name: 上传测试报告
@@ -174,9 +182,16 @@ jobs:
               if ($lines[$i] -match '<<< (FAILURE|ERROR)') {
                 $found = $true
                 $failures.Add($lines[$i].Trim())
-                # 断言消息在紧跟的几行里；每一处失败只取前两条，够定位又不至于把注解撑爆。
-                for ($j = $i + 1; $j -lt [Math]::Min($i + 3, $lines.Count); $j++) {
-                  if ($lines[$j].Trim()) { $detail.Add($lines[$j].Trim()) }
+                # 每处失败只取**紧跟的第一条非空行**，并截断到 200 字。注解总长有 ~4KB 的上限，
+                # 一条完整的 AssertionFailedError 可能就有 2KB（比如把整个 JSON 状态贴出来的那种），
+                # 于是后面的失败全被截掉——那正是上一次「只看到一个类的明细」的原因。
+                for ($j = $i + 1; $j -lt [Math]::Min($i + 4, $lines.Count); $j++) {
+                  if ($lines[$j].Trim()) {
+                    $one = $lines[$j].Trim()
+                    if ($one.Length -gt 200) { $one = $one.Substring(0, 200) + "…" }
+                    $detail.Add($one)
+                    break
+                  }
                 }
               }
             }
@@ -187,10 +202,10 @@ jobs:
           }
           $message = "$($failures.Count) 个用例失败`n" + ($failures -join "`n")
           if ($detail.Count -gt 0) {
-            $message += "`n`n--- 断言消息 ---`n" + (($detail | Select-Object -First 20) -join "`n")
+            $message += "`n--- 每处失败的第一行 ---`n" + ($detail -join "`n")
           }
           # 消息长度有上限，超了会被整条丢掉——那时连「有几个失败」都看不到。
-          if ($message.Length -gt 50000) { $message = $message.Substring(0, 50000) + "`n…（截断）" }
+          if ($message.Length -gt 3500) { $message = $message.Substring(0, 3500) + "`n…（超过注解上限，截断）" }
           # 工作流命令是**单行**的：换行必须写成 %0A，否则 GitHub 只取第一行，列表整个丢掉。
           # 百分号先编码，否则后面替换出来的 %0A 会被自己再编码一次。
           $encoded = $message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')

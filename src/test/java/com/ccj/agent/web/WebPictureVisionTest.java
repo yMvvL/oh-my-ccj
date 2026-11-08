@@ -1,5 +1,6 @@
 package com.ccj.agent.web;
 
+import com.ccj.agent.JsonText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -285,7 +286,7 @@ class WebPictureVisionTest extends WebHarness {
     HttpResponse<String> posted = postAttachment("photo.png", pngBytes());
 
     assertEquals(409, posted.statusCode(), posted.body());
-    assertTrue(posted.body().contains("没有配置视觉模型，所以这个文件没法被描述——请设置 " + configFile + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
+    assertTrue(posted.body().contains("没有配置视觉模型，所以这个文件没法被描述——请设置 " + JsonText.of(configFile) + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
     assertTrue(posted.body().contains("--vision-base-url"), posted.body());
     assertEquals(List.of(), attachmentDirectories(), "而且什么都没写");
   }
@@ -365,7 +366,7 @@ class WebPictureVisionTest extends WebHarness {
 
     HttpResponse<String> posted = postAttachment("photo.png", pngBytes());
     assertEquals(409, posted.statusCode(), posted.body());
-    assertTrue(posted.body().contains("没有配置视觉模型，所以这个文件没法被描述——请设置 " + configFile + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
+    assertTrue(posted.body().contains("没有配置视觉模型，所以这个文件没法被描述——请设置 " + JsonText.of(configFile) + " 里的 \\\"vision\\\" 块（baseUrl、model 和一个密钥），或者传入 --vision-base-url 和 --vision-model"), posted.body());
   }
 
   /** 一个 loopback 上的替身视觉端点：一句备好的描述，外加调用计数。 */
